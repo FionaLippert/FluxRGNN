@@ -1,0 +1,42 @@
+# @package _group_
+name: BlackBoxGraphLSTM
+hyperparameters:
+  n_hidden:
+    default: 64
+    search_space:
+    - 64
+    - 128
+  n_fc_layers:
+    default: 2
+    search_space:
+      - 1
+      - 2
+  n_lstm_layers:
+    default: 1
+    search_space:
+    - 1
+  dropout_p:
+    default: 0.25
+    search_space:
+    - 0.25
+  lr:
+    default: 0.001
+    search_space:
+      - 0.001
+      - 0.0001
+      - 0.00001
+  lr_decay:
+    default: 50
+    search_space:
+    - 50
+  teacher_forcing_gamma:
+    default: 0.9
+    search_space:
+    - 0.9
+epochs: 100
+horizon: 40
+fixed_boundary: false
+force_zeros: false
+use_encoder: false
+context: 24
+root_transformed_loss: false

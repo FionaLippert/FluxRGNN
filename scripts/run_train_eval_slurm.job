@@ -1,0 +1,48 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu_shared
+#SBATCH --job-name=train_eval
+#SBATCH --time=120:00:00
+#SBATCH --output=slurm_output_%A_%a.out
+#SBATCH --mail-type=BEGIN,END
+#SBATCH --mail-user=f.lippert@uva.nl
+
+# Note: use --partition=gpu_shared if not all GPUs on a node are needed, --gpus=2 would give 2 of them
+# Note: use --partition=gpu_short for debugging
+
+
+source activate birds
+
+module load 2020
+module load CUDA/11.0.2-GCC-9.3.0
+module load cuDNN/8.0.3.33-gcccuda-2020a
+module load NCCL/2.7.8-gcccuda-2020a
+
+# read command line arguments
+WDIR=$1 # working directory (entry point to data, scripts, models etc.)
+OUTPUTDIR=$2 # directory to which grid search results will be written
+CONFIGPATH=$3 # hydra config path (with best settings from grid search)
+TEST_YEAR=$4 # year to hold out in cross-validation
+OVERRIDES=$5 # slurm config overrides
+
+echo $OVERRIDES
+
+echo $CUDA_VISIBLE_DEVICES
+
+mkdir -p $OUTPUTDIR
+
+#Copy all necessary input files to scratch
+mkdir "$TMPDIR"/data
+cp -r $WDIR/data/preprocessed "$TMPDIR"/data
+
+cd $WDIR/scripts
+
+# run training and testing using best hyperparameter setting
+srun python run.py -cp $CONFIGPATH \
+  sub_dir=trial_$SLURM_ARRAY_TASK_ID \
+  device.root=$TMPDIR \
+	datasource.test_year=$TEST_YEAR \
+	datasource.val_train_split=0.01 \
+	job_id=$SLURM_ARRAY_TASK_ID \
+	output_dir=$OUTPUTDIR \
+	$OVERRIDES

@@ -1,0 +1,50 @@
+# @package _group_
+name: BirdFluxGroundGraphLSTM
+hyperparameters:
+  n_hidden:
+    default: 128
+    search_space:
+    - 64
+    - 128
+  n_fc_layers:
+    default: 2
+    search_space:
+      - 1
+      - 2
+  n_lstm_layers:
+    default: 1
+    search_space:
+    - 1
+  dropout_p:
+    default: 0.25
+    search_space:
+    - 0.25
+  lr:
+    default: 0.001
+    search_space:
+      - 0.001
+      - 0.0001
+      - 0.00001
+  lr_decay:
+    default: 50
+    search_space:
+    - 50
+  teacher_forcing_gamma:
+    default: 0.9
+    search_space:
+    - 0.9
+  conservation_constraint:
+    default: 0.01
+    search_space:
+      - 0.0
+      - 0.01
+      - 0.1
+epochs: 100
+horizon: 40
+fixed_boundary: false
+force_zeros: false
+use_encoder: false
+context: 0
+root_transformed_loss: false
+enforce_conservation: true
+batch_size: 1

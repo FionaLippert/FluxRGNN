@@ -1,0 +1,13 @@
+# @package _group_
+name: GBT
+n_estimators: 200
+lr: 0.05
+max_depth: 10
+horizon: 1
+test_horizon: 64
+test_context: 24
+tolerance: 1e-8
+use_acc_vars: false
+edge_type: none
+birds_per_km2: true
+n_dummy_radars: 0

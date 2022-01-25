@@ -1,0 +1,5 @@
+# @package _group_
+name: cluster
+root: /home/${env:USER}/birdMigration
+cuda: true
+slurm: true

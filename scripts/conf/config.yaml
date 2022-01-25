@@ -1,0 +1,21 @@
+# main config file
+output_dir: results
+sub_dir: none
+defaults:
+  - datasource: abm
+  - model: FluxGraphLSTM
+  - task: train_eval
+  - device: cluster
+job_id: 0
+season: fall
+seed: 1234
+model_seed: ${seed}
+root_transform: 0
+missing_data_threshold: 0.1
+t_unit: 1H
+fixed_t0: false
+data_perc: 1.0
+#importance_sampling: true
+exclude: []
+verbose: True
+debugging: False

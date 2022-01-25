@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# read command line arguments
+WDIR=$1 # working directory (entry point to data, scripts, models etc.)
+OUTPUTDIR=$2 # directory to which grid search results will be written
+CONFIGPATH=$3 # hydra config path (with best settings from grid search)
+TEST_YEAR=$4 # year to hold out in cross-validation
+REPEATS=$5 # number of training/evaluation runs
+
+mkdir -p $OUTPUTDIR
+
+cd $WDIR/scripts
+
+echo "Start job"
+
+# run training and testing using best hyperparameter setting
+for i in $(eval echo "{1..$REPEATS}")
+do
+  python run.py -cp $CONFIGPATH \
+    sub_dir=trial_$i \
+    device.root=$WDIR \
+    datasource.test_year=$TEST_YEAR \
+    datasource.val_train_split=0.01 \
+    job_id=$i \
+    output_dir=$OUTPUTDIR
+done

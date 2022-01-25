@@ -1,0 +1,14 @@
+# @package _group_
+lr:
+  - 1e-9
+lr_decay: 
+  - 1
+lr_gamma:
+  - 1.4
+epochs:
+  - 50
+teacher_forcing_gamma:
+  - 1.0
+early_stopping:
+  - false
+

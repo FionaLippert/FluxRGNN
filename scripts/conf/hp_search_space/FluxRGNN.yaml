@@ -1,0 +1,12 @@
+# @package _group_
+use_encoder:
+  - true
+  - false
+teacher_forcing_gamma:
+  - 0.95
+  - 0.90
+horizon:
+  - 24
+  - 48
+  - 64
+

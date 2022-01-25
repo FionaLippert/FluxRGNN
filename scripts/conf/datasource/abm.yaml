@@ -1,0 +1,24 @@
+# @package _group_
+name: abm
+years:
+  - 2015
+  - 2016
+  - 2017
+  #- 2018
+  #- 2019
+#validation_year: 2019
+test_year: 2017
+val_train_split: 0.1
+env_vars:
+  - u
+  - v
+  - night
+  - dusk
+  - dawn
+  - dayofyear
+  - solarpos
+  - solarpos_dt
+use_buffers: False
+# will be filled at runtime
+bird_scale: ???
+#bird_scale: 2000

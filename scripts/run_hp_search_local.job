@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# read command line arguments
+WDIR=$1 # working directory (entry point to data, scripts, models etc.)
+OUTPUTDIR=$2 # directory to which grid search results will be written
+CONFIGPATH=$3 # hydra config path
+HPARAM_FILE=$4 # path to hyperparameter file
+TEST_YEAR=$5 # year to hold out in cross-validation
+N_START=$6 # hyperparameter setting ID to start with (everything before is ignored)
+N_SETTINGS=$7 # number of hyperparameter settings
+
+mkdir -p $OUTPUTDIR
+rsync $HPARAM_FILE $OUTPUTDIR/
+
+cd $WDIR/scripts
+
+echo "Start job"
+
+echo $CONFIGPATH
+
+# run array jobs for all hyperparameter settings
+for i in $(eval echo "{$N_START..$N_SETTINGS}")
+do
+  python run.py -cp $CONFIGPATH \
+  sub_dir=setting_$i \
+  device.root=$WDIR \
+	datasource.test_year=$TEST_YEAR \
+	job_id=$i \
+	output_dir=$OUTPUTDIR \
+	$(head -$i $HPARAM_FILE | tail -1)
+done
+
+

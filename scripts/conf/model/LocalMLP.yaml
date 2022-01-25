@@ -1,0 +1,22 @@
+# @package _group_
+name: LocalMLP
+n_hidden: 256
+n_fc_layers: 3
+dropout_p: 0.0
+epochs: 300
+lr: 0.0001
+lr_decay: 300
+lr_gamma: 1.0
+horizon: 1
+test_horizon: 64
+test_context: 24
+force_zeros: false
+use_acc_vars: false
+root_transformed_loss: false
+batch_size: 64
+edge_type: none
+birds_per_km2: true
+n_dummy_radars: 0
+early_stopping: true
+stopping_criterion: 1e-6
+avg_window: 10

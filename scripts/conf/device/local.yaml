@@ -1,0 +1,5 @@
+# @package _group_
+name: local
+root: /home/${env:USER}/birdMigration
+cuda: false
+slurm: false

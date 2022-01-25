@@ -1,0 +1,8 @@
+# @package _group_
+n_hidden:
+  - 64
+  - 128
+lr:
+  - 1e-3
+  - 1e-4
+  - 1e-5
