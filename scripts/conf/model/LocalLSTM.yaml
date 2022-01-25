@@ -24,10 +24,8 @@ force_zeros: false
 use_encoder: true
 use_uv: false
 root_transformed_loss: false
-
 edge_type: voronoi
 birds_per_km2: false
-n_dummy_radars: 25
 
 load_states_from: none
 

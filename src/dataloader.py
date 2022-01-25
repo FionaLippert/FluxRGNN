@@ -130,7 +130,6 @@ class RadarData(InMemoryDataset):
 
         self.edge_type = kwargs.get('edge_type', 'voronoi')
         self.t_unit = kwargs.get('t_unit', '1H')
-        self.n_dummy_radars = kwargs.get('n_dummy_radars', 0)
         self.birds_per_km2 = kwargs.get('birds_per_km2', False)
         self.exclude = kwargs.get('exclude', [])
 

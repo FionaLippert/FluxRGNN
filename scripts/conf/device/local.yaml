@@ -1,5 +1,5 @@
 # @package _group_
 name: local
-root: /home/${env:USER}/birdMigration
+root: /home/${env:USER}/FluxRGNN
 cuda: false
 slurm: false
