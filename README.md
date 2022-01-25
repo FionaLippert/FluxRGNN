@@ -16,7 +16,7 @@ To install all other dependencies and the FluxRGNN package itself, switch to the
 ```
 bash install.sh
 ```
-This will create a new conda environment called "fluxrgnn" and will install the FluxRGNN package into this environment.
+This will create a new conda environment called `fluxrgnn` and will install the FluxRGNN package into this environment.
 Later on, it is enough to activate the environment with
 ```
 conda activate fluxrgnn
@@ -29,12 +29,12 @@ before getting started.
 The FluxRGNN dataloader expects the preprocessed data (including environmental and sensor network data) 
 to be in the following path:
 ``` 
-{root}/data/preprocessed/{t_unit}_voronoi_ndummy={ndummy}/{datasource}/{season}/{year}
+FluxRGNN/data/preprocessed/{t_unit}_voronoi_ndummy={ndummy}/{datasource}/{season}/{year}
 ```
-where `root`, `t_unit`, `ndummy`, `datasource`, `season` and `year` can be specified in the configuration files 
+where `t_unit`, `ndummy`, `datasource`, `season` and `year` can be specified in the configuration files 
 in the `scripts/conf` directory.
 
-To reproduce results from our paper ... (link to paper), please download the preprocessed data here (link to zenodo)
+To reproduce results from our paper, please download the preprocessed data here (link to zenodo)
 To run the preprocessing of bird density and velocity data from 
 the European weather radar network yourself, you can use this code (link to birdMigration repository).
 

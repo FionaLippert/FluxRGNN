@@ -1,25 +1,36 @@
 # @package _group_
 name: LocalLSTM
+
 n_hidden: 128
 n_lstm_layers: 1
-dropout_p: 0.25
-epochs: 300
-lr: 1e-6
-lr_decay: 300
-lr_gamma: 1.0
-teacher_forcing_gamma: 0.95
-predict_delta: true
+
+context: 24
 horizon: 48
 test_horizon: 64
-force_zeros: false
-root_transformed_loss: false
-use_encoder: true
-use_uv: false
-context: 24
+
+epochs: 300
 batch_size: 4
-edge_type: voronoi
-birds_per_km2: false
-n_dummy_radars: 25
+lr: 1e-5
+lr_decay: 300
+lr_gamma: 1.0
 early_stopping: true
 stopping_criterion: 1e-6
 avg_window: 50
+dropout_p: 0.25
+teacher_forcing_gamma: 0.95
+
+predict_delta: true
+force_zeros: false
+use_encoder: true
+use_uv: false
+root_transformed_loss: false
+
+edge_type: voronoi
+birds_per_km2: false
+n_dummy_radars: 25
+
+load_states_from: none
+
+
+
+

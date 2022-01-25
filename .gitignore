@@ -1,3 +1,15 @@
+# data and logging
+data/
+results/
+scripts/outputs/
+checkpoints/
+
+# slurm output
+slurm*
+
+# pycharm stuff
+.idea/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
