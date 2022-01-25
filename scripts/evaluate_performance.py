@@ -1,11 +1,87 @@
+from omegaconf import DictConfig, OmegaConf
+import hydra
+from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import scipy.stats as stats
 import os
 import os.path as osp
 import pandas as pd
-import geopandas as gpd
 import itertools as it
 from yaml import Loader, load
+
+
+@hydra.main(config_path="conf", config_name="config")
+def evaluate(cfg: DictConfig):
+    """
+    Evaluation of predictive performance.
+
+    Predictive performance is evaluated as a function of the forecasting horizon, and it is measured in terms of
+    root mean square error, pearson correlation, and binary classification metrics.
+    """
+
+    experiments = cfg.get('experiment_type', 'final')
+
+    if experiments == 'ablations':
+        models = {
+            'FluxRGNN': ['final',
+                         'final_without_encoder',
+                         'final_without_boundary'],
+            'LocalLSTM': ['final']
+        }
+    elif experiments == 'final':
+        models = {
+            'GAM': ['final'],
+            'HA': ['final'],
+            'GBT': ['final']
+        }
+
+    base_dir = cfg.device.root
+
+    if cfg.datasource.name == 'abm':
+        thresholds = [0.0019, 0.0207]
+    else:
+        thresholds = [0, 10, 20]
+
+    rmse_per_hour = []
+    mae_per_hour = []
+    pcc_per_hour = []
+    bin_per_hour = []
+
+    for m, dirs in models.items():
+        print(f'evaluate {m}')
+
+        for d in dirs:
+            result_dir = osp.join(base_dir, 'results', cfg.datasource.name, m, f'test_{cfg.datasource.test_year}', d)
+            results, cfg = load_cv_results(result_dir, trials=cfg.task.repeats)
+
+            rmse_per_hour.append(compute_rmse(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
+            mae_per_hour.append(compute_mae(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
+            pcc_per_hour.append(compute_pcc(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
+
+            # compute binary classification measures
+            for thr in thresholds:
+                bin_per_hour.append(compute_bin(m, d, results, groupby=['horizon', 'trial'], threshold=thr, km2=True))
+
+            # compute spatial correlation of residuals
+            corr = compute_residual_corr(results, km2=True)
+            output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
+            os.makedirs(output_dir, exist_ok=True)
+            corr.to_csv(osp.join(output_dir, f'spatial_corr_{m}_{d}.csv'))
+
+    output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
+    os.makedirs(output_dir, exist_ok=True)
+
+    rmse_per_hour = pd.concat(rmse_per_hour)
+    rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
+
+    mae_per_hour = pd.concat(mae_per_hour)
+    mae_per_hour.to_csv(osp.join(output_dir, f'mae_per_hour.csv'))
+
+    pcc_per_hour = pd.concat(pcc_per_hour)
+    pcc_per_hour.to_csv(osp.join(output_dir, f'pcc_per_hour.csv'))
+
+    bin_per_hour = pd.concat(bin_per_hour)
+    bin_per_hour.to_csv(osp.join(output_dir, f'bin_per_hour.csv'))
 
 
 def load_cv_results(result_dir, ext='', trials=1):
@@ -88,11 +164,9 @@ def compute_bin(model, experiment, results, groupby='trial', threshold=0, km2=Tr
 
     return bin
 
-def compute_residual_corr(results, radar_df, km2=True):
+def compute_residual_corr(results, km2=True):
     ext = '_km2' if km2 else ''
 
-    # radars = results[model].radar.unique()
-    #radars = radar_df.query('observed == 1').sort_values(by=['lat'], ascending=False).radar.values
     radars = [r for r in results.radar.unique() if not 'boundary' in r]
     
     corr = []
@@ -115,74 +189,4 @@ def compute_residual_corr(results, radar_df, km2=True):
 
 if __name__ == "__main__":
 
-    #subdir = 'final'
-    subdir = 'ablations'
-
-    models = {  'FluxRGNN': ['final', 'final_without_encoder', 'final_without_boundary'],
-                'LocalLSTM': ['final'],
-                #'GAM': ['final'],
-                #'HA': ['final'],
-                #'GBT': ['final'] #'final_evaluation'] #, 'final_evaluation_new_importance_sampling',
-                #        'final_evaluation_new_acc', 'final_evaluation_new_importance_sampling_acc']
-             }
-
-    trials = 5
-    year = 2017
-    season = 'fall'
-    ext = ''
-    #base_dir = '/home/fiona/birdMigration/results/abm'
-    #base_dir = '/media/flipper/Seagate Basic/PhD/paper_1/results/radar'
-    #base_dir = '/media/flipper/Seagate Basic/PhD/paper_1/results/abm'
-    #base_dir = '/media/flipper/Seagate Basic/PhD/paper_1/results/abm'
-    base_dir = '/home/flipper/birdMigration'
-    datasource = 'radar'
-    if datasource == 'abm':
-        thresholds = [0.0019, 0.0207]
-    else:
-        thresholds = [0, 10, 20]
-
-    data_dir = osp.join(base_dir, 'data', 'preprocessed', '1H_none_ndummy=0', datasource, season, str(year))
-
-    rmse_per_hour = []
-    mae_per_hour = []
-    pcc_per_hour = []
-    bin_per_hour = []
-
-    for m, dirs in models.items():
-        print(f'evaluate {m}')
-
-        radar_df = gpd.read_file(osp.join(data_dir, 'voronoi.shp'))
-        for d in dirs:
-            print(d)
-            result_dir = osp.join(base_dir, 'results', datasource, m, f'test_{year}', d)
-            results, cfg = load_cv_results(result_dir, ext=ext, trials=trials)
-            
-            rmse_per_hour.append(compute_rmse(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
-            mae_per_hour.append(compute_mae(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
-            pcc_per_hour.append(compute_pcc(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
-
-            # compute binary classification measures
-            for thr in thresholds:
-                #thr = cfg['datasource']['bird_scale'] * f
-                bin_per_hour.append(compute_bin(m, d, results, groupby=['horizon', 'trial'], threshold=thr, km2=True))
-
-            # compute spatial correlation of residuals
-            corr = compute_residual_corr(results, radar_df, km2=True)
-            output_dir = osp.join(base_dir, 'results', datasource, 'performance_evaluation', subdir)
-            os.makedirs(output_dir, exist_ok=True)
-            corr.to_csv(osp.join(output_dir, f'spatial_corr_{m}_{d}.csv'))
-
-    output_dir = osp.join(base_dir, 'results', datasource, 'performance_evaluation', subdir)
-    os.makedirs(output_dir, exist_ok=True)
-
-    rmse_per_hour = pd.concat(rmse_per_hour)
-    rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
-
-    mae_per_hour = pd.concat(mae_per_hour)
-    mae_per_hour.to_csv(osp.join(output_dir, f'mae_per_hour.csv'))
-
-    pcc_per_hour = pd.concat(pcc_per_hour)
-    pcc_per_hour.to_csv(osp.join(output_dir, f'pcc_per_hour.csv'))
-
-    bin_per_hour = pd.concat(bin_per_hour)
-    bin_per_hour.to_csv(osp.join(output_dir, f'bin_per_hour.csv'))
+    evaluate()
