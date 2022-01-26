@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import pickle5 as pickle
 import itertools as it
+from omegaconf import DictConfig, OmegaConf
 import warnings
 import datetime
 warnings.filterwarnings("ignore")
@@ -525,6 +526,71 @@ class SensorData(Data):
             return super().__inc__(key, value)
 
 
+def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
+    """
+    Load training or testing data, initialize normalizer, setup and save configuration
+
+    :param cfg: DictConfig specifying model, data and training/testing details
+    :param output_dir: directory to which config is written to
+    :return: pytorch Dataset
+    """
+    context = cfg.model.get('context', 0)
+    if context == 0 and not training:
+        context = cfg.model.get('test_context', 0)
+    seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
+    seed = cfg.seed + cfg.get('job_id', 0)
+
+    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
+    processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
+                        f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
+                        f'edges={cfg.model.edge_type}_ndummy={cfg.model.datasource.n_dummy_radars}'
+    data_dir = osp.join(cfg.device.root, 'data')
+
+    if cfg.model.birds_per_km2:
+        input_col = 'birds_km2'
+    else:
+        if cfg.datasource.use_buffers:
+            input_col = 'birds_from_buffer'
+        else:
+            input_col = 'birds'
+
+    if training:
+        # initialize normalizer
+        years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+        normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+
+        # complete config and write it together with normalizer to disk
+        cfg.datasource.bird_scale = float(normalization.max(input_col))
+        cfg.model_seed = seed
+        with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+            OmegaConf.save(config=cfg, f=f)
+        with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+            pickle.dump(normalization, f)
+    else:
+        years = [cfg.datasource.test_year]
+        model_dir = cfg.get('model_dir', output_dir)
+        with open(osp.join(model_dir, 'normalization.pkl'), 'rb') as f:
+            normalization = pickle.load(f)
+
+    # load training and validation data
+    data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
+                                 **cfg, **cfg.model,
+                                 data_root=data_dir,
+                                 data_source=cfg.datasource.name,
+                                 normalization=normalization,
+                                 env_vars=cfg.datasource.env_vars,
+                                 )
+            for year in years]
+
+    #data = torch.utils.data.ConcatDataset(data)
+
+
+
+    return data, input_col, context, seq_len
+
+
+
+
 def rescale(features, min=None, max=None):
     """Rescaling of static features"""
 
@@ -584,20 +650,25 @@ def compute_flux(dens, ff, dd, alpha, l=1):
     return flux
 
 
-def get_training_data_gbt(dataset, timesteps, mask_daytime=False, use_acc_vars=False):
-    """Prepare data for simple species distribution models that don't use neural nets"""
+def get_training_data(model_name, dataset, timesteps, mask_daytime=False, use_acc_vars=False):
+    """Prepare training data for baseline model"""
 
     X = []
     y = []
     mask = []
     for seq in dataset:
         for t in range(timesteps):
-            features = [seq.coords.detach().numpy(),
-                        seq.areas.view(-1,1).detach().numpy(),
-                        seq.env[..., t].detach().numpy()]
-            if use_acc_vars:
-                features.append(seq.acc[..., t].detach().numpy())
-            features = np.concatenate(features, axis=1) # shape (nodes, features)
+            if model_name == 'GBT':
+                features = [seq.coords.detach().numpy(),
+                            seq.areas.view(-1,1).detach().numpy(),
+                            seq.env[..., t].detach().numpy()]
+                if use_acc_vars:
+                    features.append(seq.acc[..., t].detach().numpy())
+                features = np.concatenate(features, axis=1) # shape (nodes, features)
+            else:
+                # extract dayofyear, solarpos and solarpos_dt from env features
+                features = seq.env[:, -3:, t].detach().numpy()  # shape (nodes, features)
+
             X.append(features)
             y.append(seq.y[:, t])
 
@@ -606,40 +677,21 @@ def get_training_data_gbt(dataset, timesteps, mask_daytime=False, use_acc_vars=F
             else:
                 mask.append(~seq.missing[:, t])
 
-    X = np.concatenate(X, axis=0)
-    y = np.concatenate(y, axis=0)
-    mask = np.concatenate(mask, axis=0)
+    if model_name == 'GBT':
+        X = np.concatenate(X, axis=0)
+        y = np.concatenate(y, axis=0)
+        mask = np.concatenate(mask, axis=0)
+    else:
+        X = np.stack(X, axis=0)
+        y = np.stack(y, axis=0)
+        mask = np.stack(mask, axis=0)
 
     return X, y, mask
 
 
-def get_training_data_gam(dataset, timesteps, mask_daytime=False):
-    """Prepare data for Generalized Additive Model (GAM) using only temporal and no environmental features."""
 
-    X = []
-    y = []
-    mask = []
-    for seq in dataset:
-        for t in range(timesteps):
-            # extract dayofyear, solarpos and solarpos_dt from env features
-            features = seq.env[:, -3:, t].detach().numpy()  # shape (nodes, features)
-            X.append(features)
-            y.append(seq.y[:, t])
-
-            if mask_daytime:
-                mask.append(seq.local_night[:, t] & ~seq.missing[:, t])
-            else:
-                mask.append(~seq.missing[:, t])
-
-    X = np.stack(X, axis=0)
-    y = np.stack(y, axis=0)
-    mask = np.stack(mask, axis=0)
-
-    return X, y, mask
-
-
-def get_test_data_gbt(dataset, context, horizon, mask_daytime=False, use_acc_vars=False):
-    """Prepare test data for species distribution model."""
+def get_test_data(model_name, dataset, context, horizon, mask_daytime=False, use_acc_vars=False):
+    """Prepare test data for baseline model."""
 
     X = []
     y = []
@@ -649,13 +701,16 @@ def get_test_data_gbt(dataset, context, horizon, mask_daytime=False, use_acc_var
         y_night = []
         mask_night = []
         for t in range(context, context+horizon):
+            if model_name == 'GBT':
+                features = [seq.coords.detach().numpy(),
+                     seq.areas.view(-1, 1).detach().numpy(),
+                     seq.env[..., t].detach().numpy()]
+                if use_acc_vars:
+                    features.append(seq.acc[..., t].detach().numpy())
+                features = np.concatenate(features, axis=1)
+            else:
+                features = seq.env[:, -3:, t].detach().numpy()
 
-            features = [seq.coords.detach().numpy(),
-                 seq.areas.view(-1, 1).detach().numpy(),
-                 seq.env[..., t].detach().numpy()]
-            if use_acc_vars:
-                features.append(seq.acc[..., t].detach().numpy())
-            features = np.concatenate(features, axis=1)
             X_night.append(features)
             y_night.append(seq.y[:, t])
             if mask_daytime:
@@ -672,33 +727,3 @@ def get_test_data_gbt(dataset, context, horizon, mask_daytime=False, use_acc_var
 
     return X, y, mask
 
-
-def get_test_data_gam(dataset, context, horizon, mask_daytime=False):
-    """Prepare test data for GAM model."""
-
-    X = []
-    y = []
-    mask = []
-    for seq in dataset:
-        X_night = []
-        y_night = []
-        mask_night = []
-        for t in range(context, context+horizon):
-            features = seq.env[:, -3:, t].detach().numpy()
-            X_night.append(features)
-            y_night.append(seq.y[:, t])
-
-            if mask_daytime:
-                mask_night.append(seq.local_night[:, t] & ~seq.missing[:, t])
-            else:
-                mask_night.append(~seq.missing[:, t])
-
-        X.append(np.stack(X_night, axis=0))
-        y.append(np.stack(y_night, axis=0))
-        mask.append(np.stack(mask_night, axis=0))
-
-    X = np.stack(X, axis=0) # shape (nights, timesteps, nodes, features)
-    y = np.stack(y, axis=0) # shape (nights, timesteps, nodes)
-    mask = np.stack(mask, axis=0)  # shape (nights, timesteps, nodes)
-
-    return X, y, mask

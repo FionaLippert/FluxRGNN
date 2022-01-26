@@ -3,7 +3,9 @@ import hydra
 import os.path as osp
 import os
 import traceback
-import run_NNs, run_GAM, run_GBT, run_HA
+import run_NNs, run_baselines
+
+BASELINE_MODELS = ['HA', 'GAM', 'GBT']
 
 
 @hydra.main(config_path="conf", config_name="config")
@@ -23,12 +25,8 @@ def run(cfg: DictConfig):
 
     log.flush()
     try:
-        if cfg.model.name == 'GBT':
-            run_GBT.run(cfg, out, log)
-        elif cfg.model.name == 'GAM':
-            run_GAM.run(cfg, out, log)
-        elif cfg.model.name == 'HA':
-            run_HA.run(cfg, out, log)
+        if cfg.model.name in BASELINE_MODELS:
+            run_baselines.run(cfg, out, log)
         else:
             run_NNs.run(cfg, out, log)
     except Exception:

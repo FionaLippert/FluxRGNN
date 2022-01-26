@@ -3,6 +3,12 @@ from matplotlib import pyplot as plt
 import os.path as osp
 import torch
 import warnings
+from omegaconf import DictConfig, OmegaConf
+import pickle5 as pickle
+import pandas as pd
+import ruamel.yaml
+
+from src import dataloader
 
 def val_test_split(dataloader, val_ratio):
     N = len(dataloader)
@@ -60,3 +66,22 @@ def plot_training_curves(training_curves, val_curves, dir, log=True):
     plt.legend()
     fig.savefig(osp.join(dir, f'training_validation_curves_log={log}.png'), bbox_inches='tight')
     plt.close(fig)
+
+def load_model_cfg(model_dir):
+    yaml = ruamel.yaml.YAML()
+    fp = osp.join(model_dir, 'config.yaml')
+    with open(fp, 'r') as f:
+        model_cfg = yaml.load(f)
+    return model_cfg
+
+def finalize_results(results, output_dir, ext=''):
+    # create dataframe containing all results
+    for k, v in results.items():
+        if torch.is_tensor(v[0]):
+            results[k] = torch.cat(v).numpy()
+        else:
+            results[k] = np.concatenate(v)
+
+    results['residual_km2'] = results['gt_km2'] - results['prediction_km2']
+    df = pd.DataFrame(results)
+    df.to_csv(osp.join(output_dir, f'results{ext}.csv'))

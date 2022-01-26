@@ -1,5 +1,5 @@
-from birds import dataloader, utils
-from birds.models import *
+from src import dataloader, utils
+from src.models import *
 import torch
 from torch.utils.data import random_split, Subset
 from torch.optim import lr_scheduler
@@ -18,12 +18,50 @@ MODEL_MAPPING = {'LocalMLP': LocalMLP,
                  'LocalLSTM': LocalLSTM,
                  'FluxRGNN': FluxRGNN}
 
+def run(cfg: DictConfig, output_dir: str, log):
+    """
+    Run training and/or testing for neural network model.
+
+    :param cfg: DictConfig specifying model, data and training/testing details
+    :param output_dir: directory to which all outputs are written to
+    :param log: log file
+    """
+
+    if 'search' in cfg.task.name:
+        cross_validation(cfg, output_dir, log)
+    if 'train' in cfg.task.name:
+        training(cfg, output_dir, log)
+    if 'eval' in cfg.task.name:
+        if hasattr(cfg, 'importance_sampling'):
+            cfg.importance_sampling = False
+
+        cfg['fixed_t0'] = True
+        testing(cfg, output_dir, log, ext='_fixedT0')
+        cfg['fixed_t0'] = False
+        testing(cfg, output_dir, log)
+
+        if cfg.get('test_train_data', False):
+            # evaluate performance on training data
+            training_years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+            cfg.model.test_horizon = cfg.model.horizon
+            for y in training_years:
+                cfg.datasource.test_year = y
+                testing(cfg, output_dir, log, ext=f'_training_year_{y}')
+
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-
 def training(cfg: DictConfig, output_dir: str, log):
+    """
+    Run training of a neural network model.
+
+    :param cfg: DictConfig specifying model, data and training details
+    :param output_dir: directory to which the final model and logs are written to
+    :param log: log file
+    """
+
     assert cfg.model.name in MODEL_MAPPING
 
     if cfg.debugging: torch.autograd.set_detect_anomaly(True)
@@ -33,7 +71,8 @@ def training(cfg: DictConfig, output_dir: str, log):
     device = 'cuda' if (cfg.device.cuda and torch.cuda.is_available()) else 'cpu'
     seed = cfg.seed + cfg.get('job_id', 0)
 
-    data = setup_training(cfg, output_dir)
+    data = dataloader.load_dataset(cfg, output_dir, training=True)[0]
+    data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
     print('done with setup', file=log)
@@ -53,9 +92,6 @@ def training(cfg: DictConfig, output_dir: str, log):
     train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
     train_loader = DataLoader(train_data, batch_size=cfg.model.batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=1, shuffle=True)
-
-    print('loaded data', file=log)
-    log.flush()
 
     if cfg.model.edge_type == 'voronoi':
         n_edge_attr = 5
@@ -80,26 +116,24 @@ def training(cfg: DictConfig, output_dir: str, log):
     training_curve = np.ones((1, cfg.model.epochs)) * np.nan
     val_curve = np.ones((1, cfg.model.epochs)) * np.nan
 
-    if cfg.verbose: print(f'environmental variables: {cfg.datasource.env_vars}')
-
     model = Model(n_env=len(cfg.datasource.env_vars), coord_dim=2, n_edge_attr=n_edge_attr,
                   seed=seed, **cfg.model)
 
     n_params = count_parameters(model)
 
-    print('initialized model', file=log)
-    print(f'number of model parameters: {n_params}', file=log)
+    if cfg.verbose:
+        print('initialized model', file=log)
+        print(f'number of model parameters: {n_params}', file=log)
+        print(f'environmental variables: {cfg.datasource.env_vars}')
 
     log.flush()
 
-    pretrained = False
     ext = ''
     if cfg.get('use_pretrained_model', False):
         states_path = osp.join(output_dir, 'model.pkl')
         if osp.isfile(states_path):
             model.load_state_dict(torch.load(states_path))
-            print('successfully loaded pretrained model')
-            pretrained = True
+            if cfg.verbose: print('successfully loaded pretrained model')
             ext = '_pretrained'
 
     model = model.to(device)
@@ -107,28 +141,19 @@ def training(cfg: DictConfig, output_dir: str, log):
     optimizer = torch.optim.Adam(params, lr=cfg.model.lr)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=cfg.model.lr_decay, gamma=cfg.model.get('lr_gamma', 0.1))
 
-    #scheduler = lr_scheduler.CyclicLR(optimizer, cfg.model.lr, cfg.model.get('lr_max', 10*cfg.model.lr), step_size_up=cfg.model.lr_decay)
-
     for p in model.parameters():
         p.register_hook(lambda grad: torch.clamp(grad, -1.0, 1.0))
 
 
-    tf = cfg.model.get('teacher_forcing_init', 1.0) #initialize teacher forcing (is ignored for LocalMLP)
+    tf = cfg.model.get('teacher_forcing_init', 1.0)
     all_tf = np.zeros(cfg.model.epochs)
     all_lr = np.zeros(cfg.model.epochs)
     avg_loss = np.inf
     saved = False
 
-    print('start training', file=log)
-    log.flush()
-
     for epoch in range(cfg.model.epochs):
         all_tf[epoch] = tf
         all_lr[epoch] = optimizer.param_groups[0]["lr"]
-
-        #for name, param in model.named_parameters():
-        #    if param.requires_grad:
-        #        print(name, param.data, param.grad)
 
         loss = train(model, train_loader, optimizer, loss_func, device, teacher_forcing=tf, **cfg.model)
         training_curve[0, epoch] = loss / n_train
@@ -168,8 +193,9 @@ def training(cfg: DictConfig, output_dir: str, log):
     if not cfg.model.early_stopping or not saved:
         torch.save(model.state_dict(), osp.join(output_dir, f'model{ext}.pkl'))
 
-    print(f'validation loss = {best_val_loss}', file=log)
-    log.flush()
+    if cfg.verbose:
+        print(f'validation loss = {best_val_loss}', file=log)
+        log.flush()
 
     # save training and validation curves
     np.save(osp.join(output_dir, f'training_curves{ext}.npy'), training_curve)
@@ -187,6 +213,16 @@ def training(cfg: DictConfig, output_dir: str, log):
     log.flush()
 
 def cross_validation(cfg: DictConfig, output_dir: str, log):
+    """
+    Run cross-validation for neural network model.
+
+    The training data is split into N subsets, and N models are trained where for each model a different subset
+    is left for validation.
+
+    :param cfg: DictConfig specifying the model, data and training details, including the number of folds to use
+    :param output_dir: directory to which all N models and logs are written to
+    :param log: log file
+    """
     assert cfg.model.name in MODEL_MAPPING
 
     if cfg.debugging: torch.autograd.set_detect_anomaly(True)
@@ -198,7 +234,8 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
     n_folds = cfg.task.n_folds
     seed = cfg.seed + cfg.get('job_id', 0)
 
-    data = setup_training(cfg, output_dir)
+    data = dataloader.load_dataset(cfg, output_dir, training=True)[0]
+    data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
     if cfg.model.edge_type == 'voronoi':
@@ -258,7 +295,7 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
         for p in model.parameters():
             p.register_hook(lambda grad: torch.clamp(grad, -1.0, 1.0))
 
-        tf = cfg.model.get('teacher_forcing_init', 1.0) # initialize teacher forcing (is ignored for LocalMLP)
+        tf = cfg.model.get('teacher_forcing_init', 1.0)
         all_tf = np.zeros(epochs)
         all_lr = np.zeros(epochs)
         for epoch in range(epochs):
@@ -303,7 +340,8 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
         if not cfg.model.early_stopping:
             torch.save(model.state_dict(), osp.join(subdir, 'model.pkl'))
 
-        print(f'fold {f}: final validation loss = {val_curves[f, -1]}', file=log)
+        if cfg.verbose:
+            print(f'fold {f}: final validation loss = {val_curves[f, -1]}', file=log)
         best_val_losses[f] = best_val_loss
 
         log.flush()
@@ -318,10 +356,11 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
         utils.plot_training_curves(training_curves, val_curves, subdir, log=True)
         utils.plot_training_curves(training_curves, val_curves, subdir, log=False)
 
-    print(f'average validation loss = {val_curves[:, -1].mean()}', file=log)
+    if cfg.verbose:
+        print(f'average validation loss = {val_curves[:, -1].mean()}', file=log)
 
     summary = pd.DataFrame({'fold': range(n_folds),
-        'final_val_loss': val_curves[:, -cfg.model.avg_window:].mean(1),
+                            'final_val_loss': val_curves[:, -cfg.model.avg_window:].mean(1),
                             'best_val_loss': best_val_losses,
                             'best_epoch': best_epochs})
     summary.to_csv(osp.join(output_dir, 'summary.csv'))
@@ -332,84 +371,20 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
 
     log.flush()
 
-def setup_training(cfg: DictConfig, output_dir: str):
-
-    seq_len = cfg.model.get('context', 0) + cfg.model.horizon
-    seed = cfg.seed + cfg.get('job_id', 0)
-
-    # preprocessed_dirname = f'{cfg.model.edge_type}_dummy_radars={cfg.model.n_dummy_radars}_exclude={cfg.exclude}'
-    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.model.n_dummy_radars}'
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
-                        f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_ndummy={cfg.model.n_dummy_radars}'
-    
-    data_dir = osp.join(cfg.device.root, 'data')
-    # initialize normalizer
-    training_years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-    normalization = dataloader.Normalization(training_years, cfg.datasource.name,
-                                             data_dir, preprocessed_dirname, **cfg)
-    # load training and validation data
-    data = [dataloader.RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
-                                 **cfg, **cfg.model,
-                                 data_root=data_dir,
-                                 data_source=cfg.datasource.name,
-                                 normalization=normalization,
-                                 env_vars=cfg.datasource.env_vars,
-                                 )
-            for year in training_years]
-
-    data = torch.utils.data.ConcatDataset(data)
-
-    if cfg.model.birds_per_km2:
-        input_col = 'birds_km2'
-    else:
-        if cfg.datasource.use_buffers:
-            input_col = 'birds_from_buffer'
-        else:
-            input_col = 'birds'
-
-
-    cfg.datasource.bird_scale = float(normalization.max(input_col))
-    cfg.model_seed = seed
-    with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
-        OmegaConf.save(config=cfg, f=f)
-    with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
-        pickle.dump(normalization, f)
-
-    if cfg.root_transform == 0:
-        cfg.datasource.bird_scale = float(normalization.max(input_col))
-    else:
-        cfg.datasource.bird_scale = float(normalization.root_max(input_col, cfg.root_transform))
-
-    return data
-
 
 def testing(cfg: DictConfig, output_dir: str, log, ext=''):
+    """
+    Test neural network model on unseen test data.
+
+    :param cfg: DictConfig specifying model, data and testing details
+    :param output_dir: directory to which test results are written to
+    """
+
     assert cfg.model.name in MODEL_MAPPING
 
     Model = MODEL_MAPPING[cfg.model.name]
 
-    context = cfg.model.get('context', 0)
-    if context == 0: context = cfg.model.get('test_context', 0)
-
-    seq_len = context + cfg.model.test_horizon
-
-    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.model.n_dummy_radars}'
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
-                        f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_ndummy={cfg.model.n_dummy_radars}'
-
-    model_dir = cfg.get('model_dir', output_dir)
     device = 'cuda' if (cfg.device.cuda and torch.cuda.is_available()) else 'cpu'
-
-
-    if cfg.model.birds_per_km2:
-        input_col = 'birds_km2'
-    else:
-        if cfg.datasource.use_buffers:
-            input_col = 'birds_from_buffer'
-        else:
-            input_col = 'birds'
 
     if cfg.model.edge_type == 'voronoi':
         n_edge_attr = 5
@@ -422,48 +397,25 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
         model_ext = ''
     ext = f'{ext}{model_ext}'
 
-    # load training config
-    yaml = ruamel.yaml.YAML()
-    print(cfg)
-    print(f'model dir: {model_dir}')
-    fp = osp.join(model_dir, 'config.yaml')
-    with open(fp, 'r') as f:
-        model_cfg = yaml.load(f)
-
-    # load normalizer
-    with open(osp.join(model_dir, 'normalization.pkl'), 'rb') as f:
-        normalization = pickle.load(f)
-    if cfg.root_transform == 0:
-        cfg.datasource.bird_scale = float(normalization.max(input_col))
-    else:
-        cfg.datasource.bird_scale = float(normalization.root_max(input_col, cfg.root_transform))
+    model_dir = cfg.get('model_dir', output_dir)
+    model_cfg = utils.load_model_cfg(model_dir)
+    cfg.datasource.bird_scale = model_cfg['datasource']['bird_scale']
 
     # load test data
-    data_dir = osp.join(cfg.device.root, 'data')
-    test_data = dataloader.RadarData(str(cfg.datasource.test_year), seq_len,
-                                    preprocessed_dirname, processed_dirname,
-                                    **cfg, **cfg.model,
-                                    data_root=data_dir,
-                                    data_source=cfg.datasource.name,
-                                    normalization=normalization,
-                                    env_vars=cfg.datasource.env_vars,
-                                    )
-    test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
+    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, output_dir, training=False)
+    test_loader = DataLoader(test_data[0], batch_size=1, shuffle=False)
 
     # load additional data
     time = test_data.info['timepoints']
     radars = test_data.info['radars']
     areas = test_data.info['areas']
     to_km2 = np.ones(len(radars)) if input_col == 'birds_km2' else test_data.info['areas']
-    to_cell = test_data.info['areas'] if input_col == 'birds_km2' else np.ones(len(radars))
     radar_index = {idx: name for idx, name in enumerate(radars)}
 
     # load models and predict
     results = dict(gt_km2=[], prediction_km2=[], night=[], radar=[], area=[], seqID=[],
                    tidx=[], datetime=[], horizon=[], missing=[], trial=[])
     if cfg.model.name in ['LocalLSTM', 'FluxRGNN']:
-        # results['source'] = []
-        # results['sink'] = []
         results['source_km2'] = []
         results['sink_km2'] = []
     if cfg.model.name == 'FluxRGNN':
@@ -517,8 +469,6 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
 
             radar_fluxes[nidx] = to_dense_adj(data.edge_index, edge_attr=data.fluxes).view(
                 data.num_nodes, data.num_nodes, -1).detach().cpu()
-            # radar_mtr[nidx] = to_dense_adj(data.edge_index, edge_attr=data.mtr).view(
-            #     data.num_nodes, data.num_nodes, -1).detach().cpu()
 
         if 'LSTM' in cfg.model.name or 'RGNN' in cfg.model.name:
             node_source = model.node_source.detach().cpu() * cfg.datasource.bird_scale
@@ -529,8 +479,6 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
         fill_context = torch.ones(context) * float('nan')
 
         for ridx, name in radar_index.items():
-            # results['gt'].append(y[ridx, :] * to_cell[ridx])
-            # results['prediction'].append(torch.cat([fill_context, y_hat[ridx, :]]) * to_cell[ridx])
             results['gt_km2'].append(y[ridx, :] / to_km2[ridx])
             results['prediction_km2'].append(torch.cat([fill_context, y_hat[ridx, :] / to_km2[ridx]]))
             results['night'].append(local_night[ridx, :])
@@ -540,68 +488,25 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
             results['tidx'].append(_tidx)
             results['datetime'].append(time[_tidx])
             results['trial'].append([cfg.get('job_id', 0)] * y.shape[1])
-            #print(y.shape[1], cfg.model.context + cfg.model.test_horizon +1)
             results['horizon'].append(np.arange(-(cfg.model.context-1), cfg.model.test_horizon+1))
             results['missing'].append(missing[ridx, :])
 
             if 'LSTM' in cfg.model.name or 'RGNN' in cfg.model.name:
-                #results['flux'].append(torch.cat([fill_context, fluxes[ridx].view(-1)]))
-                # results['source'].append(torch.cat([fill_context, node_source[ridx].view(-1)]) * to_cell[ridx])
-                # results['sink'].append(torch.cat([fill_context, node_sink[ridx].view(-1)]) * to_cell[ridx])
                 results['source_km2'].append(torch.cat([fill_context, node_source[ridx].view(-1) / to_km2[ridx]]))
                 results['sink_km2'].append(torch.cat([fill_context, node_sink[ridx].view(-1) / to_km2[ridx]]))
             if 'Flux' in cfg.model.name:
                 results['influx_km2'].append(torch.cat([fill_context, influxes[ridx].view(-1)]) / to_km2[ridx])
                 results['outflux_km2'].append(torch.cat([fill_context, outfluxes[ridx].view(-1)]) / to_km2[ridx])
 
-    if 'Flux' in cfg.model.name:
-        with open(osp.join(output_dir, f'model_fluxes{ext}.pickle'), 'wb') as f:
-            pickle.dump(edge_fluxes, f, pickle.HIGHEST_PROTOCOL)
-        # with open(osp.join(output_dir, f'radar_fluxes{ext}.pickle'), 'wb') as f:
-        #     pickle.dump(radar_fluxes, f, pickle.HIGHEST_PROTOCOL)
-        #with open(osp.join(output_dir, f'radar_mtr{ext}.pickle'), 'wb') as f:
-        #    pickle.dump(radar_mtr, f, pickle.HIGHEST_PROTOCOL)
-    #if enc_att or cfg.model.name == 'AttentionGraphLSTM':
-    #    with open(osp.join(output_dir, f'attention_weights{ext}.pickle'), 'wb') as f:
-    #        pickle.dump(attention_weights, f, pickle.HIGHEST_PROTOCOL)
-
+    utils.finalize_results(results, output_dir, ext)
 
     with open(osp.join(output_dir, f'radar_index.pickle'), 'wb') as f:
         pickle.dump(radar_index, f, pickle.HIGHEST_PROTOCOL)
 
-    # create dataframe containing all results
-    for k, v in results.items():
-        if torch.is_tensor(v[0]):
-            results[k] = torch.cat(v).numpy()
-        else:
-            results[k] = np.concatenate(v)
-    #results['residual'] = results['gt'] - results['prediction']
-    results['residual_km2'] = results['gt_km2'] - results['prediction_km2']
-    df = pd.DataFrame(results)
-    df.to_csv(osp.join(output_dir, f'results{ext}.csv'))
+    if 'Flux' in cfg.model.name:
+        with open(osp.join(output_dir, f'model_fluxes{ext}.pickle'), 'wb') as f:
+            pickle.dump(edge_fluxes, f, pickle.HIGHEST_PROTOCOL)
 
-    print(f'successfully saved results to {osp.join(output_dir, f"results{ext}.csv")}', file=log)
-    log.flush()
-
-
-def run(cfg: DictConfig, output_dir: str, log):
-    print(f'cfg.task: {cfg.task}')
-    if 'search' in cfg.task.name:
-        cross_validation(cfg, output_dir, log)
-    if 'train' in cfg.task.name:
-        training(cfg, output_dir, log)
-    if 'eval' in cfg.task.name:
-        if hasattr(cfg, 'importance_sampling'):
-            cfg.importance_sampling = False
-
-        cfg['fixed_t0'] = True
-        testing(cfg, output_dir, log, ext='_fixedT0')
-        cfg['fixed_t0'] = False
-        testing(cfg, output_dir, log)
-
-        if cfg.get('test_train_data', False):
-            training_years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-            cfg.model.test_horizon = cfg.model.horizon
-            for y in training_years:
-                cfg.datasource.test_year = y
-                testing(cfg, output_dir, log, ext=f'_training_year_{y}')
+    if cfg.verbose:
+        print(f'successfully saved results to {osp.join(output_dir, f"results{ext}.csv")}', file=log)
+        log.flush()
