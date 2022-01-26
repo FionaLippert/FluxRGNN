@@ -8,7 +8,7 @@ intensity as well as on spatio-temporal dependencies inherent to the movement pr
 
 
 ## Requirements and setup
-- python
+- Python 3
 - conda
 - pytorch (if you want to accelerate training with a GPU, make sure to install a cuda-enabled pytorch version)
 
@@ -70,5 +70,46 @@ python run_experiments.py datasource={datasource} +experiment={name} device=clus
 To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), simply add `model={model}` to your command line.
 
 ### Analysis
+
+#### Predictive performance
+
+To compare the predictive performance of FluxRGNN to the baseline models, run
+```
+python evaluate_performance.py datasource={datasource} +experiment_type=final
+```
+
+Similarly, to compare the predictive performance of FluxRGNN to its variants (ablations), run
+```
+python evaluate_performance.py datasource={datasource} +experiment_type=ablations
+```
+
+This will generate summaries of the performance measures and write them to the directory `FluxRGNN/results/{datasource}/performance_evaluation`.
+Then the Jupyter notebook `performance_evaluation.ipynb` can be used to recreate the figures from our paper.
+
+#### Validation of fluxes and source/sink terms
+
+To validate the spatial and temporal component of FluxRGNN by comparing 24h fluxes and source/sink terms to the 
+respective ground truth from simulations, run
+```
+python evaluate_fluxes.py datasource=abm
+```
+
+To do the same for hourly fluxes and source/sink terms, run
+```
+python evaluate_fluxes.py datasource=abm +H_min=24 +H_max=24
+```
+The forecasting horizon (`H_min` and `H_max`) can be set to anything between 1 and 72.
+
+To recreate the figures from our paper, use the Jupyter notebook `validation_study.ipynb`.
+
+#### Radar case study
+
+To recreate the map of average 24h fluxes predicted for the radar data, first run 
+```
+python evaluate_fluxes.py datasource=radar
+```
+and then use the Jupyter notebook `radar_case_study.ipynb` for plotting.
+
+The same notebook can be used to visualize example predictions for a single radar or the entire network.
 
 ## How to cite
