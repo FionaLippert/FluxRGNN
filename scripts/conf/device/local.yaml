@@ -1,5 +1,5 @@
-# @package _group_
+# @package device
 name: local
-root: /home/${env:USER}/FluxRGNN
+root: /home/${oc.env:USER}/FluxRGNN
 cuda: false
 slurm: false

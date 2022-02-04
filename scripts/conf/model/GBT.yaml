@@ -1,4 +1,4 @@
-# @package _group_
+# @package model
 name: GBT
 n_estimators: 200
 lr: 0.05

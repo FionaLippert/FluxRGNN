@@ -1,4 +1,4 @@
-# @package _group_
+# @package model
 name: LocalLSTM
 
 n_hidden: 128
