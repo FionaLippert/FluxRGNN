@@ -6,7 +6,7 @@ import os
 import os.path as osp
 import pandas as pd
 import geopandas as gpd
-import pickle5 as pickle
+import pickle
 from yaml import Loader, load
 import itertools as it
 import networkx as nx

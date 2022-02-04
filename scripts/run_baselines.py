@@ -1,9 +1,9 @@
-from src import dataloader, utils
+from fluxrgnn import dataloader, utils
 import torch
 from torch.utils.data import random_split, Subset
 from omegaconf import DictConfig, OmegaConf
 import hydra
-import pickle5 as pickle
+import pickle
 import os.path as osp
 import os
 import numpy as np

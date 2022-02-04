@@ -5,7 +5,7 @@ import networkx as nx
 import os.path as osp
 import os
 import pandas as pd
-import pickle5 as pickle
+import pickle
 import itertools as it
 from omegaconf import DictConfig, OmegaConf
 import warnings
