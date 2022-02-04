@@ -6,6 +6,7 @@ channels:
   - conda-forge
 dependencies:
    - python=3.8.3
+   - pip
    - numpy
    - scipy
    - networkx
@@ -15,13 +16,14 @@ dependencies:
    - pyg
    - scikit-learn
    - pygam
-   - omegaconf
-   - hydra-core
-   - ruamel
+   - ruamel.yaml
    - yaml
+   - hydra-core
    - pandas
    - matplotlib
    - seaborn
+     #- pip:
+     #      - hydra-core
    # - geopandas
    # - cartopy
    # - geoplot
