@@ -19,6 +19,6 @@ setup(
     author_email='fiona@lipperta.de',
     #url='https://github.com/FionaLippert/birdMigration',
     license=license,
-    packages=find_packages('src'),
+    packages=find_packages(exclude=['test']),
 
 )
