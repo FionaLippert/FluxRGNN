@@ -6,7 +6,7 @@ n_lstm_layers: 1
 
 context: 24
 horizon: 48
-test_horizon: 64
+test_horizon: 72
 
 epochs: 300
 batch_size: 4

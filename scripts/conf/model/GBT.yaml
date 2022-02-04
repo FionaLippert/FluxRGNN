@@ -4,7 +4,7 @@ n_estimators: 200
 lr: 0.05
 max_depth: 10
 horizon: 1
-test_horizon: 64
+test_horizon: 72
 test_context: 24
 tolerance: 1e-8
 use_acc_vars: false

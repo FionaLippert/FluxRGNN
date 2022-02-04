@@ -8,12 +8,12 @@ n_graph_layers: 0
 
 context: 24
 horizon: 48
-test_horizon: 64
+test_horizon: 72
 
 epochs: 300
 batch_size: 4
 lr: 1e-5
-lr_decay: 500
+lr_decay: 300
 lr_gamma: 1.0
 early_stopping: true
 stopping_criterion: 1e-6
