@@ -13,13 +13,12 @@ dependencies:
    - cudatoolkit=10.2
    - pytorch
    - pyg
-   - sklearn
+   - scikit-learn
    - pygam
    - omegaconf
    - hydra-core
    - ruamel
    - yaml
-   - pickle
    - pandas
    - matplotlib
    - seaborn
