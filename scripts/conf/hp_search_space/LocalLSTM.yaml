@@ -1,4 +1,4 @@
-# @package _group_
+# @package hp_search_space
 n_hidden:
   - 64
   - 128

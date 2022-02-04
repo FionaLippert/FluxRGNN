@@ -1,4 +1,4 @@
-# @package _group_
+# @package hp_search_space
 lr:
   - 0.01
   - 0.05

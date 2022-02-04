@@ -1,4 +1,4 @@
-# @package _group_
+# @package task
 name: train
 slurm_job: scripts/run_train_eval_slurm.job
 local_job: scripts/run_train_eval_local.job
