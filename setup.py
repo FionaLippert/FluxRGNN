@@ -10,9 +10,6 @@ with open('LICENSE') as f:
     license = f.read()
 
 
-print(find_packages(exclude=('tests', 'docs')))
-
-
 setup(
     name='fluxrgnn',
     version='0.1.0',
@@ -22,6 +19,6 @@ setup(
     author_email='fiona@lipperta.de',
     #url='https://github.com/FionaLippert/birdMigration',
     license=license,
-    packages=find_packages(exclude=('tests', 'docs')),
+    packages=find_packages('src'),
 
 )
