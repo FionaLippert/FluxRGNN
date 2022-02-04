@@ -14,9 +14,9 @@ print(find_packages(exclude=('tests', 'docs')))
 
 
 setup(
-    name='birds',
+    name='fluxrgnn',
     version='0.1.0',
-    description='toolbox to understand and predict bird migration based on radar data',
+    description='Spatio-temporal modeling framework for large-scale migration forecasts based on static sensor network data ',
     long_description=readme,
     author='Fiona Lippert',
     author_email='fiona@lipperta.de',
