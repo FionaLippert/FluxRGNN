@@ -2,8 +2,8 @@
 output_dir: results
 sub_dir: none
 defaults:
-  - datasource: abm
-  - model: FluxGraphLSTM
+  - datasource: radar
+  - model: FluxRGNN
   - task: train_eval
   - device: cluster
 job_id: 0
