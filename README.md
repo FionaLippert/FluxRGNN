@@ -8,9 +8,7 @@ intensity as well as on spatio-temporal dependencies inherent to the movement pr
 
 
 ## Requirements and setup
-- Python 3
-- conda
-- pytorch (if you want to accelerate training with a GPU, make sure to install a cuda-enabled pytorch version)
+First, make sure you have [conda](https://docs.conda.io/en/latest/) installed.
 
 To install all other dependencies and the FluxRGNN package itself, switch to the FluxRGNN directory and run:
 ```
@@ -22,6 +20,10 @@ Later on, it is enough to activate the environment with
 conda activate fluxrgnn
 ```
 before getting started.
+
+If you want to use your GPU, you may need to manually install a matching 
+[PyTorch](https://pytorch.org/) version.
+
 
 ## Getting started
 
@@ -55,7 +57,7 @@ The preprocessed data must include:
 
 ### Training and testing
 
-To train FluxRGNN on all available data except for year 2017 and to immediately test it on the held-out data, run
+To train FluxRGNN on all available data except for year 2017 and to immediately test it on the held-out data, switch to the `scripts` directory and run
 ```
 python run_experiments.py datasource={datasource} +experiment={name}
 ```
