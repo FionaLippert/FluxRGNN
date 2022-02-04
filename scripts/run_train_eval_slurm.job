@@ -11,7 +11,7 @@
 # Note: use --partition=gpu_short for debugging
 
 
-source activate birds
+source activate fluxrgnn
 
 module load 2020
 module load CUDA/11.0.2-GCC-9.3.0
