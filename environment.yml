@@ -5,8 +5,7 @@ channels:
   - anaconda
   - conda-forge
 dependencies:
-   - python=3.8.3
-   - pip
+   - python>=3.8.3
    - numpy
    - scipy
    - networkx
@@ -21,11 +20,10 @@ dependencies:
    - hydra-core
    - pandas
    - matplotlib
-   - seaborn
-     #- pip:
-     #      - hydra-core
-   # - geopandas
-   # - cartopy
-   # - geoplot
-   # - shapely
+     #- notebook
+     #- seaborn
+     #- geopandas
+     #- cartopy
+     #- geoplot
+     #- shapely
 

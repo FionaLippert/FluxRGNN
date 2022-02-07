@@ -543,7 +543,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
                         f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_ndummy={cfg.model.datasource.n_dummy_radars}'
+                        f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
     data_dir = osp.join(cfg.device.root, 'data')
 
     if cfg.model.birds_per_km2:

@@ -1,5 +1,5 @@
-# @package devices
+# @package device
 name: cluster
-root: /home/${oc.env:USER}/FluxRGNN
+root: /home/${env:USER}/FluxRGNN
 cuda: true
 slurm: true
