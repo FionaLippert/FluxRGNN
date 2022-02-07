@@ -516,12 +516,12 @@ class SensorData(Data):
     def __init__(self, **kwargs):
         super(SensorData, self).__init__(**kwargs)
 
-    def __inc__(self, key, value):
+    def __inc__(self, key, value, *args, **kwargs):
         # in mini-batches, increase edge indices in reverse_edges by the number of edges in the graph
         if key == 'reverse_edges':
             return self.num_edges
         else:
-            return super().__inc__(key, value)
+            return super().__inc__(key, value, *args, **kwargs)
 
 
 def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
