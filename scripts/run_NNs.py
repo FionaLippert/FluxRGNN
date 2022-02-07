@@ -399,11 +399,12 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
 
     model_dir = cfg.get('model_dir', output_dir)
     model_cfg = utils.load_model_cfg(model_dir)
-    cfg.datasource.bird_scale = model_cfg['datasource']['bird_scale']
+    cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     # load test data
     test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, output_dir, training=False)
-    test_loader = DataLoader(test_data[0], batch_size=1, shuffle=False)
+    test_data = test_data[0]
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
     # load additional data
     time = test_data.info['timepoints']
