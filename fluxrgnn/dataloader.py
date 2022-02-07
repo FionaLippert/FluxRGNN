@@ -126,7 +126,6 @@ class RadarData(InMemoryDataset):
 
         self.start = kwargs.get('start', None)
         self.end = kwargs.get('end', None)
-        self.normalize_dynamic = kwargs.get('normalize_dynamic', True)
         self.normalization = kwargs.get('normalization', None)
 
         self.edge_type = kwargs.get('edge_type', 'voronoi')
@@ -139,7 +138,6 @@ class RadarData(InMemoryDataset):
         self.rng = np.random.default_rng(self.seed)
         self.data_perc = kwargs.get('data_perc', 1.0)
         self.importance_sampling = kwargs.get('importance_sampling', False)
-        print('importance sampling', self.importance_sampling)
 
 
         super(RadarData, self).__init__(self.root, transform, pre_transform)
