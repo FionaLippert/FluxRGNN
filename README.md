@@ -48,7 +48,7 @@ in the `scripts/conf` directory.
 
 To reproduce the results from our paper, please download the preprocessed data here (TODO: link to zenodo)
 To run the preprocessing of bird density and velocity data from 
-the European weather radar network yourself, you can use (this)[https://github.com/FionaLippert/birdMigration] code.
+the European weather radar network yourself, you can use [this](https://github.com/FionaLippert/birdMigration) code.
 
 The preprocessed data must include:
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of sensor locations
