@@ -46,9 +46,9 @@ FluxRGNN/data/preprocessed/{t_unit}_voronoi_ndummy={ndummy}/{datasource}/{season
 where `t_unit`, `ndummy`, `datasource`, `season` and `year` can be specified in the hydra configuration files 
 in the `scripts/conf` directory.
 
-To reproduce the results from our paper, please download the preprocessed data here (link to zenodo)
+To reproduce the results from our paper, please download the preprocessed data here (TODO: link to zenodo)
 To run the preprocessing of bird density and velocity data from 
-the European weather radar network yourself, you can use this code (link to birdMigration repository).
+the European weather radar network yourself, you can use (this)[https://github.com/FionaLippert/birdMigration] code.
 
 The preprocessed data must include:
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of sensor locations
@@ -113,5 +113,3 @@ python evaluate_fluxes.py datasource=radar
 and then use the Jupyter notebook `radar_case_study.ipynb` for plotting.
 
 The same notebook can be used to visualize example predictions for a single radar or the entire network.
-
-## How to cite
