@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/450534842.svg)](https://zenodo.org/badge/latestdoi/450534842)
+
 # FluxRGNN
 A spatio-temporal modeling framework for large-scale migration forecasts based on 
 static sensor network data.
