@@ -2,7 +2,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing, inits
-from torch_geometric.utils import add_self_loops, degree, to_dense_adj, dense_to_sparse, softmax
 import numpy as np
 
 
