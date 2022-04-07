@@ -24,7 +24,7 @@ def run(cfg: DictConfig):
             os.makedirs(target_dir, exist_ok=True)
             datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
                              random_seed=cfg.seed, edge_type=cfg.model.edge_type,
-                             n_dummy_radars=cfg.datasource.n_dummy_radars, **cfg)
+                             n_dummy_radars=cfg.datasource.n_dummy_radars, **cfg.datasource, **cfg)
         else:
             print(f'year {year}: nothing to be done')
 

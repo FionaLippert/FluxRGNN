@@ -1,23 +1,10 @@
 # @package datasource
-name: radar
+name: nexrad
 years:
-  - 2015
-  - 2016
-  - 2017
-test_year: 2017
+  - 2019
+test_year: 2019
 val_train_split: 0.1
-replacements:
-	- nldbl: nlhrw
 env_vars:
-  - u
-  - v
-  - u10
-  - v10
-  - cc
-  - tp
-  - sp
-  - t2m
-  - sshf
   - night
   - dusk
   - dawn
