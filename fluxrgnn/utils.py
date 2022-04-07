@@ -4,7 +4,7 @@ import os.path as osp
 import torch
 import warnings
 from omegaconf import DictConfig, OmegaConf
-import pickle5 as pickle
+import pickle
 import pandas as pd
 import ruamel.yaml
 

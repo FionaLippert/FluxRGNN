@@ -25,7 +25,8 @@ def evaluate(cfg: DictConfig):
     """
 
     base_dir = cfg.device.root
-    result_dir = osp.join(base_dir, cfg.output_dir, cfg.datasource.name)
+    experiment = cfg.get('experiment', 'final')
+    result_dir = osp.join(base_dir, cfg.output_dir, cfg.datasource.name, cfg.model.name, f'test_{cfg.datasource.test_year}', experiment)
     data_dir = osp.join(base_dir, 'data', 'preprocessed',
                         f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}',
                         cfg.datasource.name, cfg.season, str(cfg.datasource.test_year))
@@ -35,19 +36,20 @@ def evaluate(cfg: DictConfig):
 
     voronoi = gpd.read_file(osp.join(data_dir, 'voronoi.shp'))
 
-    results, cfg = load_cv_results(result_dir, trials=cfg.task.repeats)
+    print(result_dir)
+    results, _ = load_cv_results(result_dir, trials=cfg.task.repeats)
     output_dir = osp.join(result_dir, 'performance_evaluation', f'{H_min}-{H_max}')
     os.makedirs(output_dir, exist_ok=True)
 
     voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir)
-    evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, output_dir)
+    evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, result_dir, output_dir)
 
 
 
-def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir):
+def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, result_dir, output_dir):
     context = cfg.model.context
-    result_dir = osp.join(cfg.device.root, cfg.output_dir, cfg.datasource.name, cfg.model.name,
-                          f'test_{cfg.datasource.test_year}', cfg.experiment)
+    #result_dir = osp.join(cfg.device.root, cfg.output_dir, cfg.datasource.name, cfg.model.name,
+    #                      f'test_{cfg.datasource.test_year}', cfg.experiment)
     boundary_idx = voronoi.query('observed == 0').index.values
     model_fluxes = load_model_fluxes(result_dir, trials=cfg.task.repeats)
     G = nx.read_gpickle(osp.join(data_dir, 'delaunay.gpickle'))
@@ -93,7 +95,10 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
     corr_angles = []
     bin_fluxes = []
 
+    all_fluxes = dict(model_flux=[], gt_flux=[], radar1=[], radar2=[], trial=[])
+
     # loop over all trials
+    print(model_fluxes.keys())
     for t, model_fluxes_t in model_fluxes.items():
 
         print(f'evaluate fluxes for trial {t}')
@@ -105,6 +110,7 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
 
         if cfg.datasource.name == 'abm':
             mask = np.isfinite(gt_net_fluxes)
+            print(mask.shape)
             overall_corr[t] = np.corrcoef(gt_net_fluxes[mask].flatten(),
                                           model_net_fluxes_t[mask].flatten())[0, 1]
 
@@ -112,6 +118,20 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
             bin_results = pd.DataFrame(bin_results)
             bin_results['trial'] = t
             bin_fluxes.append(bin_results)
+
+            print(t)
+            for i, ri in voronoi.iterrows():
+                for j, rj in voronoi.iterrows():
+                    if not i == j:
+                        #print(model_net_fluxes_t[mask].shape)
+                        #print(model_net_fluxes_t.shape)
+                        all_fluxes['model_flux'].extend(model_net_fluxes_t[i,j])
+                        all_fluxes['gt_flux'].extend(gt_net_fluxes[i,j])
+                        length = model_net_fluxes_t[i,j].size
+                        all_fluxes['radar1'].extend([ri['radar']] * length)
+                        all_fluxes['radar2'].extend([rj['radar']] * length)
+                        all_fluxes['trial'].extend([t] * length)
+                        
 
             corr_influx_per_month = dict(month=[], corr=[], trial=[])
             corr_outflux_per_month = dict(month=[], corr=[], trial=[])
@@ -200,6 +220,9 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
         bin_fluxes.to_csv(osp.join(output_dir, 'agg_bins_per_trial.csv'))
         corr_influx.to_csv(osp.join(output_dir, 'agg_corr_influx_per_month.csv'))
         corr_outflux.to_csv(osp.join(output_dir, 'agg_corr_outflux_per_month.csv'))
+        
+        all_fluxes = pd.DataFrame(all_fluxes)
+        all_fluxes.to_csv(osp.join(output_dir, 'all_fluxes_per_trial.csv'))
 
         with open(osp.join(output_dir, 'agg_overall_corr.pickle'), 'wb') as f:
             pickle.dump(overall_corr, f, pickle.HIGHEST_PROTOCOL)
@@ -322,6 +345,7 @@ def load_cv_results(result_dir, ext='', trials=1):
     result_list = []
     for t in range(1, trials + 1):
         file = osp.join(result_dir, f'trial_{t}', f'results{ext}.csv')
+        print(file)
         if osp.isfile(file):
             df = pd.read_csv(file)
             df['trial'] = t
