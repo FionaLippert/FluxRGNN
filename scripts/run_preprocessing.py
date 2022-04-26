@@ -14,6 +14,8 @@ def run(cfg: DictConfig):
     raw_data_root = cfg.get('raw_data_dir', osp.join(data_root, 'raw'))
     print(f'loading raw data from {raw_data_root}')
 
+    cfg['datasource']['bird_scale'] = 1
+
     for year in years:
         target_dir = osp.join(data_root, 'preprocessed',
                               f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}',
@@ -24,7 +26,7 @@ def run(cfg: DictConfig):
             os.makedirs(target_dir, exist_ok=True)
             datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
                              random_seed=cfg.seed, edge_type=cfg.model.edge_type,
-                             n_dummy_radars=cfg.datasource.n_dummy_radars, **cfg.datasource, **cfg)
+                             **cfg.datasource, **cfg)
         else:
             print(f'year {year}: nothing to be done')
 
