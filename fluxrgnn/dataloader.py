@@ -33,8 +33,10 @@ class Normalization:
         self.t_unit = kwargs.get('t_unit', '1H')
 
         all_dfs = []
+        print(years)
         for year in years:
             dir = self.preprocessed_dir(year)
+            print(dir)
             if not osp.isdir(dir):
                 print(f'Preprocessed data for year {year} not available. Please run preprocessing script first.')
 
@@ -287,7 +289,13 @@ class RadarData(InMemoryDataset):
             data['inputs'].append(df[input_col].to_numpy())
             data['targets'].append(df[target_col].to_numpy())
             data['env'].append(df[env_cols].to_numpy().T)
-            data['acc'].append(df[acc_cols].to_numpy().T)
+
+            print(len(set(acc_cols).intersection(set(df.columns))))
+            if len(set(acc_cols).intersection(set(df.columns))) == len(acc_cols):
+                print('acc data is available')
+                data['acc'].append(df[acc_cols].to_numpy().T)
+            else:
+                data['acc'].append(np.zeros((len(acc_cols), df.night.size)))
             data['nighttime'].append(df.night.to_numpy())
             data['missing'].append(df.missing.to_numpy())
             data['bird_uv'].append(df[['bird_u', 'bird_v']].to_numpy().T)

@@ -1,0 +1,30 @@
+name: fluxrgnn
+channels:
+  - pytorch
+  - pyg
+  - anaconda
+  - conda-forge
+dependencies:
+   - python>=3.8.3
+   - numpy
+   - scipy
+   - networkx
+   - torchvision
+   - cudatoolkit=10.2
+   - pytorch
+   - pyg
+   - scikit-learn
+   - pygam
+   - ruamel.yaml
+   - yaml
+   - hydra-core
+   - pandas
+   - matplotlib
+   - ipykernel
+     #- notebook
+     #- seaborn
+     #- geopandas
+     #- cartopy
+     #- geoplot
+     #- shapely
+
