@@ -25,8 +25,9 @@ def evaluate(cfg: DictConfig):
     """
 
     base_dir = cfg.device.root
-    experiment = cfg.get('experiment', 'final')
-    result_dir = osp.join(base_dir, cfg.output_dir, cfg.datasource.name, cfg.model.name, f'test_{cfg.datasource.test_year}', experiment)
+    result_dir = osp.join(base_dir, cfg.output_dir, cfg.datasource.name, cfg.model.name,
+                          f'test_{cfg.datasource.test_year}', cfg.get('experiment', 'final'))
+
     data_dir = osp.join(base_dir, 'data', 'preprocessed',
                         f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}',
                         cfg.datasource.name, cfg.season, str(cfg.datasource.test_year))
@@ -34,24 +35,28 @@ def evaluate(cfg: DictConfig):
     H_min = cfg.get('H_min', 1)
     H_max = cfg.get('H_max', 24)
 
+    night_only = cfg.get('fixed_t0', False)
+    ext = '_fixedT0' if night_only else ''
+
     voronoi = gpd.read_file(osp.join(data_dir, 'voronoi.shp'))
 
-    print(result_dir)
-    results, _ = load_cv_results(result_dir, trials=cfg.task.repeats)
-    output_dir = osp.join(result_dir, 'performance_evaluation', f'{H_min}-{H_max}')
+    results, _ = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
+    output_dir = osp.join(result_dir, f'performance_evaluation{ext}', f'{H_min}-{H_max}')
     os.makedirs(output_dir, exist_ok=True)
 
-    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir)
-    evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, result_dir, output_dir)
+    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
+    evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
 
 
 
-def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, result_dir, output_dir):
-    context = cfg.model.context
-    #result_dir = osp.join(cfg.device.root, cfg.output_dir, cfg.datasource.name, cfg.model.name,
-    #                      f'test_{cfg.datasource.test_year}', cfg.experiment)
+def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False):
+
+    ext = '_fixedT0' if night_only else ''
+    result_dir = osp.join(cfg.device.root, cfg.output_dir, cfg.datasource.name, cfg.model.name,
+                          f'test_{cfg.datasource.test_year}', cfg.get('experiment', 'final'))
+
     boundary_idx = voronoi.query('observed == 0').index.values
-    model_fluxes = load_model_fluxes(result_dir, trials=cfg.task.repeats)
+    model_fluxes = load_model_fluxes(result_dir, trials=cfg.task.repeats, ext=ext)
     G = nx.read_gpickle(osp.join(data_dir, 'delaunay.gpickle'))
 
     if cfg.datasource.name == 'abm':
@@ -65,13 +70,17 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, re
         # rearange abm fluxes to match model fluxes
         gt_fluxes_H = []
         gt_months = []
+        seq2idx = {}
         for s in sorted(results.groupby('seqID').groups.keys()):
             df = results.query(f'seqID == {s}')
-            time = sorted(df.datetime.unique())
+            df = df.query(f'horizon >= {H_min} & horizon <= {H_max}')
+            if night_only:
+                df = df.query('night == 1')
+            time = df.datetime.unique()
+            seq2idx[s] = df.horizon.unique()
 
-            gt_months.append(pd.DatetimeIndex(time).month[context + 1])
-            agg_gt_fluxes = np.stack([gt_fluxes[time_dict[pd.Timestamp(time[context + h])]]
-                                      for h in range(H_min, H_max + 1)], axis=0).sum(0)
+            gt_months.append(pd.DatetimeIndex(time).month[0])
+            agg_gt_fluxes = np.stack([gt_fluxes[time_dict[pd.Timestamp(t)]] for t in time], axis=0).sum(0)
             gt_fluxes_H.append(agg_gt_fluxes)
 
         gt_fluxes = np.stack(gt_fluxes_H, axis=-1)
@@ -104,7 +113,8 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, re
         print(f'evaluate fluxes for trial {t}')
 
         seqIDs = sorted(model_fluxes_t.keys())
-        model_fluxes_t = np.stack([model_fluxes_t[s].detach().numpy()[..., H_min:H_max + 1].sum(-1) for s in seqIDs],
+
+        model_fluxes_t = np.stack([model_fluxes_t[s].detach().numpy()[..., seq2idx[s]].sum(-1) for s in seqIDs],
                                   axis=-1)
         model_net_fluxes_t = model_fluxes_t - np.moveaxis(model_fluxes_t, 0, 1)
 
@@ -228,7 +238,7 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, re
             pickle.dump(overall_corr, f, pickle.HIGHEST_PROTOCOL)
 
 
-def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir):
+def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False):
 
     inner_radars = voronoi.query('observed == 1').radar.values
     radar_dict = voronoi.radar.to_dict()
@@ -237,6 +247,8 @@ def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_di
     area_scale = results.area.max()
 
     df = results.query(f'horizon <= {H_max} & horizon >= {H_min}')
+    if night_only:
+        df = df.query('night == 1')
     df = df[df.radar.isin(inner_radars)]
     df['month'] = pd.DatetimeIndex(df.datetime).month
 

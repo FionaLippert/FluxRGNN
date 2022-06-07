@@ -20,6 +20,8 @@ def evaluate(cfg: DictConfig):
     """
 
     experiments = cfg.get('experiment_type', 'final')
+    fixed_t0 = cfg.get('fixed_t0', False)
+    ext = '_fixedT0' if fixed_t0 else ''
 
     if experiments == 'ablations':
         models = {
@@ -30,6 +32,7 @@ def evaluate(cfg: DictConfig):
         }
     elif experiments == 'final':
         models = {
+            'FluxRGNN': ['final'],
             'GAM': ['final'],
             'HA': ['final'],
             'GBT': ['final']
@@ -47,16 +50,32 @@ def evaluate(cfg: DictConfig):
     pcc_per_hour = []
     bin_per_hour = []
 
+    rmse_per_night = []
+    mae_per_night = []
+
+    output_dir = osp.join(base_dir, 'results', cfg.datasource.name, f'performance_evaluation{ext}', experiments)
+    os.makedirs(output_dir, exist_ok=True)
+
+
     for m, dirs in models.items():
         print(f'evaluate {m}')
 
         for d in dirs:
             result_dir = osp.join(base_dir, 'results', cfg.datasource.name, m, f'test_{cfg.datasource.test_year}', d)
-            results, cfg = load_cv_results(result_dir, trials=cfg.task.repeats)
+
+            results, model_cfg = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
+
+            df_prep = pd.read_csv(osp.join(base_dir, 'data', 'preprocessed',
+                    f'{model_cfg["t_unit"]}_{model_cfg["model"]["edge_type"]}_ndummy={model_cfg["model"]["n_dummy_radars"]}',
+                        cfg.datasource.name, cfg.season, str(cfg.datasource.test_year), 'dynamic_features.csv'))
+            tidx2night = dict(zip(df_prep.tidx, df_prep.nightID))
 
             rmse_per_hour.append(compute_rmse(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
             mae_per_hour.append(compute_mae(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
             pcc_per_hour.append(compute_pcc(m, d, results, groupby=['horizon', 'trial'], threshold=0, km2=True))
+
+            rmse_per_night.append(compute_rmse_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
+            mae_per_night.append(compute_mae_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
 
             # compute binary classification measures
             for thr in thresholds:
@@ -64,12 +83,11 @@ def evaluate(cfg: DictConfig):
 
             # compute spatial correlation of residuals
             corr = compute_residual_corr(results, km2=True)
-            output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
-            os.makedirs(output_dir, exist_ok=True)
+
             corr.to_csv(osp.join(output_dir, f'spatial_corr_{m}_{d}.csv'))
 
-    output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
-    os.makedirs(output_dir, exist_ok=True)
+    # output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
+    # os.makedirs(output_dir, exist_ok=True)
 
     rmse_per_hour = pd.concat(rmse_per_hour)
     rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
@@ -82,6 +100,12 @@ def evaluate(cfg: DictConfig):
 
     bin_per_hour = pd.concat(bin_per_hour)
     bin_per_hour.to_csv(osp.join(output_dir, f'bin_per_hour.csv'))
+
+    rmse_per_night = pd.concat(rmse_per_night)
+    rmse_per_night.to_csv(osp.join(output_dir, f'rmse_per_night.csv'))
+
+    mae_per_night = pd.concat(mae_per_night)
+    mae_per_night.to_csv(osp.join(output_dir, f'mae_per_night.csv'))
 
 
 def load_cv_results(result_dir, ext='', trials=1):
@@ -116,12 +140,86 @@ def compute_rmse(model, experiment, results, groupby='trial', threshold=0, km2=T
 
     return rmse
 
+def aggregate_nights(results):
+    groups = [list(g) for k, g in it.groupby(enumerate(results.night), key=lambda x: x[-1])]
+    nights = [[item[0] for item in g] for g in groups if g[0][1]]
+
+    results['nightID'] = -1
+    for idx, night in enumerate(nights):
+        results.loc[night, 'nightID'] = idx
+
+    results = results.groupby('nightID').aggregate(np.sum)
+    results = results.reset_index()
+
+    return results
+
+
+def compute_rmse_per_night(model, experiment, results, tidx2night, groupby='trial', threshold=0, km2=True, bs=1):
+    ext = '_km2' if km2 else ''
+
+    results['nightID'] = results.tidx.apply(lambda x: tidx2night[x])
+    results = results.query(f'missing == 0 & gt{ext} >= {threshold} & nightID > 0')
+    results = results.groupby(['nightID', 'trial', 'seqID', 'radar']).aggregate(np.mean)
+    results = results.reset_index()
+
+    results[f'squared_error_night{ext}'] = (results[f'residual{ext}'] / bs).pow(2)
+
+    # make sure night_horizon starts at 0 for all sequences
+    results['night_horizon'] = results['nightID'] - results.groupby('seqID')['nightID'].transform('min')
+
+    # make sure that at each horizon the same nights are used (to be comparable)
+    nights = set(results.nightID.unique())
+    for group, df in results.groupby('night_horizon'):
+        reduced_nights = nights.intersection(set(df.nightID.unique()))
+        if len(reduced_nights) / len(nights) > 0.05:
+            # reduce only if not too many nights are thrown away
+            nights = reduced_nights
+    results = results[results.nightID.isin(nights)]
+
+    rmse = results.groupby(groupby)[f'squared_error_night{ext}'].aggregate(np.mean).apply(np.sqrt)
+    rmse = rmse.reset_index(name='rmse')
+    rmse['model'] = model
+    rmse['experiment'] = experiment
+
+    return rmse
+
 def compute_mae(model, experiment, results, groupby='trial', threshold=0, km2=True, bs=1):
     ext = '_km2' if km2 else ''
 
     results[f'absolute_error{ext}'] = (results[f'residual{ext}'] / bs).abs()
     df = results.query(f'missing == 0 & gt{ext} >= {threshold}') # & night == 1')
     mae = df.groupby(groupby)[f'absolute_error{ext}'].aggregate(np.mean)
+    mae = mae.reset_index(name='mae')
+    mae['model'] = model
+    mae['experiment'] = experiment
+
+    return mae
+
+
+def compute_mae_per_night(model, experiment, results, tidx2night, groupby='trial', threshold=0, km2=True, bs=1):
+    ext = '_km2' if km2 else ''
+
+    results['nightID'] = results.tidx.apply(lambda x: tidx2night[x])
+    results = results.query(f'missing == 0 & gt{ext} >= {threshold} & nightID > 0')
+    results = results.groupby(['nightID', 'trial', 'seqID', 'radar']).aggregate(np.mean)
+    results = results.reset_index()
+
+    results[f'absolute_error_night{ext}'] = (results[f'residual{ext}'] / bs).abs()
+
+    # make sure night_horizon starts at 0 for all sequences
+    results['night_horizon'] = results['nightID'] - results.groupby('seqID')['nightID'].transform('min')
+
+    # make sure that at each horizon the same nights are used (to be comparable)
+    nights = set(results.nightID.unique())
+    for group, df in results.groupby('night_horizon'):
+        reduced_nights = nights.intersection(set(df.nightID.unique()))
+        if len(reduced_nights) / len(nights) > 0.05:
+            # reduce only if not too many nights are thrown away
+            nights = reduced_nights
+    results = results[results.nightID.isin(nights)]
+
+
+    mae = results.groupby(groupby)[f'absolute_error_night{ext}'].aggregate(np.mean)
     mae = mae.reset_index(name='mae')
     mae['model'] = model
     mae['experiment'] = experiment

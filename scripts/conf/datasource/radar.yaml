@@ -6,6 +6,8 @@ years:
   - 2017
 test_year: 2017
 val_train_split: 0.1
+replacements:
+  - nldbl: nlhrw
 env_vars:
   - u
   - v
