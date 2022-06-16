@@ -2,8 +2,8 @@ name: fluxrgnn
 channels:
   - pytorch
   - pyg
-  - anaconda
   - conda-forge
+  - anaconda
 dependencies:
    - python>=3.8.3
    - numpy
@@ -21,8 +21,8 @@ dependencies:
    - pandas
    - matplotlib
    - ipykernel
-   - notebook
    - seaborn
+   - fiona
    - geopandas
    - cartopy
    - geoplot
