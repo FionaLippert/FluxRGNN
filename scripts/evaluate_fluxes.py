@@ -40,11 +40,13 @@ def evaluate(cfg: DictConfig):
 
     voronoi = gpd.read_file(osp.join(data_dir, 'voronoi.shp'))
 
-    results, _ = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
+    results, model_cfg = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
     output_dir = osp.join(result_dir, f'performance_evaluation{ext}', f'{H_min}-{H_max}')
     os.makedirs(output_dir, exist_ok=True)
 
-    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
+    bird_scale = model_cfg['datasource']['bird_scale']
+
+    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only, bird_scale)
     evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
 
 
@@ -59,6 +61,13 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
     model_fluxes = load_model_fluxes(result_dir, trials=cfg.task.repeats, ext=ext)
     G = nx.read_gpickle(osp.join(data_dir, 'delaunay.gpickle'))
 
+    seq2idx = {}
+    for s in sorted(results.groupby('seqID').groups.keys()):
+        df = results.query(f'seqID == {s} & horizon >= {H_min} & horizon <= {H_max}')
+        if night_only:
+            df = df.query('night == 1')
+        seq2idx[s] = df.horizon.unique()
+
     if cfg.datasource.name == 'abm':
 
         # load abm fluxes
@@ -70,14 +79,11 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
         # rearange abm fluxes to match model fluxes
         gt_fluxes_H = []
         gt_months = []
-        seq2idx = {}
         for s in sorted(results.groupby('seqID').groups.keys()):
-            df = results.query(f'seqID == {s}')
-            df = df.query(f'horizon >= {H_min} & horizon <= {H_max}')
+            df = results.query(f'seqID == {s} & horizon >= {H_min} & horizon <= {H_max}')
             if night_only:
                 df = df.query('night == 1')
             time = df.datetime.unique()
-            seq2idx[s] = df.horizon.unique()
 
             gt_months.append(pd.DatetimeIndex(time).month[0])
             agg_gt_fluxes = np.stack([gt_fluxes[time_dict[pd.Timestamp(t)]] for t in time], axis=0).sum(0)
@@ -105,6 +111,11 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
     bin_fluxes = []
 
     all_fluxes = dict(model_flux=[], gt_flux=[], radar1=[], radar2=[], trial=[])
+    all_fluxes_per_radar = dict(model_influx=[], gt_influx=[],
+                                model_outflux=[], gt_outflux=[],
+                                #model_source=[], gt_source=[],
+                                #model_sink=[], gt_sink=[],
+                                radar=[], trial=[])
 
     # loop over all trials
     print(model_fluxes.keys())
@@ -141,10 +152,12 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
                         all_fluxes['radar1'].extend([ri['radar']] * length)
                         all_fluxes['radar2'].extend([rj['radar']] * length)
                         all_fluxes['trial'].extend([t] * length)
-                        
 
+                        
+            # corr for in- and outfluxes per cell per month
             corr_influx_per_month = dict(month=[], corr=[], trial=[])
             corr_outflux_per_month = dict(month=[], corr=[], trial=[])
+
             for m in np.unique(gt_months):
                 idx = np.where(gt_months == m)
                 gt_influx_m = np.nansum(gt_fluxes[..., idx], axis=1)
@@ -166,10 +179,41 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
                 corr_outflux_per_month['corr'].append(corr)
                 corr_outflux_per_month['month'].append(m)
                 corr_outflux_per_month['trial'].append(t)
+
+            gt_influx = np.nansum(gt_fluxes, axis=1)
+            gt_outflux = np.nansum(gt_fluxes, axis=0)
+
+            model_influx = np.nansum(model_fluxes_t, axis=1)
+            model_outflux = np.nansum(model_fluxes_t, axis=0)
+
+            for i, ri in voronoi.iterrows():
+                all_fluxes_per_radar['gt_influx'].extend(gt_influx[i])
+                all_fluxes_per_radar['gt_outflux'].extend(gt_outflux[i])
+                all_fluxes_per_radar['model_influx'].extend(model_influx[i])
+                all_fluxes_per_radar['model_outflux'].extend(model_outflux[i])
+                all_fluxes_per_radar['radar'].extend([ri.radar] * gt_influx[i].size)
+                all_fluxes_per_radar['trial'].extend([t] * gt_influx[i].size)
+
+            pd.DataFrame(all_fluxes_per_radar).to_csv(osp.join(output_dir, 'all_fluxes_per_radar.csv'))
+
+            mask = np.isfinite(gt_influx)
+            corr = stats.pearsonr(gt_influx[mask].flatten(),
+                               model_influx[mask].flatten())[0]
+            corr_influx_per_month['corr'].append(corr)
+            corr_influx_per_month['month'].append('all')
+            corr_influx_per_month['trial'].append(t)
+
+            mask = np.isfinite(gt_outflux)
+            corr = stats.pearsonr(gt_outflux[mask].flatten(),
+                               model_outflux[mask].flatten())[0]
+            corr_outflux_per_month['corr'].append(corr)
+            corr_outflux_per_month['month'].append('all')
+            corr_outflux_per_month['trial'].append(t)
+
             corr_influx.append(pd.DataFrame(corr_influx_per_month))
             corr_outflux.append(pd.DataFrame(corr_outflux_per_month))
 
-            d2b_index = fluxes_per_dist2boundary(G, voronoi)
+            d2b_index, voronoi = fluxes_per_dist2boundary(G, voronoi)
             corr_per_d2b = dict(d2b=[], corr=[], trial=[])
             for d2b, index in d2b_index.items():
                 model_net_fluxes_d2b = model_net_fluxes_t[index['idx'], index['jdx']]
@@ -218,6 +262,7 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
                 nx.write_gpickle(G_gt, osp.join(output_dir, 'gt_fluxes.gpickle'), protocol=4)
 
     voronoi.to_csv(osp.join(output_dir, 'voronoi_summary.csv'))
+    pd.DataFrame(d2b_index).to_csv(osp.join(output_dir, 'd2b_index.csv'))
 
     if cfg.datasource.name == 'abm':
         corr_d2b = pd.concat(corr_d2b)
@@ -238,7 +283,7 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
             pickle.dump(overall_corr, f, pickle.HIGHEST_PROTOCOL)
 
 
-def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False):
+def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False, bs=1):
 
     inner_radars = voronoi.query('observed == 1').radar.values
     radar_dict = voronoi.radar.to_dict()
@@ -282,8 +327,8 @@ def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_di
         corr_source = dict(month=[], trial=[], corr=[])
         corr_sink = dict(month=[], trial=[], corr=[])
 
-        source_agg = dict(trial=[], gt=[], model=[])
-        sink_agg = dict(trial=[], gt=[], model=[])
+        source_agg = dict(trial=[], gt=[], model=[], radar=[])
+        sink_agg = dict(trial=[], gt=[], model=[], radar=[])
         for m in df.month.unique():
             print(f'evaluate month {m}')
             for t in df.trial.unique():
@@ -294,31 +339,42 @@ def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_di
                 gt_source_km2 = []
                 gt_sink_km2 = []
                 for i, row in data.iterrows():
-                    gt_source_km2.append(get_abm_data(dep, row['datetime'], row['radar']) / (row['area'] / area_scale))
-                    gt_sink_km2.append(get_abm_data(land, row['datetime'], row['radar']) / (row['area'] / area_scale))
+                    gt_source_km2.append(get_abm_data(dep, row['datetime'], row['radar']) / (row['area']))# / area_scale))
+                    gt_sink_km2.append(get_abm_data(land, row['datetime'], row['radar']) / (row['area']))# / area_scale))
 
                 data['gt_source_km2'] = gt_source_km2
                 data['gt_sink_km2'] = gt_sink_km2
 
+                data['gt_source'] = data['gt_source_km2'] * data['area']
+                data['gt_sink'] = data['gt_sink_km2'] * data['area']
+
+                data['source'] = data['source_km2'] * data['area']
+                data['sink'] = data['sink_km2'] * data['area']
+
                 grouped = data.groupby(['seqID', 'radar'])
-                grouped = grouped[['gt_source_km2', 'source_km2', 'gt_sink_km2', 'sink_km2']].aggregate(
+                grouped_km2 = grouped[['gt_source_km2', 'source_km2', 'gt_sink_km2', 'sink_km2']].aggregate(
                     np.nansum).reset_index()
 
-                source_agg['gt'].extend(grouped.gt_source_km2.values)
-                source_agg['model'].extend(grouped.source_km2.values)
-                source_agg['trial'].extend([t] * len(grouped.gt_source_km2))
-                sink_agg['gt'].extend(grouped.gt_sink_km2.values)
-                sink_agg['model'].extend(grouped.sink_km2.values)
-                sink_agg['trial'].extend([t] * len(grouped.gt_sink_km2))
+                grouped = grouped[['gt_source', 'source', 'gt_sink', 'sink']].aggregate(
+                    np.nansum).reset_index()
 
-                corr = np.corrcoef(grouped.gt_source_km2.to_numpy(),
-                                   grouped.source_km2.to_numpy())[0, 1]
+                source_agg['gt'].extend(grouped.gt_source.values)
+                source_agg['model'].extend(grouped.source.values)
+                source_agg['trial'].extend([t] * len(grouped.gt_source))
+                source_agg['radar'].extend(grouped.radar.values)
+                sink_agg['gt'].extend(grouped.gt_sink.values)
+                sink_agg['model'].extend(grouped.sink.values)
+                sink_agg['trial'].extend([t] * len(grouped.gt_sink))
+                sink_agg['radar'].extend(grouped.radar.values)
+
+                corr = np.corrcoef(grouped_km2.gt_source_km2.to_numpy(),
+                                   grouped_km2.source_km2.to_numpy())[0, 1]
                 corr_source['month'].append(m)
                 corr_source['trial'].append(t)
                 corr_source['corr'].append(corr)
 
-                corr = np.corrcoef(grouped.gt_sink_km2.to_numpy(),
-                                   grouped.sink_km2.to_numpy())[0, 1]
+                corr = np.corrcoef(grouped_km2.gt_sink_km2.to_numpy(),
+                                   grouped_km2.sink_km2.to_numpy())[0, 1]
                 corr_sink['month'].append(m)
                 corr_sink['trial'].append(t)
                 corr_sink['corr'].append(corr)
@@ -350,7 +406,10 @@ def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_di
         corr_sink_all = pd.DataFrame(corr_sink_all)
         corr_sink_all.to_csv(osp.join(output_dir, 'agg_sink_corr_per_trial.csv'))
 
-        return voronoi
+        source_agg.to_csv(osp.join(output_dir, 'all_sources.csv'))
+        sink_agg.to_csv(osp.join(output_dir, 'all_sinks.csv'))
+
+    return voronoi
 
 
 def load_cv_results(result_dir, ext='', trials=1):
@@ -438,7 +497,7 @@ def fluxes_per_dist2boundary(G, voronoi):
         d2b_index[d2b]['idx'].append(i)
         d2b_index[d2b]['jdx'].append(j)
 
-    return d2b_index
+    return d2b_index, voronoi
 
 
 def fluxes_per_angle(G, bins=12):
