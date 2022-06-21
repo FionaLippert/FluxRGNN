@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch_geometric.nn import MessagePassing, inits
-import numpy as np
+from torch_geometric.nn import MessagePassing
 
 
 
@@ -694,29 +693,6 @@ def init_weights(m):
     if type(m) == nn.Linear:
         nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
 
-
-def angle(x1, y1, x2, y2):
-    """
-    Compute angle between point (x1, y1) and point (x2, y2).
-
-    :return: angle in degrees
-    """
-    y = y1 - y2
-    x = x1 - x2
-    rad = np.arctan2(y, x)
-    deg = np.rad2deg(rad)
-    deg = (deg + 360) % 360
-    return deg
-
-def distance(x1, y1, x2, y2):
-    """
-    Compute distance between point (x1, y1) and point (x2, y2).
-
-    Coordinates should be given in the local CRS.
-
-    :return: distance in kilometers
-    """
-    return np.linalg.norm(np.array([x1-x2, y1-y2])) / 10**3
 
 def MSE(output, gt):
     """Compute mean squared error."""

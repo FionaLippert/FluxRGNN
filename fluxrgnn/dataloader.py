@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
+from torch_geometric.data import Data, InMemoryDataset
 import numpy as np
 import networkx as nx
 import os.path as osp
@@ -112,27 +112,24 @@ class RadarData(InMemoryDataset):
         self.year = str(year)
         self.timesteps = timesteps
 
+        # load settings
         self.data_source = kwargs.get('data_source', 'radar')
         self.use_buffers = kwargs.get('use_buffers', False)
         self.bird_scale = kwargs.get('bird_scale', 1)
         self.env_points = kwargs.get('env_points', 100)
         self.radar_years = kwargs.get('radar_years', ['2015', '2016', '2017'])
         self.env_vars = kwargs.get('env_vars', ['dusk', 'dawn', 'night', 'dayofyear', 'solarpos', 'solarpos_dt'])
-
         self.pref_dirs = kwargs.get('pref_dirs', {'spring': 58, 'fall': 223})
         self.wp_threshold = kwargs.get('wp_threshold', -0.5)
         self.root_transform = kwargs.get('root_transform', 0)
         self.missing_data_threshold = kwargs.get('missing_data_threshold', 0)
-
         self.start = kwargs.get('start', None)
         self.end = kwargs.get('end', None)
         self.normalization = kwargs.get('normalization', None)
-
         self.edge_type = kwargs.get('edge_type', 'voronoi')
         self.t_unit = kwargs.get('t_unit', '1H')
         self.birds_per_km2 = kwargs.get('birds_per_km2', False)
         self.exclude = kwargs.get('exclude', [])
-
         self.use_nights = kwargs.get('fixed_t0', True)
         self.seed = kwargs.get('seed', 1234)
         self.rng = np.random.default_rng(self.seed)
@@ -142,7 +139,7 @@ class RadarData(InMemoryDataset):
 
         super(RadarData, self).__init__(self.root, transform, pre_transform)
 
-        # run self.process() to generate dataset
+        # generate dataset if it does not exist yet
         self.data, self.slices = torch.load(self.processed_paths[0])
 
         # save additional info
@@ -400,7 +397,7 @@ class RadarData(InMemoryDataset):
         print(f'discarded {n_seq_discarded} sequences due to missing data')
 
         info = {'radars': voronoi.radar.values,
-                'areas' : voronoi.area_km2.values,
+                'areas': voronoi.area_km2.values,
                 'env_vars': env_cols,
                 'timepoints': time,
                 'tidx': tidx,
@@ -419,6 +416,7 @@ class RadarData(InMemoryDataset):
 
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
+
 
     def normalize_dynamic(self, dynamic_feature_df, input_col):
         """Normalize dynamic features to range between 0 and 1."""
@@ -455,6 +453,7 @@ class RadarData(InMemoryDataset):
             dynamic_feature_df['dayofyear'] /= self.normalization.max('dayofyear') # always use 365?
 
         return dynamic_feature_df
+
 
     def compute_fluxes(self, data, G):
         """Estimate fluxes across Voronoi faces based on radar MTR"""
@@ -579,10 +578,6 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
                                  env_vars=cfg.datasource.env_vars,
                                  )
             for year in years]
-
-    #data = torch.utils.data.ConcatDataset(data)
-
-
 
     return data, input_col, context, seq_len
 
