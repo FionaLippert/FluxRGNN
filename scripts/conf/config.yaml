@@ -5,7 +5,7 @@ defaults:
   - datasource: radar
   - model: FluxRGNN
   - task: train_eval
-  - device: cluster
+  - device: local
 job_id: 0
 season: fall
 seed: 1234
@@ -15,7 +15,6 @@ missing_data_threshold: 0.1
 t_unit: 1H
 fixed_t0: false
 data_perc: 1.0
-#importance_sampling: true
 exclude: []
 verbose: True
 debugging: False

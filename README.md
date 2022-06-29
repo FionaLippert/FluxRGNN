@@ -26,6 +26,11 @@ before getting started.
 If you want to use your GPU, you may need to manually install a matching 
 [PyTorch](https://pytorch.org/) version.
 
+To recreate geographical visualisations from our paper, some additional packages are required. They can be installed by running
+```
+conda env update --name fluxrgnn --file environment_geo.yml
+```
+
 
 ## Getting started
 
