@@ -20,10 +20,4 @@ dependencies:
    - hydra-core
    - pandas
    - matplotlib
-   - notebook
-   - seaborn
-   - geopandas
-   - cartopy
-   - geoplot
-   - shapely
 

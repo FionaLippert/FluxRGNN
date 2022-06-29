@@ -1,6 +1,5 @@
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import hydra
-from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import os
 import os.path as osp
@@ -44,9 +43,7 @@ def evaluate(cfg: DictConfig):
     output_dir = osp.join(result_dir, f'performance_evaluation{ext}', f'{H_min}-{H_max}')
     os.makedirs(output_dir, exist_ok=True)
 
-    bird_scale = model_cfg['datasource']['bird_scale']
-
-    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only, bird_scale)
+    voronoi = evaluate_source_sink(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
     evaluate_fluxes(cfg, results, H_min, H_max, voronoi, data_dir, output_dir, night_only)
 
 
@@ -113,12 +110,9 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
     all_fluxes = dict(model_flux=[], gt_flux=[], radar1=[], radar2=[], trial=[])
     all_fluxes_per_radar = dict(model_influx=[], gt_influx=[],
                                 model_outflux=[], gt_outflux=[],
-                                #model_source=[], gt_source=[],
-                                #model_sink=[], gt_sink=[],
                                 radar=[], trial=[])
 
-    # loop over all trials
-    print(model_fluxes.keys())
+    # loop over all trials and evaluate fluxes
     for t, model_fluxes_t in model_fluxes.items():
 
         print(f'evaluate fluxes for trial {t}')
@@ -131,7 +125,6 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
 
         if cfg.datasource.name == 'abm':
             mask = np.isfinite(gt_net_fluxes)
-            print(mask.shape)
             overall_corr[t] = np.corrcoef(gt_net_fluxes[mask].flatten(),
                                           model_net_fluxes_t[mask].flatten())[0, 1]
 
@@ -140,12 +133,9 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
             bin_results['trial'] = t
             bin_fluxes.append(bin_results)
 
-            print(t)
             for i, ri in voronoi.iterrows():
                 for j, rj in voronoi.iterrows():
                     if not i == j:
-                        #print(model_net_fluxes_t[mask].shape)
-                        #print(model_net_fluxes_t.shape)
                         all_fluxes['model_flux'].extend(model_net_fluxes_t[i,j])
                         all_fluxes['gt_flux'].extend(gt_net_fluxes[i,j])
                         length = model_net_fluxes_t[i,j].size
@@ -262,7 +252,9 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
                 nx.write_gpickle(G_gt, osp.join(output_dir, 'gt_fluxes.gpickle'), protocol=4)
 
     voronoi.to_csv(osp.join(output_dir, 'voronoi_summary.csv'))
-    pd.DataFrame(d2b_index).to_csv(osp.join(output_dir, 'd2b_index.csv'))
+
+    with open(osp.join(output_dir, 'd2b_index.pickle'), 'wb') as f:
+        pickle.dump(d2b_index, f, pickle.HIGHEST_PROTOCOL)
 
     if cfg.datasource.name == 'abm':
         corr_d2b = pd.concat(corr_d2b)
@@ -283,13 +275,11 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
             pickle.dump(overall_corr, f, pickle.HIGHEST_PROTOCOL)
 
 
-def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False, bs=1):
+def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False):
 
     inner_radars = voronoi.query('observed == 1').radar.values
     radar_dict = voronoi.radar.to_dict()
     radar_dict = {v: k for k, v in radar_dict.items()}
-
-    area_scale = results.area.max()
 
     df = results.query(f'horizon <= {H_max} & horizon >= {H_min}')
     if night_only:
@@ -441,37 +431,6 @@ def load_model_fluxes(result_dir, ext='', trials=1):
                 fluxes[t] = pickle.load(f)
 
     return fluxes
-
-
-def flux_corr_per_dist2boundary(voronoi, model_fluxes, gt_fluxes):
-    # shortest paths to any boundary cell
-    sp = nx.shortest_path(G)
-    d_to_b = np.zeros(len(G))
-    for ni, datai in G.nodes(data=True):
-        min_d = np.inf
-        for nj, dataj in G.nodes(data=True):
-            if dataj['boundary']:
-                d = len(sp[ni][nj])
-                if d < min_d:
-                    min_d = d
-                    d_to_b[ni] = d
-    voronoi['dist2boundary'] = d_to_b
-
-    df = dict(radar1=[], radar2=[], corr=[], dist2boundary=[])
-    for i, rowi in voronoi.iterrows():
-        for j, rowj in voronoi.iterrows():
-            if not i == j:
-                df['radar1'].append(rowi['radar'])
-                df['radar2'].append(rowj['radar'])
-                df['dist2boundary'].append(int(min(rowi['dist2boundary'], rowj['dist2boundary'])))
-                if not np.all(model_fluxes[i, j] == 0) and not np.all(gt_fluxes[i, j] == 0) and np.all(
-                        np.isfinite(gt_fluxes[i, j])):
-                    df['corr'].append(stats.pearsonr(gt_fluxes[i, j].flatten(), model_fluxes[i, j].flatten())[0])
-                else:
-                    df['corr'].append(np.nan)
-    df = pd.DataFrame(df)
-
-    return df
 
 
 def fluxes_per_dist2boundary(G, voronoi):

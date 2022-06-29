@@ -3,14 +3,13 @@ from fluxrgnn.models import *
 import torch
 from torch.utils.data import random_split, Subset
 from torch.optim import lr_scheduler
-from torch_geometric.data import DataLoader, DataListLoader
+from torch_geometric.data import DataLoader
 from torch_geometric.utils import to_dense_adj
 from omegaconf import DictConfig, OmegaConf
 import pickle
 import os.path as osp
 import os
 import numpy as np
-import ruamel.yaml
 import pandas as pd
 
 # map model name to implementation

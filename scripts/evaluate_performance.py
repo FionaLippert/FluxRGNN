@@ -1,6 +1,5 @@
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import hydra
-from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import scipy.stats as stats
 import os
@@ -40,6 +39,7 @@ def evaluate(cfg: DictConfig):
 
     base_dir = cfg.device.root
 
+    # thresholds for binary classification metrics
     if cfg.datasource.name == 'abm':
         thresholds = [0.0019, 0.0207]
     else:
@@ -82,13 +82,6 @@ def evaluate(cfg: DictConfig):
             for thr in thresholds:
                 bin_per_hour.append(compute_bin(m, d, results, groupby=['horizon', 'trial'], threshold=thr, km2=True))
 
-            # compute spatial correlation of residuals
-            # corr = compute_residual_corr(results, km2=True)
-            #
-            # corr.to_csv(osp.join(output_dir, f'spatial_corr_{m}_{d}.csv'))
-
-    # output_dir = osp.join(base_dir, 'results', cfg.datasource.name, 'performance_evaluation', experiments)
-    # os.makedirs(output_dir, exist_ok=True)
 
     rmse_per_hour = pd.concat(rmse_per_hour)
     rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
@@ -135,17 +128,14 @@ def compute_rmse(model, experiment, results, tidx2night, groupby='trial', thresh
 
     results[f'squared_error{ext}'] = (results[f'residual{ext}'] / bs).pow(2)
     results['boundary'] = results['radar'].apply(lambda r: 'boundary' in r)
-    results = results.query(f'missing == 0 & gt{ext} >= {threshold}')# & boundary == 0') # & night == 1')
+    results = results.query(f'missing == 0 & gt{ext} >= {threshold}')
 
     if not fixed_t0:
         # make sure that at each horizon the same tidx are used (to be comparable)
         tidx = set(results.tidx.unique())
-        print('before: ', len(tidx))
         for group, df in results.groupby('horizon'):
-            # print(df.tidx.unique())
             tidx = tidx.intersection(set(df.tidx.unique()))
         results = results[results.tidx.isin(tidx)]
-        print('after: ', len(tidx))
     else:
         # make sure that for each night the same tidx are used (to be comparable)
         results['dayID'] = results.horizon.apply(lambda h: h // 24 + 1)
@@ -197,16 +187,8 @@ def compute_rmse_per_night(model, experiment, results, tidx2night, groupby='tria
     for group, df in results.groupby('night_horizon'):
         if group <= results.horizon.max() // 24:
             reduced_nights = nights.intersection(set(df.nightID.unique()))
-            # if len(reduced_nights) / len(nights) > 0.05:
-            #     # reduce only if not too many nights are thrown away
-            print(group)
             nights = reduced_nights
     results = results[results.nightID.isin(nights)]
-
-    # for group, df in results.groupby(['night_horizon', 'radar']):
-    #     print(group)
-    #     #print(df.nightID.value_counts())
-    #     print(len(df.nightID.unique()))
 
     rmse = results.groupby(groupby)[f'squared_error_night{ext}'].aggregate(np.mean).apply(np.sqrt)
     rmse = rmse.reset_index(name='rmse')
@@ -226,12 +208,9 @@ def compute_mae(model, experiment, results, tidx2night, groupby='trial', thresho
     if not fixed_t0:
         # make sure that at each horizon the same tidx are used (to be comparable)
         tidx = set(results.tidx.unique())
-        # print('before: ', len(tidx))
         for group, df in results.groupby('horizon'):
-            # print(df.tidx.unique())
             tidx = tidx.intersection(set(df.tidx.unique()))
         results = results[results.tidx.isin(tidx)]
-        # print('after: ', len(tidx))
     else:
         # make sure that for each night the same tidx are used (to be comparable)
         results['dayID'] = results.horizon.apply(lambda h: h // 24 + 1)
@@ -289,17 +268,13 @@ def compute_pcc(model, experiment, results, tidx2night, groupby='trial', thresho
     if not fixed_t0:
         # make sure that at each horizon the same tidx are used (to be comparable)
         tidx = set(results.tidx.unique())
-        # print('before: ', len(tidx))
         for group, df in results.groupby('horizon'):
-            # print(df.tidx.unique())
             tidx = tidx.intersection(set(df.tidx.unique()))
         results = results[results.tidx.isin(tidx)]
-        # print('after: ', len(tidx))
     else:
         # make sure that for each night the same tidx are used (to be comparable)
         results['dayID'] = results.horizon.apply(lambda h: h // 24 + 1)
-        results = results.query(f'dayID > 0')# & night == 1')
-        #results[f'gt{ext}'] = results.apply(lambda row: row[f'gt{ext}'] if row.night else )
+        results = results.query(f'dayID > 0')
         tidx = set(results.tidx.unique())
         for group, df in results.groupby('dayID'):
             if group <= results.horizon.max() // 24:
