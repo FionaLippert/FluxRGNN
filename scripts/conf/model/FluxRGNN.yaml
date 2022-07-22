@@ -1,7 +1,7 @@
 # @package model
 name: FluxRGNN
 
-n_hidden: 128
+n_hidden: 64
 n_fc_layers: 2
 n_lstm_layers: 1
 n_graph_layers: 0
@@ -11,8 +11,8 @@ horizon: 48
 test_horizon: 72
 
 epochs: 300
-batch_size: 4
-lr: 1e-5
+batch_size: 8
+lr: 3e-5
 lr_decay: 300
 lr_gamma: 1.0
 early_stopping: true
