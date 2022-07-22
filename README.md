@@ -55,7 +55,10 @@ in the `scripts/conf` directory.
 
 To reproduce the results from our paper, please download the preprocessed data [here](https://doi.org/10.5281/zenodo.6364940)
 To run the preprocessing of bird density and velocity data from 
-the European weather radar network yourself, you can use [this](https://github.com/FionaLippert/birdMigration) code.
+the European weather radar network yourself, you can use [this](https://github.com/FionaLippert/birdMigration) code base. Follow the README to install the `birds` python package in your `fluxrgnn` conda environment and download the raw radar data. Then, from the `FluxRGNN/scripts` directory, run
+```
+python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/data}
+```
 
 The preprocessed data must include:
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of sensor locations
