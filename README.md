@@ -53,19 +53,6 @@ FluxRGNN/data/preprocessed/{t_unit}_voronoi_ndummy={ndummy}/{datasource}/{season
 where `t_unit`, `ndummy`, `datasource`, `season` and `year` can be specified in the hydra configuration files 
 in the `scripts/conf` directory.
 
-The preprocessed data must include:
-- `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent)
-- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
-<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/static_features.png?raw=true" alt="table" width="400"/>
-Note that the order of the rows (representing radars) must correspond to the order of nodes (representing radars) in the `networkx.DiGraph`.
-- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
-<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="600"/>
-In addition to these variables, additional columns containing values of environmental variables can be added. The column names should correspond to the variable names specified in the `env_vars` list in the datasource config file.
-
-
-
-
-
 To reproduce the results from our paper, please download the preprocessed data [here](https://doi.org/10.5281/zenodo.6364940)
 
 To run the preprocessing of bird density and velocity data from 
@@ -73,6 +60,24 @@ the European weather radar network yourself, you can use [this](https://github.c
 ```
 python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/data}
 ```
+
+If you would like to apply FluxRGNN to your own data, you need to generate the following files (for each season and year):
+- `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent). You can use [this](https://github.com/FionaLippert/birdMigration) code base to construct the voronoi tessellation and associated graph structure from a set of sensor locations.
+- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
+    |          	| description                                                                      	| data type 	|
+    |----------	|----------------------------------------------------------------------------------	|-----------	|
+    | radar    	| name/label of radar (or other sensor)                                            	| string    	|
+    | observed 	| True if data is available for this radar, False otherwise                        	| boolean   	|
+    | x        	| x-component of radar location in local coordinate reference system               	| float     	|
+    | y        	| y-component of radar location in local coordinate reference system               	| float     	|
+    | lon      	| longitude of radar location                                                      	| float     	|
+    | lat      	| latitude of radar location                                                       	| float     	|
+    | boundary 	| True if Voronoi cell lies at the boundary of the spatial domain, False otherwise 	| boolean   	|
+    | area_km2 	| area of Voronoi cell in km^2                                                     	| float     	|
+    Note that the order of the rows in the data frame (representing the different radars) must correspond to the order of nodes in the `networkx.DiGraph`.
+- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
+    <img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="600"/>
+    In addition to these variables, additional columns containing values of environmental variables can be added. The column names should correspond to the variable names specified in the `env_vars` list in the datasource config file.
 
 ### Training and testing
 
