@@ -66,8 +66,8 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
 - `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
     |          	| description                                                                      	| data type 	|
     |----------	|----------------------------------------------------------------------------------	|-----------	|
-    | radar    	| name/label of radar (or other sensor)                                            	| string    	|
-    | observed 	| True if data is available for this radar, False otherwise                        	| boolean   	|
+    | radar    	| name/label of radar                                           	                | string    	|
+    | observed 	| true if data is available for this radar, false otherwise                        	| boolean   	|
     | x        	| x-component of radar location in local coordinate reference system               	| float     	|
     | y        	| y-component of radar location in local coordinate reference system               	| float     	|
     | lon      	| longitude of radar location                                                      	| float     	|
@@ -77,8 +77,25 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
 
     Note that the order of the rows in the data frame (representing the different radars) must correspond to the order of nodes in the `networkx.DiGraph`.
 - `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
-    <img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="600"/>
-    In addition to these variables, additional columns containing values of environmental variables can be added. The column names should correspond to the variable names specified in the `env_vars` list in the datasource config file.
+    |                	| description                                                                                                                                                          	| data type 	|
+    |----------------	|----------------------------------------------------------------------------------------------------------------------------------------------------------------------	|-----------	|
+    | radar          	| name/label of radar (or other sensor)                                                                                                                                	| string    	|
+    | night          	| true if at any point during the time step the sun angle is below -6 degrees, false otherwise                                                                         	| boolean   	|
+    | dusk           	| true if at any point during the time step the sun angle drops below 6 degrees, false otherwise                                                                       	| boolean   	|
+    | dawn           	| true if at any point during the time step the sun angle rises above 6 degrees, false otherwise                                                                       	| boolean   	|
+    | datetime       	| timestamp defining the beginning of the time step (e.g. "2015-08-01 12:00:00+00:00")                                                                                 	| string    	|
+    | dayofyear      	| day of the year (determined based on the beginning of the time step)                                                                                                 	| int       	|
+    | tidx           	| time index used for indexing, sorting and aligning data sequences of multiple radars                                                                                 	| int       	|
+    | nightID        	| night identifier used to group data belonging to the same night                                                                                                      	| int       	|
+    | birds_km2      	| bird density (birds/km^2) in the Voronoi cell measured by the radar                                                                                                  	| float     	|
+    | birds          	| total number of birds in the Voronoi cell (derived from bird density)                                                                                                	| float     	|
+    | bird_u         	| u-component of the bird velocity measured by the radar                                                                                                               	| float     	|
+    | bird_v         	| v-component of the bird velocity measured by the radar                                                                                                               	| float     	|
+    | bird_speed     	| bird speed measured by the radar                                                                                                                                     	| float     	|
+    | bird_direction 	| bird direction measured by the radar                                                                                                                                 	| float     	|
+    | missing        	| true if data is missing, false otherwise                                                                                                                             	| boolean   	|
+    | ...            	| any relevant environmental variables can be added here. The variable names should correspond to those  specified in the env_vars list in the datasource config file. 	|           	|
+    
 
 ### Training and testing
 
