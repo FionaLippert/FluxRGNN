@@ -79,7 +79,7 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
 - `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
     |                	| description                                                                                                                                                          	| data type 	|
     |----------------	|----------------------------------------------------------------------------------------------------------------------------------------------------------------------	|-----------	|
-    | radar          	| name/label of radar (or other sensor)                                                                                                                                	| string    	|
+    | radar          	| name/label of radar                                                                                                                                	| string    	|
     | night          	| true if at any point during the time step the sun angle is below -6 degrees, false otherwise                                                                         	| boolean   	|
     | dusk           	| true if at any point during the time step the sun angle drops below 6 degrees, false otherwise                                                                       	| boolean   	|
     | dawn           	| true if at any point during the time step the sun angle rises above 6 degrees, false otherwise                                                                       	| boolean   	|
