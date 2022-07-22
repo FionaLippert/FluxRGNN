@@ -56,10 +56,10 @@ in the `scripts/conf` directory.
 The preprocessed data must include:
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent)
 - `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
-<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/static_features.png?raw=true" alt="table" width="200"/>
+<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/static_features.png?raw=true" alt="table" width="400"/>
 Note that the order of the rows (representing radars) must correspond to the order of nodes (representing radars) in the `networkx.DiGraph`.
 - `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
-<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="300"/>
+<img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="600"/>
 In addition to these variables, additional columns containing values of environmental variables can be added. The column names should correspond to the variable names specified in the `env_vars` list in the datasource config file.
 
 
