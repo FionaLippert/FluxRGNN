@@ -53,17 +53,22 @@ FluxRGNN/data/preprocessed/{t_unit}_voronoi_ndummy={ndummy}/{datasource}/{season
 where `t_unit`, `ndummy`, `datasource`, `season` and `year` can be specified in the hydra configuration files 
 in the `scripts/conf` directory.
 
+The preprocessed data must include:
+- `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent)
+- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
+Note that the order of the rows (representing radars) must correspond to the order of nodes (representing radars) in the `networkx.DiGraph`.
+- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
+In addition to these variables, additional columns containing values of environmental variables can be added. The column names should correspond to the variable names specified in the `env_vars` list in the datasource config file.
+
+
+
 To reproduce the results from our paper, please download the preprocessed data [here](https://doi.org/10.5281/zenodo.6364940)
+
 To run the preprocessing of bird density and velocity data from 
 the European weather radar network yourself, you can use [this](https://github.com/FionaLippert/birdMigration) code base. Follow the README to install the `birds` python package in your `fluxrgnn` conda environment and download the raw radar data. Then, from the `FluxRGNN/scripts` directory, run
 ```
 python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/data}
 ```
-
-The preprocessed data must include:
-- `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of sensor locations
-- `static_features.csv`: dataframe containing static features of sensors and their corresponding Voronoi cell, e.g. coordinates, cell areas
-- `dynamic_features.csv`: dataframe containing dynamic features of Voronoi cells, e.g. animal densities and wind speed per time point
 
 ### Training and testing
 
