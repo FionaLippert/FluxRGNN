@@ -74,6 +74,7 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
     | lat      	| latitude of radar location                                                       	| float     	|
     | boundary 	| True if Voronoi cell lies at the boundary of the spatial domain, False otherwise 	| boolean   	|
     | area_km2 	| area of Voronoi cell in km^2                                                     	| float     	|
+
     Note that the order of the rows in the data frame (representing the different radars) must correspond to the order of nodes in the `networkx.DiGraph`.
 - `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
     <img src="https://github.com/FionaLippert/FluxRGNN/blob/main/images/dynamic_features.png?raw=true" alt="table" width="600"/>
