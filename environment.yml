@@ -17,7 +17,7 @@ dependencies:
    - pygam
    - ruamel.yaml
    - yaml
-   - hydra-core
+   - hydra-core>=1.1
    - pandas
    - matplotlib
    - ipykernel
