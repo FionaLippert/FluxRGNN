@@ -30,6 +30,10 @@ To recreate geographical visualisations from our paper, some additional packages
 ```
 conda env update --name fluxrgnn --file plotting_environment.yml
 ```
+To make the conda environment visible for the jupyter notebooks, run
+```
+python -m ipykernel install --user --name=fluxrgnn
+```
 
 
 ## Getting started
