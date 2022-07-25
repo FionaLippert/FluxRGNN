@@ -18,9 +18,12 @@ def evaluate(cfg: DictConfig):
     root mean square error, pearson correlation, and binary classification metrics.
     """
 
-    experiments = cfg.get('experiment_type', 'final')
+    experiments = cfg.get('experiment_type', f'{cfg.model.name}_only')
     fixed_t0 = cfg.get('fixed_t0', False)
     ext = '_fixedT0' if fixed_t0 else ''
+
+    base_dir = cfg.device.root
+    datasource = cfg.datasource.name
 
     if experiments == 'ablations':
         models = {
@@ -36,8 +39,16 @@ def evaluate(cfg: DictConfig):
             'HA': ['final'],
             'GBT': ['final']
         }
+    else:
+        m = cfg.model.name
+        year = cfg.datasource.test_year
 
-    base_dir = cfg.device.root
+        # find all experiments available for this model, datasource and test year
+        result_dir = osp.join(base_dir, 'results', datasource, m, f'test_{year}')
+        models = {
+            m : [ f.name for f in os.scandir(result_dir) if f.is_dir() ]
+        }
+
 
     # thresholds for binary classification metrics
     if cfg.datasource.name == 'abm':
@@ -53,54 +64,66 @@ def evaluate(cfg: DictConfig):
     rmse_per_night = []
     mae_per_night = []
 
-    output_dir = osp.join(base_dir, 'results', cfg.datasource.name, f'performance_evaluation{ext}', experiments)
+    output_dir = osp.join(base_dir, 'results', datasource, f'performance_evaluation{ext}', experiments)
     os.makedirs(output_dir, exist_ok=True)
 
+    counter = 0
 
     for m, dirs in models.items():
         print(f'evaluate {m}')
 
         for d in dirs:
-            result_dir = osp.join(base_dir, 'results', cfg.datasource.name, m, f'test_{cfg.datasource.test_year}', d)
+            result_dir = osp.join(base_dir, 'results', datasource, m, f'test_{cfg.datasource.test_year}', d)
 
-            results, model_cfg = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
+            # check if directory exists
+            if os.path.isdir(result_dir):
+                results, model_cfg = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
 
-            df_prep = pd.read_csv(osp.join(base_dir, 'data', 'preprocessed',
-                    f'{model_cfg["t_unit"]}_{model_cfg["model"]["edge_type"]}_ndummy={model_cfg["model"]["n_dummy_radars"]}',
-                        cfg.datasource.name, cfg.season, str(cfg.datasource.test_year), 'dynamic_features.csv'))
-            tidx2night = dict(zip(df_prep.tidx, df_prep.nightID))
+                df_prep = pd.read_csv(osp.join(base_dir, 'data', 'preprocessed',
+                        f'{model_cfg["t_unit"]}_{model_cfg["model"]["edge_type"]}_ndummy={model_cfg["model"]["n_dummy_radars"]}',
+                            datasource, cfg.season, str(cfg.datasource.test_year), 'dynamic_features.csv'))
+                tidx2night = dict(zip(df_prep.tidx, df_prep.nightID))
 
-            rmse_per_hour.append(compute_rmse(m, d, results, tidx2night, groupby=['horizon', 'trial'], threshold=0, km2=True, fixed_t0=fixed_t0))
-            mae_per_hour.append(compute_mae(m, d, results, tidx2night, groupby=['horizon', 'trial'], threshold=0, km2=True, fixed_t0=fixed_t0))
-            pcc_per_hour.append(compute_pcc(m, d, results, tidx2night, groupby=['horizon', 'trial'], threshold=0, km2=True, fixed_t0=fixed_t0))
+                rmse_per_hour.append(compute_rmse(m, d, results, tidx2night, groupby=['horizon', 'trial'],
+                                                  threshold=0, km2=True, fixed_t0=fixed_t0))
+                mae_per_hour.append(compute_mae(m, d, results, tidx2night, groupby=['horizon', 'trial'],
+                                                threshold=0, km2=True, fixed_t0=fixed_t0))
+                pcc_per_hour.append(compute_pcc(m, d, results, tidx2night, groupby=['horizon', 'trial'],
+                                                threshold=0, km2=True, fixed_t0=fixed_t0))
 
-            if fixed_t0:
-                rmse_per_night.append(compute_rmse_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
-                mae_per_night.append(compute_mae_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
+                if fixed_t0:
+                    rmse_per_night.append(compute_rmse_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
+                    mae_per_night.append(compute_mae_per_night(m, d, results, tidx2night, groupby=['night_horizon', 'trial']))
 
-            # compute binary classification measures
-            for thr in thresholds:
-                bin_per_hour.append(compute_bin(m, d, results, groupby=['horizon', 'trial'], threshold=thr, km2=True))
+                # compute binary classification measures
+                for thr in thresholds:
+                    bin_per_hour.append(compute_bin(m, d, results, groupby=['horizon', 'trial'], threshold=thr, km2=True))
 
+                counter += 1
 
-    rmse_per_hour = pd.concat(rmse_per_hour)
-    rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
+            else:
+                print(f'Experiment "{d}" for model "{m}" and datasource "{datasource}" is not available. '
+                      f'Use "run_experiments.py model={m} datasource={datasource} +experiment={d}" to run this experiment.')
 
-    mae_per_hour = pd.concat(mae_per_hour)
-    mae_per_hour.to_csv(osp.join(output_dir, f'mae_per_hour.csv'))
+    if counter > 0:
+        rmse_per_hour = pd.concat(rmse_per_hour)
+        rmse_per_hour.to_csv(osp.join(output_dir, f'rmse_per_hour.csv'))
 
-    pcc_per_hour = pd.concat(pcc_per_hour)
-    pcc_per_hour.to_csv(osp.join(output_dir, f'pcc_per_hour.csv'))
+        mae_per_hour = pd.concat(mae_per_hour)
+        mae_per_hour.to_csv(osp.join(output_dir, f'mae_per_hour.csv'))
 
-    bin_per_hour = pd.concat(bin_per_hour)
-    bin_per_hour.to_csv(osp.join(output_dir, f'bin_per_hour.csv'))
+        pcc_per_hour = pd.concat(pcc_per_hour)
+        pcc_per_hour.to_csv(osp.join(output_dir, f'pcc_per_hour.csv'))
 
-    if fixed_t0:
-        rmse_per_night = pd.concat(rmse_per_night)
-        rmse_per_night.to_csv(osp.join(output_dir, f'rmse_per_night.csv'))
+        bin_per_hour = pd.concat(bin_per_hour)
+        bin_per_hour.to_csv(osp.join(output_dir, f'bin_per_hour.csv'))
 
-        mae_per_night = pd.concat(mae_per_night)
-        mae_per_night.to_csv(osp.join(output_dir, f'mae_per_night.csv'))
+        if fixed_t0:
+            rmse_per_night = pd.concat(rmse_per_night)
+            rmse_per_night.to_csv(osp.join(output_dir, f'rmse_per_night.csv'))
+
+            mae_per_night = pd.concat(mae_per_night)
+            mae_per_night.to_csv(osp.join(output_dir, f'mae_per_night.csv'))
 
 
 def load_cv_results(result_dir, ext='', trials=1):
