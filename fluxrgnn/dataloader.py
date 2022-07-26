@@ -114,7 +114,7 @@ class RadarData(InMemoryDataset):
 
         # load settings
         self.data_source = kwargs.get('data_source', 'radar')
-        self.use_buffers = kwargs.get('use_buffers', False)
+        #self.use_buffers = kwargs.get('use_buffers', False)
         self.bird_scale = kwargs.get('bird_scale', 1)
         self.env_points = kwargs.get('env_points', 100)
         self.radar_years = kwargs.get('radar_years', ['2015', '2016', '2017'])
@@ -226,8 +226,8 @@ class RadarData(InMemoryDataset):
             input_col = 'birds'
         else:
             input_col = 'birds_km2'
-        if self.use_buffers:
-            input_col += '_from_buffer'
+        #if self.use_buffers:
+        #    input_col += '_from_buffer'
 
 
         # normalize dynamic features
@@ -538,7 +538,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
+    processed_dirname = f'root={cfg.root_transform}_' \
                         f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
     data_dir = osp.join(cfg.device.root, 'data')
@@ -546,10 +546,10 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
     if cfg.model.birds_per_km2:
         input_col = 'birds_km2'
     else:
-        if cfg.datasource.use_buffers:
-            input_col = 'birds_from_buffer'
-        else:
-            input_col = 'birds'
+        #if cfg.datasource.use_buffers:
+        #    input_col = 'birds_from_buffer'
+        #else:
+        input_col = 'birds'
 
     if training:
         # initialize normalizer
