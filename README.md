@@ -23,6 +23,13 @@ conda activate fluxrgnn
 ```
 before getting started.
 
+Note that after making changes to files in the `fluxrgnn` directory, you need to reinstall the associated python package by running
+```
+python setup.py install
+```
+
+### Additional dependencies
+
 If you want to use your GPU, you may need to manually install a matching 
 [PyTorch](https://pytorch.org/) version.
 
@@ -35,6 +42,10 @@ To make the conda environment visible for the jupyter notebooks, run
 python -m ipykernel install --user --name=fluxrgnn
 ```
 
+To install additional packages required to run the radar data preprocessing (see below), run
+```
+conda env update --name fluxrgnn --file preprocessing_environment.yml
+```
 
 ## Getting started
 
