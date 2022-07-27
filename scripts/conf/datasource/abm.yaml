@@ -15,7 +15,6 @@ env_vars:
   - dayofyear
   - solarpos
   - solarpos_dt
-use_buffers: False
 n_dummy_radars: 25
 
 # will be filled at runtime
