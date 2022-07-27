@@ -5,4 +5,3 @@ test_horizon: 72
 test_context: 24
 edge_type: none
 birds_per_km2: true
-n_dummy_radars: 0

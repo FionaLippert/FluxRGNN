@@ -10,4 +10,3 @@ tolerance: 1e-8
 use_acc_vars: false
 edge_type: none
 birds_per_km2: true
-n_dummy_radars: 0
