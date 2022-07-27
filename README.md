@@ -158,17 +158,17 @@ This will generate summaries of the performance measures of all ablation experim
 
 Then the Jupyter notebook `performance_evaluation.ipynb` can be used to recreate the figures from our paper.
 
-#### Validation of fluxes and source/sink terms
+#### Validation of nightly fluxes and source/sink terms
 
-To validate the spatial and temporal component of FluxRGNN by comparing 24h fluxes and source/sink terms to the 
+To validate the spatial and temporal component of FluxRGNN by comparing nightly fluxes and source/sink terms to the 
 respective ground truth from simulations, run
 ```
-python evaluate_fluxes.py datasource=abm
+python evaluate_fluxes.py datasource=abm fixed_t0=true
 ```
 
 To do the same for hourly fluxes and source/sink terms, run
 ```
-python evaluate_fluxes.py datasource=abm +H_min=24 +H_max=24
+python evaluate_fluxes.py datasource=abm fixed_t0=false +H_min=24 +H_max=24
 ```
 The forecasting horizon (`H_min` and `H_max`) can be set to anything between 1 and 72.
 
@@ -176,9 +176,9 @@ To recreate the figures from our paper, use the Jupyter notebook `validation_stu
 
 #### Radar case study
 
-To recreate the map of average 24h fluxes predicted for the radar data, first run 
+To recreate the map of average nightly fluxes predicted for the radar data, first run 
 ```
-python evaluate_fluxes.py datasource=radar
+python evaluate_fluxes.py datasource=radar fixed_t0=true
 ```
 and then use the Jupyter notebook `radar_case_study.ipynb` for plotting.
 
