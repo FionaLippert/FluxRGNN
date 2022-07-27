@@ -67,7 +67,7 @@ python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/d
 
 If you would like to apply FluxRGNN to your own data, you need to generate the following files (for each season and year):
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent). You can use [this](https://github.com/FionaLippert/birdMigration) code base to construct the voronoi tessellation and associated graph structure from a set of sensor locations.
-- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
+- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell (as columns):
     |          	| description                                                                      	| data type 	|
     |----------	|----------------------------------------------------------------------------------	|-----------	|
     | radar    	| name/label of radar                                           	                | string    	|
@@ -80,7 +80,7 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
     | area_km2 	| area of Voronoi cell in km^2                                                     	| float     	|
 
     Note that the order of the rows in the data frame (representing the different radars) must correspond to the order of nodes in the `networkx.DiGraph`.
-- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
+- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time (as columns:
     |                	| description                                                                                                                                                          	| data type 	|
     |----------------	|----------------------------------------------------------------------------------------------------------------------------------------------------------------------	|-----------	|
     | radar          	| name/label of radar                                                                                                                                	| string    	|
@@ -108,7 +108,7 @@ To train FluxRGNN on all available data except for year 2017 and to immediately 
 python run_experiments.py datasource={datasource} +experiment={name}
 ```
 with `datasource` being either `radar` or `abm`, and `name` being any identifier you would like to give 
-your experiment.
+your experiment (used to name the directory to which all results of this experiment are written to).
 
 To run the same on a cluster using slurm and cuda, with 5 instances of FluxRGNN being trained in parallel, run
 ```
@@ -121,17 +121,30 @@ To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), si
 
 #### Predictive performance
 
+##### Evaluate your own model
+
+To evaluate the predictive performance of FluxRGNN (or any of the other models), run
+```
+python evaluate_performance.py datasource={datasource} model={model}
+```
+This will generate summaries of the performance measures of all experiments available for this model and write the output to `results/{datasource}/performance_evaluation/{model}_only`.
+
+Then the Jupyter notebook `inspect_results.ipynb` can be used to visualize the performance metrics, and to inspect example predictions for individual radars.
+
+##### Recreate results from paper
+
 To compare the predictive performance of FluxRGNN to the baseline models, run
 ```
 python evaluate_performance.py datasource={datasource} +experiment_type=final
 ```
+This will generate summaries of the performance measures of all experiments called 'final' for models `FluxRGNN`, `GAM`, `HA`, and `GBT`, and write the output to `results/{datasource}/performance_evaluation/final`.
 
 Similarly, to compare the predictive performance of FluxRGNN to its variants (ablations), run
 ```
 python evaluate_performance.py datasource={datasource} +experiment_type=ablations
 ```
+This will generate summaries of the performance measures of all ablation experiments and write the output to `results/{datasource}/performance_evaluation/ablations`.
 
-This will generate summaries of the performance measures and write them to the directory `FluxRGNN/results/{datasource}/performance_evaluation`.
 Then the Jupyter notebook `performance_evaluation.ipynb` can be used to recreate the figures from our paper.
 
 #### Validation of fluxes and source/sink terms
