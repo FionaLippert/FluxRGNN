@@ -80,7 +80,7 @@ def evaluate(cfg: DictConfig):
                 results, model_cfg = load_cv_results(result_dir, trials=cfg.task.repeats, ext=ext)
 
                 df_prep = pd.read_csv(osp.join(base_dir, 'data', 'preprocessed',
-                        f'{model_cfg["t_unit"]}_{model_cfg["model"]["edge_type"]}_ndummy={model_cfg["model"]["n_dummy_radars"]}',
+                        f'{model_cfg["t_unit"]}_{model_cfg["model"]["edge_type"]}_ndummy={model_cfg["datasource"]["n_dummy_radars"]}',
                             datasource, cfg.season, str(cfg.datasource.test_year), 'dynamic_features.csv'))
                 tidx2night = dict(zip(df_prep.tidx, df_prep.nightID))
 

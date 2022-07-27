@@ -23,14 +23,29 @@ conda activate fluxrgnn
 ```
 before getting started.
 
+Note that after making changes to files in the `fluxrgnn` directory, you need to reinstall the associated python package by running
+```
+python setup.py install
+```
+
+### Additional dependencies
+
 If you want to use your GPU, you may need to manually install a matching 
 [PyTorch](https://pytorch.org/) version.
 
 To recreate geographical visualisations from our paper, some additional packages are required. They can be installed by running
 ```
-conda env update --name fluxrgnn --file environment_geo.yml
+conda env update --name fluxrgnn --file plotting_environment.yml
+```
+To make the conda environment visible for the jupyter notebooks, run
+```
+python -m ipykernel install --user --name=fluxrgnn
 ```
 
+To install additional packages required to run the radar data preprocessing (see below), run
+```
+conda env update --name fluxrgnn --file preprocessing_environment.yml
+```
 
 ## Getting started
 
@@ -63,7 +78,7 @@ python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/d
 
 If you would like to apply FluxRGNN to your own data, you need to generate the following files (for each season and year):
 - `delaunay.gpickle`: graph structure underlying the Voronoi tessellation of radar locations (as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent radars and edges between radars exist if their Voronoi cells are adjacent). You can use [this](https://github.com/FionaLippert/birdMigration) code base to construct the voronoi tessellation and associated graph structure from a set of sensor locations.
-- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell:
+- `static_features.csv`: dataframe containing the following static features of radars and their corresponding Voronoi cell (as columns):
     |          	| description                                                                      	| data type 	|
     |----------	|----------------------------------------------------------------------------------	|-----------	|
     | radar    	| name/label of radar                                           	                | string    	|
@@ -76,7 +91,7 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
     | area_km2 	| area of Voronoi cell in km^2                                                     	| float     	|
 
     Note that the order of the rows in the data frame (representing the different radars) must correspond to the order of nodes in the `networkx.DiGraph`.
-- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time:
+- `dynamic_features.csv`: dataframe containing the following dynamic features of Voronoi cells, i.e. variables that change over time (as columns:
     |                	| description                                                                                                                                                          	| data type 	|
     |----------------	|----------------------------------------------------------------------------------------------------------------------------------------------------------------------	|-----------	|
     | radar          	| name/label of radar                                                                                                                                	| string    	|
@@ -104,7 +119,7 @@ To train FluxRGNN on all available data except for year 2017 and to immediately 
 python run_experiments.py datasource={datasource} +experiment={name}
 ```
 with `datasource` being either `radar` or `abm`, and `name` being any identifier you would like to give 
-your experiment.
+your experiment (used to name the directory to which all results of this experiment are written to).
 
 To run the same on a cluster using slurm and cuda, with 5 instances of FluxRGNN being trained in parallel, run
 ```
@@ -117,30 +132,43 @@ To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), si
 
 #### Predictive performance
 
+##### Evaluate your own model
+
+To evaluate the predictive performance of FluxRGNN (or any of the other models), run
+```
+python evaluate_performance.py datasource={datasource} model={model}
+```
+This will generate summaries of the performance measures of all experiments available for this model and write the output to `results/{datasource}/performance_evaluation/{model}_only`.
+
+Then the Jupyter notebook `inspect_results.ipynb` can be used to visualize the performance metrics, and to inspect example predictions for individual radars.
+
+##### Recreate results from paper
+
 To compare the predictive performance of FluxRGNN to the baseline models, run
 ```
 python evaluate_performance.py datasource={datasource} +experiment_type=final
 ```
+This will generate summaries of the performance measures of all experiments called 'final' for models `FluxRGNN`, `GAM`, `HA`, and `GBT`, and write the output to `results/{datasource}/performance_evaluation/final`.
 
 Similarly, to compare the predictive performance of FluxRGNN to its variants (ablations), run
 ```
 python evaluate_performance.py datasource={datasource} +experiment_type=ablations
 ```
+This will generate summaries of the performance measures of all ablation experiments and write the output to `results/{datasource}/performance_evaluation/ablations`.
 
-This will generate summaries of the performance measures and write them to the directory `FluxRGNN/results/{datasource}/performance_evaluation`.
 Then the Jupyter notebook `performance_evaluation.ipynb` can be used to recreate the figures from our paper.
 
-#### Validation of fluxes and source/sink terms
+#### Validation of nightly fluxes and source/sink terms
 
-To validate the spatial and temporal component of FluxRGNN by comparing 24h fluxes and source/sink terms to the 
+To validate the spatial and temporal component of FluxRGNN by comparing nightly fluxes and source/sink terms to the 
 respective ground truth from simulations, run
 ```
-python evaluate_fluxes.py datasource=abm
+python evaluate_fluxes.py datasource=abm fixed_t0=true
 ```
 
 To do the same for hourly fluxes and source/sink terms, run
 ```
-python evaluate_fluxes.py datasource=abm +H_min=24 +H_max=24
+python evaluate_fluxes.py datasource=abm fixed_t0=false +H_min=24 +H_max=24
 ```
 The forecasting horizon (`H_min` and `H_max`) can be set to anything between 1 and 72.
 
@@ -148,9 +176,9 @@ To recreate the figures from our paper, use the Jupyter notebook `validation_stu
 
 #### Radar case study
 
-To recreate the map of average 24h fluxes predicted for the radar data, first run 
+To recreate the map of average nightly fluxes predicted for the radar data, first run 
 ```
-python evaluate_fluxes.py datasource=radar
+python evaluate_fluxes.py datasource=radar fixed_t0=true
 ```
 and then use the Jupyter notebook `radar_case_study.ipynb` for plotting.
 
