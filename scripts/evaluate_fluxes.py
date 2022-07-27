@@ -253,9 +253,6 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
 
     voronoi.to_csv(osp.join(output_dir, 'voronoi_summary.csv'))
 
-    with open(osp.join(output_dir, 'd2b_index.pickle'), 'wb') as f:
-        pickle.dump(d2b_index, f, pickle.HIGHEST_PROTOCOL)
-
     if cfg.datasource.name == 'abm':
         corr_d2b = pd.concat(corr_d2b)
         corr_angles = pd.concat(corr_angles)
@@ -273,6 +270,9 @@ def evaluate_fluxes(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, ou
 
         with open(osp.join(output_dir, 'agg_overall_corr.pickle'), 'wb') as f:
             pickle.dump(overall_corr, f, pickle.HIGHEST_PROTOCOL)
+
+        with open(osp.join(output_dir, 'd2b_index.pickle'), 'wb') as f:
+            pickle.dump(d2b_index, f, pickle.HIGHEST_PROTOCOL)
 
 
 def evaluate_source_sink(cfg:DictConfig, results, H_min, H_max, voronoi, data_dir, output_dir, night_only=False):

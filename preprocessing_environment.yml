@@ -1,4 +1,3 @@
-name: fluxrgnn
 channels:
   - pytorch
   - pyg
@@ -27,4 +26,15 @@ dependencies:
    - cartopy
    - geoplot
    - shapely
+   - tqdm
+   - pip
+   - geopy
+   - xarray
+   - rioxarray
+   - pyproj
+   - descartes
+   - pip:
+      - geovoronoi==0.3.0
+      - pvlib==0.8.1
+      - cdsapi
 
