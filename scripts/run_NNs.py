@@ -460,8 +460,8 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
                                 data.num_nodes, data.num_nodes, -1).detach().cpu() * cfg.datasource.bird_scale
 
             # absolute fluxes across Voronoi faces
-            if input_col == 'birds_km2':
-                edge_fluxes[nidx] *= areas.max()
+            #if input_col == 'birds_km2':
+            #    edge_fluxes[nidx] *= areas.max()
 
             # net fluxes per node
             influxes = edge_fluxes[nidx].sum(1)
