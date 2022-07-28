@@ -459,13 +459,13 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
             edge_fluxes[nidx] = adj.view(
                                 data.num_nodes, data.num_nodes, -1).detach().cpu() * cfg.datasource.bird_scale
 
-            # absolute fluxes across Voronoi faces
-            #if input_col == 'birds_km2':
-            #    edge_fluxes[nidx] *= areas.max()
-
             # net fluxes per node
             influxes = edge_fluxes[nidx].sum(1)
             outfluxes = edge_fluxes[nidx].permute(1, 0, 2).sum(1)
+
+            # absolute fluxes across Voronoi faces
+            if input_col == 'birds_km2':
+               edge_fluxes[nidx] *= areas.max()
 
             radar_fluxes[nidx] = to_dense_adj(data.edge_index, edge_attr=data.fluxes).view(
                 data.num_nodes, data.num_nodes, -1).detach().cpu()
