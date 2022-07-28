@@ -252,7 +252,7 @@ def test(cfg: DictConfig, output_dir: str, log, ext=''):
 
     model_dir = cfg.get('model_dir', output_dir)
     model_cfg = utils.load_model_cfg(model_dir)
-    cfg.datasource.bird_scale = model_cfg['datasource']['bird_scale']
+    cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     test_data, input_col, context, seed = dataloader.load_dataset(cfg, output_dir, training=False)
     test_data = test_data[0]
