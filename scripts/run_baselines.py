@@ -83,10 +83,10 @@ def train_GBT(cfg: DictConfig, output_dir: str, log):
     print(f'number of validation sequences = {n_val}')
 
     train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
-    X_train, y_train, mask_train = dataloader.get_training_data_gbt(train_data, timesteps=seq_len, mask_daytime=False,
+    X_train, y_train, mask_train = dataloader.get_training_data(train_data, timesteps=seq_len, mask_daytime=False,
                                                     use_acc_vars=cfg.model.use_acc_vars)
 
-    X_val, y_val, mask_val = dataloader.get_training_data_gbt(val_data, timesteps=seq_len, mask_daytime=False,
+    X_val, y_val, mask_val = dataloader.get_training_data(val_data, timesteps=seq_len, mask_daytime=False,
                                               use_acc_vars=cfg.model.use_acc_vars)
 
 
@@ -214,10 +214,10 @@ def cross_validation_GBT(cfg: DictConfig, output_dir: str, log):
         val_data = Subset(data, cv_folds[f].tolist())
         train_idx = np.concatenate([cv_folds[i] for i in range(n_folds) if i!=f]).tolist()
         train_data = Subset(data, train_idx) # everything else
-        X_train, y_train, mask_train = dataloader.get_training_data_gbt(train_data, timesteps=seq_len, mask_daytime=False,
+        X_train, y_train, mask_train = dataloader.get_training_data(train_data, timesteps=seq_len, mask_daytime=False,
                                                         use_acc_vars=cfg.model.use_acc_vars)
 
-        X_val, y_val, mask_val = dataloader.get_training_data_gbt(val_data, timesteps=seq_len, mask_daytime=False,
+        X_val, y_val, mask_val = dataloader.get_training_data(val_data, timesteps=seq_len, mask_daytime=False,
                                                   use_acc_vars=cfg.model.use_acc_vars)
 
         print(f'train model')
