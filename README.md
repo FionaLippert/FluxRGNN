@@ -119,7 +119,7 @@ To train FluxRGNN on all available data except for year 2017 and to immediately 
 python run_experiments.py datasource={datasource} +experiment={name}
 ```
 with `datasource` being either `radar` or `abm`, and `name` being any identifier you would like to give 
-your experiment (used to name the directory to which all results of this experiment are written to).
+your experiment (used to name the directory to which all results of this experiment are written to). To change the test year to `X`, add `datasource.test_year=X` as a command line argument.
 
 To run the same on a cluster using slurm and cuda, with 5 instances of FluxRGNN being trained in parallel, run
 ```
@@ -127,6 +127,51 @@ python run_experiments.py datasource={datasource} +experiment={name} device=clus
 ```
 
 To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), simply add `model={model}` to your command line.
+
+#### Commands to reproduce results from our paper
+
+- **FluxRGNN**: 
+    ```
+    python run_experiments.py datasource=radar +experiment=final task.repeats=5
+    ```
+    To run the same for the simulated data, replace `radar` by `abm` and add `model.lr=1e-5 model.batch_size=4 datasource.n_dummy_radars=25` to the command line.
+
+- **FluxRGNN w/o encoder**:
+    ```
+    python run_experiments.py datasource=radar +experiment=final_without_encoder task.repeats=5 model.use_encoder=false model.use_uv=false
+    ```
+    To run the same for the simulated data, replace `radar` by `abm` and add `model.lr=1e-5 model.batch_size=4 datasource.n_dummy_radars=25` to the command line.
+
+- **FluxRGNN w/o boundary cells**:
+    ```
+    python run_experiments.py datasource=radar +experiment=final_without_boundary task.repeats=5 model.use_boundary_model=false datasource.n_dummy_radars=0
+    ```
+    To run the same for the simulated data, replace `radar` by `abm` and add `model.lr=1e-5 model.batch_size=4` to the command line.
+
+- **FluxRGNN w/o spatial fluxes**:
+    ```
+    python run_experiments.py datasource=radar model=LocalLSTM +experiment=final task.repeats=5
+    ```
+    To run the same for the simulated data, replace `radar` by `abm` and add `model.lr=1e-5 model.batch_size=4 datasource.n_dummy_radars=25` to the command line.
+    
+- **GBT**:
+    ```
+    python run_experiments.py datasource=radar model=GBT +experiment=final task.repeats=5 datasource.n_dummy_radars=0
+    ```
+    To run the same for the simulated data, replace `radar` by `abm` and add `model.max_depth=10` to the command line.
+    
+- **GAM**:
+    ```
+    python run_experiments.py datasource=radar model=GAM +experiment=final task.repeats=1 datasource.n_dummy_radars=0
+    ```
+    To run the same for the simulated data, replace `radar` by `abm`.
+    
+- **HA**:
+    ```
+    python run_experiments.py datasource=radar model=HA +experiment=final task.repeats=1 datasource.n_dummy_radars=0
+    ```
+    To run the same for the simulated data, replace `radar` by `abm`.
+
 
 ### Analysis
 
@@ -136,7 +181,7 @@ To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), si
 
 To evaluate the predictive performance of FluxRGNN (or any of the other models), run
 ```
-python evaluate_performance.py datasource={datasource} model={model}
+python evaluate_performance.py datasource={datasource} model={model} task.repeats={repeats}
 ```
 This will generate summaries of the performance measures of all experiments available for this model and write the output to `results/{datasource}/performance_evaluation/{model}_only`.
 
@@ -146,13 +191,13 @@ Then the Jupyter notebook `inspect_results.ipynb` can be used to visualize the p
 
 To compare the predictive performance of FluxRGNN to the baseline models, run
 ```
-python evaluate_performance.py datasource={datasource} +experiment_type=final
+python evaluate_performance.py datasource={datasource} +experiment_type=final task.repeats=5
 ```
 This will generate summaries of the performance measures of all experiments called 'final' for models `FluxRGNN`, `GAM`, `HA`, and `GBT`, and write the output to `results/{datasource}/performance_evaluation/final`.
 
 Similarly, to compare the predictive performance of FluxRGNN to its variants (ablations), run
 ```
-python evaluate_performance.py datasource={datasource} +experiment_type=ablations
+python evaluate_performance.py datasource={datasource} +experiment_type=ablations task.repeats=5
 ```
 This will generate summaries of the performance measures of all ablation experiments and write the output to `results/{datasource}/performance_evaluation/ablations`.
 
