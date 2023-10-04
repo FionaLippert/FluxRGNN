@@ -20,19 +20,14 @@ def run(cfg: DictConfig):
         target_dir = osp.join(data_root, 'preprocessed',
                               f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}',
                               cfg.datasource.name, cfg.season, str(year))
-        if not osp.isdir(target_dir):
-            # load all features and organize them into dataframes
-            print(f'year {year}: start preprocessing')
-            os.makedirs(target_dir, exist_ok=True)
-            print(f'process dynamic features? {cfg.process_dynamic}')
-            datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
+
+        # load all features and organize them into dataframes
+        print(f'year {year}: start preprocessing')
+        os.makedirs(target_dir, exist_ok=True)
+        print(f'process dynamic features? {cfg.process_dynamic}')
+        datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
                              random_seed=cfg.seed, edge_type=cfg.model.edge_type,
                              **cfg.datasource, **cfg)
-            # check if directory containts output, if not delete it
-            if len(os.listdir(target_dir)) == 0:
-                os.rmdir(target_dir)
-        else:
-            print(f'year {year}: nothing to be done')
 
 if __name__ == "__main__":
     run()
