@@ -24,10 +24,13 @@ def run(cfg: DictConfig):
             # load all features and organize them into dataframes
             print(f'year {year}: start preprocessing')
             os.makedirs(target_dir, exist_ok=True)
-            print(cfg.process_dynamic)
+            print(f'process dynamic features? {cfg.process_dynamic}')
             datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
                              random_seed=cfg.seed, edge_type=cfg.model.edge_type,
                              **cfg.datasource, **cfg)
+            # check if directory containts output, if not delete it
+            if len(os.listdir(target_dir)) == 0:
+                os.rmdir(target_dir)
         else:
             print(f'year {year}: nothing to be done')
 

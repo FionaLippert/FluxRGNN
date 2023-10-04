@@ -1,21 +1,20 @@
 # @package datasource
 name: nexrad
 years:
-  - 2017
-  - 2018
-  - 2019
-test_year: 2019
+  - 2015
+  - 2016
+test_year: 2016
 val_train_split: 0.1
 env_vars:
-#  - u
-#  - v
-#  - u10
-#  - v10
-#  - cc
-#  - tp
-#  - sp
-#  - t2m
-#  - sshf
+  - u
+  - v
+  - u10
+  - v10
+  - cc
+  - tp
+  - sp
+  - t2m
+  - sshf
   - night
   - dusk
   - dawn
