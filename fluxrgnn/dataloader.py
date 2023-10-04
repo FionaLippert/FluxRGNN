@@ -198,7 +198,7 @@ class RadarData(InMemoryDataset):
 
         if self.edge_type == 'voronoi':
             # load Delaunay triangulation with edge features
-            G = nx.read_gpickle(osp.join(self.preprocessed_dir, 'delaunay.gpickle'))
+            G = nx.read_graphml(osp.join(self.preprocessed_dir, 'delaunay.graphml'))
             edges = torch.tensor(list(G.edges()), dtype=torch.long)
             edge_index = edges.t().contiguous()
             n_edges = edge_index.size(1)
