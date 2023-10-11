@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#SBATCH --partition=thin
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --job-name=preprocessing
+#SBATCH --time=24:00:00
+#SBATCH --output=slurm_output_%A_%a.out
+
+source activate birds
+
+cd $HOME/FluxRGNN/scripts
+
+which python
+
+OVERRIDES=$1
+
+echo $OVERRIDES
+
+srun python run_preprocessing.py $OVERRIDES
+
