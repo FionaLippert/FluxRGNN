@@ -6,6 +6,7 @@ from torch.optim import lr_scheduler
 from torch_geometric.data import DataLoader, DataListLoader
 from torch_geometric.utils import to_dense_adj
 from omegaconf import DictConfig, OmegaConf
+import hydra
 from hydra.utils import instantiate
 import wandb
 import pickle
@@ -21,7 +22,8 @@ MODEL_MAPPING = {'LocalMLP': LocalMLP,
                  'LocalLSTM': LocalLSTM,
                  'FluxRGNN': FluxRGNN}
 
-def run(cfg: DictConfig, output_dir: str, log):
+@hydra.main(config_path="conf", config_name="config")
+def run(cfg: DictConfig):
     """
     Run training and/or testing for neural network model.
 
@@ -29,6 +31,7 @@ def run(cfg: DictConfig, output_dir: str, log):
     :param output_dir: directory to which all outputs are written to
     :param log: log file
     """
+    os.makedirs(cfg.output_dir, exist_ok=True)
 
     trainer = instantiate(cfg.trainer)
 
@@ -43,21 +46,19 @@ def run(cfg: DictConfig, output_dir: str, log):
     model = instantiate(cfg.model, n_env=len(cfg.datasource.env_vars))
 
     if cfg.verbose:
-        print('------------------ model settings --------------------', file=log)
-        print(cfg.model, file=log)
-        print('------------------------------------------------------', file=log)
-
-    log.flush()
+        print('------------------ model settings --------------------')
+        print(cfg.model)
+        print('------------------------------------------------------')
 
 
     if 'train' in cfg.task.name:
-        training(trainer, model, cfg, output_dir, log)
+        training(trainer, model, cfg)
     if 'eval' in cfg.task.name:
         # if hasattr(cfg, 'importance_sampling'):
         #     cfg.importance_sampling = False
 
         cfg['fixed_t0'] = True
-        testing(trainer, model, cfg, output_dir, log, ext='_fixedT0')
+        testing(trainer, model, cfg, ext='_fixedT0')
         # cfg['fixed_t0'] = False
         # testing(trainer, model, cfg, output_dir, log)
 
@@ -74,8 +75,8 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def load_training_data(cfg, output_dir, log):
-    data = dataloader.load_dataset(cfg, output_dir, training=True)[0]
+def load_training_data(cfg):
+    data = dataloader.load_dataset(cfg, cfg.output_dir, training=True)[0]
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
@@ -84,11 +85,11 @@ def load_training_data(cfg, output_dir, log):
     n_train = n_data - n_val
 
     if cfg.verbose:
-        print('------------------------------------------------------', file=log)
-        print('-------------------- data sets -----------------------', file=log)
-        print(f'total number of sequences = {n_data}', file=log)
-        print(f'number of training sequences = {n_train}', file=log)
-        print(f'number of validation sequences = {n_val}', file=log)
+        print('------------------------------------------------------')
+        print('-------------------- data sets -----------------------')
+        print(f'total number of sequences = {n_data}')
+        print(f'number of training sequences = {n_train}')
+        print(f'number of validation sequences = {n_val}')
 
     train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
     train_loader = instantiate(cfg.dataloader, train_data)
@@ -96,32 +97,30 @@ def load_training_data(cfg, output_dir, log):
 
     return train_loader, val_loader
 
-def training(trainer, model, cfg: DictConfig, output_dir: str, log):
+def training(trainer, model, cfg: DictConfig):
     """
     Run training of a neural network model.
 
+    :param trainer: pytorch_lightning Trainer object
+    :param model: pytorch_lightning model object
     :param cfg: DictConfig specifying model, data and training details
-    :param output_dir: directory to which the final model and logs are written to
-    :param log: log file
     """
 
     if cfg.debugging: torch.autograd.set_detect_anomaly(True)
 
-    dl_train, dl_val = load_training_data(cfg, output_dir, log)
+    dl_train, dl_val = load_training_data(cfg)
 
     n_params = count_parameters(model)
 
     if cfg.verbose:
-        print('initialized model', file=log)
-        print(f'number of model parameters: {n_params}', file=log)
+        print('initialized model')
+        print(f'number of model parameters: {n_params}')
         print(f'environmental variables: {cfg.datasource.env_vars}')
-
-    log.flush()
 
     trainer.fit(model, dl_train, dl_val)
 
 
-def testing(trainer, model, cfg: DictConfig, output_dir: str, log, ext=''):
+def testing(trainer, model, cfg: DictConfig, ext=''):
     """
     Test neural network model on unseen test data.
 
@@ -132,7 +131,7 @@ def testing(trainer, model, cfg: DictConfig, output_dir: str, log, ext=''):
     # cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     # load test data
-    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, output_dir, training=False)
+    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, training=False)
     test_data = test_data[0]
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
@@ -140,3 +139,6 @@ def testing(trainer, model, cfg: DictConfig, output_dir: str, log, ext=''):
 
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
+
+if __name__ == "__main__":
+    run()
