@@ -9,15 +9,17 @@ dependencies:
    - numpy
    - scipy
    - networkx
-   - torchvision
-   - cudatoolkit=10.2
+   #- torchvision
+   - cudatoolkit>=10.2
    - pytorch
+   - pytorch-lightning
    - pyg
    - scikit-learn
    - pygam
    - ruamel.yaml
    - yaml
    - hydra-core
+   - wandb
    - pandas
    - matplotlib
      #- notebook
