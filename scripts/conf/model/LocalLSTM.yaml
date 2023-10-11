@@ -25,6 +25,9 @@ use_encoder: true
 use_uv: false
 root_transformed_loss: false
 edge_type: voronoi
+coord_dim: 2
+n_edge_attr: 5 # or 4?
+
 birds_per_km2: false
 
 load_states_from: none

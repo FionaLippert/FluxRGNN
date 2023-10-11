@@ -22,7 +22,7 @@ env_vars:
   - solarpos
   - solarpos_dt
 use_buffers: True
-n_dummy_radars: 30
+n_dummy_radars: 60
 
 # will be filled at runtime
 bird_scale: ???

@@ -1,0 +1,6 @@
+# @package device
+name: laptop
+root: /home/${oc.env:USER}/Documents/FluxRGNN
+accelerator: cpu
+devices: 1
+slurm: false

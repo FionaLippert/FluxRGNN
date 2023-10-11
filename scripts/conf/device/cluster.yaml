@@ -1,5 +1,6 @@
 # @package device
 name: cluster
 root: /home/${oc.env:USER}/FluxRGNN
-cuda: true
+accelerator: gpu
+devices: 1
 slurm: true

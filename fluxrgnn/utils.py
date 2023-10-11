@@ -5,8 +5,14 @@ import torch
 import warnings
 import pandas as pd
 import ruamel.yaml
+import pytorch_lightning as pl
 
-from src import dataloader
+# from src import dataloader
+
+def seed_all(seed):
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)
+    pl.seed_everything(seed, workers=True)
 
 def val_test_split(dataloader, val_ratio):
     N = len(dataloader)
