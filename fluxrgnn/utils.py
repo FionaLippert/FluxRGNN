@@ -4,9 +4,16 @@ import os.path as osp
 import torch
 import warnings
 import pandas as pd
-import ruamel.yaml
+#import ruamel.yaml
+from omegaconf import OmegaConf
+import pytorch_lightning as pl
 
-from src import dataloader
+# from src import dataloader
+
+def seed_all(seed):
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)
+    pl.seed_everything(seed, workers=True)
 
 def val_test_split(dataloader, val_ratio):
     N = len(dataloader)
@@ -66,10 +73,11 @@ def plot_training_curves(training_curves, val_curves, dir, log=True):
     plt.close(fig)
 
 def load_model_cfg(model_dir):
-    yaml = ruamel.yaml.YAML()
+    # yaml = ruamel.yaml.YAML()
     fp = osp.join(model_dir, 'config.yaml')
-    with open(fp, 'r') as f:
-        model_cfg = yaml.load(f)
+    # with open(fp, 'r') as f:
+    #     model_cfg = yaml.load(f)
+    model_cfg = OmegaConf.load(fp)
     return model_cfg
 
 def finalize_results(results, output_dir, ext=''):

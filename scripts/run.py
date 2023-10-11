@@ -3,7 +3,7 @@ import hydra
 import os.path as osp
 import os
 import traceback
-import run_NNs, run_baselines
+import run_NNs, run_baselines, run_neural_nets
 
 BASELINE_MODELS = ['HA', 'GAM', 'GBT']
 
@@ -28,7 +28,7 @@ def run(cfg: DictConfig):
         if cfg.model.name in BASELINE_MODELS:
             run_baselines.run(cfg, out, log)
         else:
-            run_NNs.run(cfg, out, log)
+            run_neural_nets.run(cfg, out, log)
     except Exception:
         print(f'Error occurred! See {osp.abspath(log_file)} for more details.')
         print(traceback.format_exc(), file=log)

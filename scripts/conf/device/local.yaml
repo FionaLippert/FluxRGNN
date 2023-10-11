@@ -1,5 +1,6 @@
 # @package device
 name: local
 root: /home/${oc.env:USER}/FluxRGNN
-cuda: false
+accelerator: gpu
+devices: 1
 slurm: false

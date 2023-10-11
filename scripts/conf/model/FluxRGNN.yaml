@@ -29,5 +29,7 @@ root_transformed_loss: false
 compute_fluxes: true
 edge_type: voronoi
 birds_per_km2: true
+coord_dim: 2
+n_edge_attr: 5
 
 load_states_from: none

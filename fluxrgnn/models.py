@@ -2,17 +2,20 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing, inits
+from torch_geometric.utils import to_dense_adj
+import pytorch_lightning as pl
 import numpy as np
+from fluxrgnn import utils
 
 
 
-class FluxRGNN(MessagePassing):
+class FluxRGNN(pl.LightningModule):
     """
     Recurrent graph neural network based on a mechanistic description of population-level movements
     on the Voronoi tesselation of sensor network sites.
     """
 
-    def __init__(self, n_env, n_edge_attr, coord_dim=2, **kwargs):
+    def __init__(self, **kwargs):
         """
         Initialize FluxRGNN and all its components.
 
@@ -21,40 +24,39 @@ class FluxRGNN(MessagePassing):
         :param coord_dim: dimensionality of senosr coordinate system
         """
 
-        super(FluxRGNN, self).__init__(aggr='add', node_dim=0)
+        super(FluxRGNN, self).__init__()
+        # self.save_hyperparameters()
+        self.config = kwargs
 
         # settings
         self.horizon = kwargs.get('horizon', 40)
         self.t_context = max(1, kwargs.get('context', 1))
-        self.teacher_forcing = kwargs.get('teacher_forcing', 0)
+        # self.teacher_forcing = kwargs.get('teacher_forcing', 0)
         self.use_encoder = kwargs.get('use_encoder', True)
         self.use_boundary_model = kwargs.get('use_boundary_model', True)
         self.fixed_boundary = kwargs.get('fixed_boundary', False)
         self.n_graph_layers = kwargs.get('n_graph_layers', 0)
 
         # number of node inputs
-        n_node_in = n_env + coord_dim + 2
+        n_node_in = kwargs.get('n_env', 0) + kwargs.get('coord_dim', 2) + 2
         # number of edge inputs
-        n_edge_in = 2 * n_env + n_edge_attr
+        n_edge_in = 2 * kwargs.get('n_env', 0) + kwargs.get('n_edge_attr', 5)
 
         # setup model components
-        self.node_lstm = NodeLSTM(n_node_in, **kwargs)
-        self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
-        self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
+        self.dynamics = FluxRGNNTransition(n_node_in, n_edge_in, **kwargs)
         if self.use_encoder:
             self.encoder = RecurrentEncoder(n_node_in, **kwargs)
         if self.use_boundary_model:
             self.boundary_model = Extrapolation()
         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(self.n_graph_layers)])
 
-        seed = kwargs.get('seed', 1234)
-        torch.manual_seed(seed)
 
-    def forward(self, data):
+    def forward(self, data, p_tf=0):
         """
         Setup prediction for given data and run model until the max forecasting horizon is reached.
 
         :param data: SensorData instance containing information on static and dynamic features for one time sequence
+        :param p_tf: teacher forcing probability
         :return: predicted migration intensities for all cells and time points
         """
 
@@ -93,8 +95,9 @@ class FluxRGNN(MessagePassing):
 
         for t in forecast_horizon:
 
+            # teacher forcing: use gt data instead of model output with probability tf
             r = torch.rand(1)
-            if r < self.teacher_forcing:
+            if r < p_tf:
                 x = data.x[..., t - 1].view(-1, 1)
 
             if self.use_boundary_model:
@@ -109,24 +112,153 @@ class FluxRGNN(MessagePassing):
                 hidden_sp = self.graph_layers[l]([data.edge_index, hidden_sp])
 
             # message passing through graph
-            x, hidden = self.propagate(data.edge_index,
-                                       reverse_edges=data.reverse_edges,
-                                       x=x,
-                                       coords=data.coords,
-                                       hidden=hidden,
-                                       hidden_sp=hidden_sp,
-                                       areas=data.areas,
-                                       edge_attr=data.edge_attr,
-                                       env=data.env[..., t],
-                                       env_1=data.env[..., t - 1],
-                                       t=t - self.t_context)
-
+            x, hidden = self.dynamics(data, x, hidden, hidden_sp, data.env[..., t], data.env[..., t-1])
             y_hat.append(x)
+
+            if not self.training:
+                tidx = t - self.t_context
+                self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
+                self.node_source[..., tidx] = self.dynamics.node_source
+                self.node_sink[..., tidx] = self.dynamics.node_sink
 
         prediction = torch.cat(y_hat, dim=-1)
         return prediction
 
-    def message(self, x_j, hidden_sp_j, env_i, env_1_j, edge_attr, t, reverse_edges):
+
+    def training_step(self, batch, batch_idx):
+
+        # get teacher forcing probability for current epoch
+        p_tf = torch.pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
+
+        # make predictions and compute loss
+        eval_dict = self._eval_step(batch, p_tf, prefix='train')
+        self.log(eval_dict)
+
+        return eval_dict['train_loss']
+
+    def validation_step(self, batch, batch_idx):
+
+        # make predictions and compute loss
+        eval_dict = self._eval_step(batch, prefix='val')
+        self.log(eval_dict)
+
+    def test_step(self, batch, batch_idx):
+
+        # make predictions and compute evaluation metrics
+        eval_dict = self._eval_step(batch, prefix='test')
+        self.log(eval_dict)
+
+    def _eval_step(self, batch, p_tf=0, prefix=''):
+        output = self.forward(batch, p_tf)
+
+        if self.config.get('force_zeros', False):
+            mask = torch.logical_and(batch.local_night, torch.logical_not(batch.missing))
+        else:
+            mask = torch.logical_not(batch.missing)
+
+        gt = batch.y[:, self.t_context:]
+        mask = mask[:, self.t_context:]
+
+        loss = utils.MSE(output, gt, mask)
+        eval_dict = {f'{prefix}_loss': loss}
+        # loss = batch.num_graphs * float(loss)
+
+        if not self.training:
+            eval_dict.update({f'{prefix}_RMSE': torch.sqrt(loss)})
+
+        return eval_dict
+
+    def predict_step(self, batch, batch_idx):
+
+        # make predictions
+        output = self.forward(batch)
+        gt = batch.y if hasattr(batch, 'y') else None
+
+        # get fluxes along edges
+        adj = to_dense_adj(batch.edge_index, edge_attr=self.edge_fluxes)
+        edge_fluxes = adj.view(batch.num_nodes, batch.num_nodes, -1)
+
+        # get net fluxes per node
+        influxes = edge_fluxes.sum(1)
+        outfluxes = edge_fluxes.permute(1, 0, 2).sum(1)
+
+        if hasattr(batch, 'fluxes'):
+            # compute approximate fluxes from radar data
+            radar_fluxes = to_dense_adj(batch.edge_index, edge_attr=batch.fluxes).view(
+                batch.num_nodes, batch.num_nodes, -1)
+        else:
+            radar_fluxes = None
+
+        # TODO scale everything appropriately by bird_scale and max Voronoi area
+        result = {
+            'y_hat': output,
+            'y': gt,
+            'influx': influxes,
+            'outflux': outfluxes,
+            'source': self.node_source,
+            'sink': self.node_sink,
+            'edge_fluxes': edge_fluxes,
+            'radar_fluxes': radar_fluxes,
+            'local_night': batch.local_night,
+            'missing': batch.missing,
+            'tidx': batch.tidx
+        }
+        return result
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.get('lr', 0.01))
+
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+                                                    step_size=self.config.get('lr_decay', 100),
+                                                    gamma=self.config.get('lr_gamma', 1))
+
+        return optimizer, {"scheduler": scheduler, "interval": "epoch"}
+
+
+class FluxRGNNTransition(MessagePassing):
+    """
+    Implements a single FluxRGNN transition from t to t+1, given the previous predictions and hidden states.
+    """
+
+    def __init__(self, n_node_in, n_edge_in, **kwargs):
+        """
+        Initialize FluxRGNNTransition.
+
+        :param n_env: number of environmental features
+        :param n_edge_attr: number of edge attributes
+        :param coord_dim: dimensionality of senosr coordinate system
+        """
+
+        super(FluxRGNNTransition, self).__init__(aggr='add', node_dim=0)
+
+        # setup model components
+        self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+        self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
+        self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
+
+    def forward(self, graph_data, x, hidden, hidden_sp, env, env_1):
+        """
+        Run FluxRGNN prediction for one time step.
+
+        :param data: SensorData instance containing information on static and dynamic features for one time sequence
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        """
+        # message passing through graph
+        x, hidden = self.propagate(graph_data.edge_index,
+                                   reverse_edges=graph_data.reverse_edges,
+                                   x=x,
+                                   coords=graph_data.coords,
+                                   hidden=hidden,
+                                   hidden_sp=hidden_sp,
+                                   areas=graph_data.areas,
+                                   edge_attr=graph_data.edge_attr,
+                                   env=env,
+                                   env_1=env_1)
+
+        return x, hidden
+
+    def message(self, x_j, hidden_sp_j, env_i, env_1_j, edge_attr, reverse_edges):
         """
         Construct message from node j to node i (for all edges in parallel)
 
@@ -147,13 +279,13 @@ class FluxRGNN(MessagePassing):
         flux = self.edge_mlp(inputs, hidden_sp_j)
         flux = flux * x_j  # * areas_j.view(-1, 1)
 
-        if not self.training: self.edge_fluxes[..., t] = flux
+        if not self.training: self.edge_fluxes = flux
         flux = flux - flux[reverse_edges]
         flux = flux.view(-1, 1)
 
         return flux
 
-    def update(self, aggr_out, x, coords, areas, env, t):
+    def update(self, aggr_out, x, coords, areas, env):
         """
         Aggregate all received messages (fluxes) and combine them with local source/sink
         terms into a single prediction per node.
@@ -175,14 +307,15 @@ class FluxRGNN(MessagePassing):
         delta = source - sink
 
         if not self.training:
-            self.node_source[..., t] = source
-            self.node_sink[..., t] = sink
+            self.node_source = source
+            self.node_sink = sink
 
         # convert total influxes to influx per km2
         influx = aggr_out  # / areas.view(-1, 1)
         pred = x + delta + influx
 
         return pred, hidden
+
 
 
 class EdgeFluxMLP(torch.nn.Module):
@@ -336,8 +469,8 @@ class GraphLayer(MessagePassing):
         self.fc_edge = torch.nn.Linear(self.n_hidden, self.n_hidden)
         self.fc_node = torch.nn.Linear(self.n_hidden, self.n_hidden)
 
-        seed = kwargs.get('seed', 1234)
-        torch.manual_seed(seed)
+        # seed = kwargs.get('seed', 1234)
+        # torch.manual_seed(seed)
 
         self.reset_parameters()
 
@@ -396,7 +529,7 @@ class RecurrentEncoder(torch.nn.Module):
         if self.use_uv:
             n_in = n_in + 2
 
-        torch.manual_seed(kwargs.get('seed', 1234))
+        # torch.manual_seed(kwargs.get('seed', 1234))
 
         self.input2hidden = torch.nn.Linear(n_in, self.n_hidden, bias=False)
         self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
@@ -461,8 +594,8 @@ class LocalLSTM(torch.nn.Module):
         self.node_lstm = NodeLSTM(n_in, **kwargs)
         self.output_mlp = SourceSinkMLP(n_in, **kwargs)
 
-        seed = kwargs.get('seed', 1234)
-        torch.manual_seed(seed)
+        # seed = kwargs.get('seed', 1234)
+        # torch.manual_seed(seed)
 
     def forward(self, data):
 
@@ -527,7 +660,7 @@ class LSTM(torch.nn.Module):
         self.force_zeros = kwargs.get('force_zeros', False)
         self.teacher_forcing = kwargs.get('teacher_forcing', 0)
 
-        torch.manual_seed(kwargs.get('seed', 1234))
+        # torch.manual_seed(kwargs.get('seed', 1234))
 
         self.fc_in = torch.nn.Linear(self.n_in*self.n_nodes, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden) for l in range(self.n_layers)])
@@ -575,10 +708,10 @@ class MLP(torch.nn.Module):
     Standard MLP mapping concatenated features of all nodes at time t to migration intensities
     of all nodes at time t
     """
-    def __init__(self, in_channels, hidden_channels, out_channels, horizon, n_layers=1, dropout_p=0.5, seed=12345):
+    def __init__(self, in_channels, hidden_channels, out_channels, horizon, n_layers=1, dropout_p=0.5):
         super(MLP, self).__init__()
 
-        torch.manual_seed(seed)
+        # torch.manual_seed(seed)
 
         self.fc_in = torch.nn.Linear(in_channels, hidden_channels)
         self.fc_hidden = nn.ModuleList([torch.nn.Linear(hidden_channels, hidden_channels) for _ in range(n_layers - 1)])
@@ -636,7 +769,7 @@ class LocalMLP(torch.nn.Module):
 
         self.n_in = n_env + coord_dim + self.use_acc * 2
 
-        torch.manual_seed(kwargs.get('seed', 1234))
+        # torch.manual_seed(kwargs.get('seed', 1234))
 
         self.fc_in = torch.nn.Linear(self.n_in, self.n_hidden)
         self.fc_hidden = nn.ModuleList([torch.nn.Linear(self.n_hidden, self.n_hidden)

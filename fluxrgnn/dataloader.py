@@ -198,7 +198,7 @@ class RadarData(InMemoryDataset):
 
         if self.edge_type == 'voronoi':
             # load Delaunay triangulation with edge features
-            G = nx.read_graphml(osp.join(self.preprocessed_dir, 'delaunay.graphml'))
+            G = nx.read_graphml(osp.join(self.preprocessed_dir, 'delaunay.graphml'), node_type=int)
             edges = torch.tensor(list(G.edges()), dtype=torch.long)
             edge_index = edges.t().contiguous()
             n_edges = edge_index.size(1)
@@ -290,9 +290,7 @@ class RadarData(InMemoryDataset):
             data['targets'].append(df[target_col].to_numpy())
             data['env'].append(df[env_cols].to_numpy().T)
 
-            print(len(set(acc_cols).intersection(set(df.columns))))
             if len(set(acc_cols).intersection(set(df.columns))) == len(acc_cols):
-                print('acc data is available')
                 data['acc'].append(df[acc_cols].to_numpy().T)
             else:
                 data['acc'].append(np.zeros((len(acc_cols), df.night.size)))

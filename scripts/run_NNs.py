@@ -6,12 +6,15 @@ from torch.optim import lr_scheduler
 from torch_geometric.data import DataLoader, DataListLoader
 from torch_geometric.utils import to_dense_adj
 from omegaconf import DictConfig, OmegaConf
+from hydra.utils import instantiate
+import wandb
 import pickle
 import os.path as osp
 import os
 import numpy as np
-import ruamel.yaml
+#import ruamel.yaml
 import pandas as pd
+from pytorch_lightning.loggers import WandbLogger
 
 # map model name to implementation
 MODEL_MAPPING = {'LocalMLP': LocalMLP,
@@ -26,6 +29,7 @@ def run(cfg: DictConfig, output_dir: str, log):
     :param output_dir: directory to which all outputs are written to
     :param log: log file
     """
+
 
     if 'search' in cfg.task.name:
         cross_validation(cfg, output_dir, log)
@@ -66,10 +70,13 @@ def training(cfg: DictConfig, output_dir: str, log):
 
     if cfg.debugging: torch.autograd.set_detect_anomaly(True)
 
+    # trainer = instantiate(cfg.trainer)
+
     Model = MODEL_MAPPING[cfg.model.name]
 
     device = 'cuda' if (cfg.device.cuda and torch.cuda.is_available()) else 'cpu'
     seed = cfg.seed + cfg.get('job_id', 0)
+    utils.seed_all(seed)
 
     data = dataloader.load_dataset(cfg, output_dir, training=True)[0]
     data = torch.utils.data.ConcatDataset(data)
@@ -117,7 +124,7 @@ def training(cfg: DictConfig, output_dir: str, log):
     val_curve = np.ones((1, cfg.model.epochs)) * np.nan
 
     model = Model(n_env=len(cfg.datasource.env_vars), coord_dim=2, n_edge_attr=n_edge_attr,
-                  seed=seed, **cfg.model)
+                  **cfg.model)
 
     n_params = count_parameters(model)
 
@@ -233,6 +240,7 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
     epochs = cfg.model.epochs
     n_folds = cfg.task.n_folds
     seed = cfg.seed + cfg.get('job_id', 0)
+    utils.seed_all(seed)
 
     data = dataloader.load_dataset(cfg, output_dir, training=True)[0]
     data = torch.utils.data.ConcatDataset(data)
@@ -279,7 +287,7 @@ def cross_validation(cfg: DictConfig, output_dir: str, log):
         val_loader = DataLoader(val_data, batch_size=1, shuffle=True)
 
         model = Model(n_env=len(cfg.datasource.env_vars), coord_dim=2, n_edge_attr=n_edge_attr,
-                      seed=seed, **cfg.model)
+                      **cfg.model)
 
         states_path = cfg.model.get('load_states_from', '')
         if osp.isfile(states_path):
@@ -399,6 +407,8 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
 
     model_dir = cfg.get('model_dir', output_dir)
     model_cfg = utils.load_model_cfg(model_dir)
+    utils.seed_all(model_cfg['seed'])
+
     cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     # load test data
@@ -425,7 +435,7 @@ def testing(cfg: DictConfig, output_dir: str, log, ext=''):
 
 
     model = Model(n_env=len(cfg.datasource.env_vars), coord_dim=2, n_edge_attr=n_edge_attr,
-                  seed=model_cfg['seed'], **model_cfg['model'])
+                  **model_cfg['model'])
     model.load_state_dict(torch.load(osp.join(model_dir, f'model{model_ext}.pkl')))
 
     # adjust model settings for testing

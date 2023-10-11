@@ -5,7 +5,8 @@ defaults:
   - datasource: radar
   - model: FluxRGNN
   - task: train_eval
-  - device: cluster
+  - device: local
+  - logger: wandb
 job_id: 0
 season: fall
 seed: 1234
@@ -15,7 +16,25 @@ missing_data_threshold: 0.1
 t_unit: 1H
 fixed_t0: false
 data_perc: 1.0
-#importance_sampling: true
 exclude: []
 verbose: True
 debugging: False
+
+# lightning trainer setup
+trainer:
+  _target_: pytorch_lightning.Trainer
+  logger: ${logger}
+#  callbacks:
+#    - _target_: callbacks.SamplingCallback
+#    - _target_: callbacks.ReconstructionCallback
+  accelerator: ${device.accelerator}
+  devices: ${device.devices}
+  deterministic: True
+  gradient_clip_algorithm: value
+  gradient_clip_val: 0
+  max_epochs: 1
+
+dataloader:
+  _target_: torch_geometric.data.DataLoader
+  batch_size: 4
+  shuffle: True
