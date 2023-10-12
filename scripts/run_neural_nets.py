@@ -22,6 +22,8 @@ MODEL_MAPPING = {'LocalMLP': LocalMLP,
                  'LocalLSTM': LocalLSTM,
                  'FluxRGNN': FluxRGNN}
 
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 @hydra.main(config_path="conf", config_name="config")
 def run(cfg: DictConfig):
     """
@@ -131,7 +133,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     # cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     # load test data
-    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, training=False)
+    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False)
     test_data = test_data[0]
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 

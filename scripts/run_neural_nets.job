@@ -3,8 +3,10 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=1
 #SBATCH --job-name=fluxrgnn_training
-#SBATCH --time=12:00:00
+#SBATCH --time=1:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
@@ -12,6 +14,8 @@ source activate fluxrgnn
 cd $HOME/FluxRGNN/scripts
 
 which python
+
+nvidia-smi
 
 OVERRIDES=$1
 

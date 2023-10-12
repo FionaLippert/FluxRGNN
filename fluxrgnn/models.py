@@ -70,14 +70,14 @@ class FluxRGNN(pl.LightningModule):
         if self.use_encoder:
             # push context timeseries through encoder to initialize decoder
             h_t, c_t = self.encoder(data)
-            self.node_lstm.setup_states(h_t, c_t)
+            self.dynamics.node_lstm.setup_states(h_t, c_t)
         else:
             # start from scratch
             h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=x.device) for
                    _ in range(self.node_lstm.n_lstm_layers)]
             c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=x.device) for
                    _ in range(self.node_lstm.n_lstm_layers)]
-            self.node_lstm.setup_states(h_t, c_t)
+            self.dynamics.node_lstm.setup_states(h_t, c_t)
 
         # setup model components
         if self.use_boundary_model:
@@ -94,6 +94,8 @@ class FluxRGNN(pl.LightningModule):
         forecast_horizon = range(self.t_context, self.t_context + self.horizon)
 
         for t in forecast_horizon:
+
+            print(f't={t}, x_mean={x.mean()}, hidden_mean={hidden.mean()}')
 
             # teacher forcing: use gt data instead of model output with probability tf
             r = torch.rand(1)
@@ -128,11 +130,12 @@ class FluxRGNN(pl.LightningModule):
     def training_step(self, batch, batch_idx):
 
         # get teacher forcing probability for current epoch
-        p_tf = torch.pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
+        p_tf = pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
+        print(f'tf prob = {p_tf}')
 
         # make predictions and compute loss
         eval_dict = self._eval_step(batch, p_tf, prefix='train')
-        self.log(eval_dict)
+        self.log_dict(eval_dict)
 
         return eval_dict['train_loss']
 
@@ -140,13 +143,13 @@ class FluxRGNN(pl.LightningModule):
 
         # make predictions and compute loss
         eval_dict = self._eval_step(batch, prefix='val')
-        self.log(eval_dict)
+        self.log_dict(eval_dict)
 
     def test_step(self, batch, batch_idx):
 
         # make predictions and compute evaluation metrics
         eval_dict = self._eval_step(batch, prefix='test')
-        self.log(eval_dict)
+        self.log_dict(eval_dict)
 
     def _eval_step(self, batch, p_tf=0, prefix=''):
         output = self.forward(batch, p_tf)
@@ -158,6 +161,10 @@ class FluxRGNN(pl.LightningModule):
 
         gt = batch.y[:, self.t_context:]
         mask = mask[:, self.t_context:]
+
+        print(f'avg gt birds = {gt.mean()}')
+        print(f'avg pred birds = {output.mean()}')
+        print(f'num data points after masking = {mask.sum()}')
 
         loss = utils.MSE(output, gt, mask)
         eval_dict = {f'{prefix}_loss': loss}
@@ -212,7 +219,8 @@ class FluxRGNN(pl.LightningModule):
                                                     step_size=self.config.get('lr_decay', 100),
                                                     gamma=self.config.get('lr_gamma', 1))
 
-        return optimizer, {"scheduler": scheduler, "interval": "epoch"}
+        return {"optimizer": optimizer,
+                "lr_scheduler": scheduler} #, "interval": "epoch"}
 
 
 class FluxRGNNTransition(MessagePassing):
@@ -275,6 +283,8 @@ class FluxRGNNTransition(MessagePassing):
         inputs = [env_i, env_1_j, edge_attr]
         inputs = torch.cat(inputs, dim=1)
 
+        print(f'nans in flux inputs = {torch.isnan(inputs).sum()}')
+
         # total flux from cell j to cell i
         flux = self.edge_mlp(inputs, hidden_sp_j)
         flux = flux * x_j  # * areas_j.view(-1, 1)
@@ -300,6 +310,8 @@ class FluxRGNNTransition(MessagePassing):
         """
 
         inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
+        
+        print(f'nans in source/sink inputs = {torch.isnan(inputs).sum()}')
 
         hidden = self.node_lstm(inputs)
         source, sink = self.source_sink_mlp(hidden, inputs)
