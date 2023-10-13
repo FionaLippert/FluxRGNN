@@ -1,6 +1,6 @@
 # @package logger
 _target_: pytorch_lightning.loggers.WandbLogger
 project: default
-name: None
+#name: None
 #save_dir: ${output_dir}
 save_dir: logs

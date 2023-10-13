@@ -6,6 +6,7 @@ channels:
   - conda-forge
   - nvidia
 dependencies:
+<<<<<<< HEAD
    - python>=3.8
    - numpy
    - scipy
@@ -15,11 +16,25 @@ dependencies:
    - torchaudio
    - torch-cuda
    - cudatoolkit
+=======
+   - python=3.9
+   - numpy
+   - scipy
+   - networkx
+   - torchvision
+   - torchaudio
+   - cudatoolkit
+   - pytorch=2.0
+   - pytorch-cuda
+>>>>>>> f775254d786662eb6514fb5e8e6759e8cbff1692
    - pytorch-lightning
    - pyg
    - scikit-learn
    - pygam
+<<<<<<< HEAD
 #   - ruamel.yaml
+=======
+>>>>>>> f775254d786662eb6514fb5e8e6759e8cbff1692
    - yaml
    - hydra-core
    - wandb
