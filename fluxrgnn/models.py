@@ -34,7 +34,7 @@ class FluxRGNN(pl.LightningModule):
         # self.teacher_forcing = kwargs.get('teacher_forcing', 0)
         self.use_encoder = kwargs.get('use_encoder', True)
         self.use_boundary_model = kwargs.get('use_boundary_model', True)
-        self.fixed_boundary = kwargs.get('fixed_boundary', False)
+        # self.fixed_boundary = kwargs.get('fixed_boundary', False)
         self.n_graph_layers = kwargs.get('n_graph_layers', 0)
 
         # number of node inputs
@@ -135,25 +135,31 @@ class FluxRGNN(pl.LightningModule):
         #print(f'tf prob = {p_tf}')
 
         # make predictions and compute loss
-        eval_dict = self._eval_step(batch, p_tf, prefix='train')
-        self.log_dict(eval_dict)
+        output = self.forward(batch, p_tf=p_tf)
+        eval_dict = self._eval_step(batch, output, prefix='train')
+        self.log(eval_dict)
 
         return eval_dict['train_loss']
 
     def validation_step(self, batch, batch_idx):
 
         # make predictions and compute loss
-        eval_dict = self._eval_step(batch, prefix='val')
-        self.log_dict(eval_dict)
+        output = self.forward(batch)
+        eval_dict = self._eval_step(batch, output, prefix='val')
+        self.log(eval_dict)
+
+        return output
 
     def test_step(self, batch, batch_idx):
 
         # make predictions and compute evaluation metrics
-        eval_dict = self._eval_step(batch, prefix='test')
-        self.log_dict(eval_dict)
+        output = self.forward(batch)
+        eval_dict = self._eval_step(batch, output, prefix='test')
+        self.log(eval_dict)
 
-    def _eval_step(self, batch, p_tf=0, prefix=''):
-        output = self.forward(batch, p_tf)
+        return output
+
+    def _eval_step(self, batch, output, prefix=''):
 
         if self.config.get('force_zeros', False):
             mask = torch.logical_and(batch.local_night, torch.logical_not(batch.missing))
@@ -290,7 +296,12 @@ class FluxRGNNTransition(MessagePassing):
         flux = self.edge_mlp(inputs, hidden_sp_j)
         flux = flux * x_j  # * areas_j.view(-1, 1)
 
+        # explicitly compute based on face length
+        # TODO: make sure that they are rescaled properly, so that they are not 0!
+        # flux_total = flux * x_j * edge_attr[:, -1]
+
         if not self.training: self.edge_fluxes = flux
+
         flux = flux - flux[reverse_edges]
         flux = flux.view(-1, 1)
 
@@ -326,7 +337,7 @@ class FluxRGNNTransition(MessagePassing):
             self.node_sink = sink
 
         # convert total influxes to influx per km2
-        influx = aggr_out  # / areas.view(-1, 1)
+        influx = aggr_out  # / areas.view(-1, 1) # if fluxes were multiplied with face_length
         pred = x + delta + influx
 
         return pred, hidden
