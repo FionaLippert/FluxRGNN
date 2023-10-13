@@ -70,13 +70,14 @@ class FluxRGNN(pl.LightningModule):
         if self.use_encoder:
             # push context timeseries through encoder to initialize decoder
             h_t, c_t = self.encoder(data)
+            print(f'encoder hidden states nans = {torch.isnan(h_t[-1]).sum()}')
             self.dynamics.node_lstm.setup_states(h_t, c_t)
         else:
             # start from scratch
-            h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=x.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
-            c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=x.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
+            h_t = [torch.zeros(data.x.size(0), self.dynamics.node_lstm.n_hidden, device=x.device) for
+                   _ in range(self.dynamics.node_lstm.n_lstm_layers)]
+            c_t = [torch.zeros(data.x.size(0), self.dynamics.node_lstm.n_hidden, device=x.device) for
+                   _ in range(self.dynamics.node_lstm.n_lstm_layers)]
             self.dynamics.node_lstm.setup_states(h_t, c_t)
 
         # setup model components
@@ -95,7 +96,7 @@ class FluxRGNN(pl.LightningModule):
 
         for t in forecast_horizon:
 
-            print(f't={t}, x_mean={x.mean()}, hidden_mean={hidden.mean()}')
+            #print(f't={t}, x_mean={x.mean()}, hidden_mean={hidden.mean()}')
 
             # teacher forcing: use gt data instead of model output with probability tf
             r = torch.rand(1)
@@ -131,7 +132,7 @@ class FluxRGNN(pl.LightningModule):
 
         # get teacher forcing probability for current epoch
         p_tf = pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
-        print(f'tf prob = {p_tf}')
+        #print(f'tf prob = {p_tf}')
 
         # make predictions and compute loss
         eval_dict = self._eval_step(batch, p_tf, prefix='train')
@@ -162,9 +163,9 @@ class FluxRGNN(pl.LightningModule):
         gt = batch.y[:, self.t_context:]
         mask = mask[:, self.t_context:]
 
-        print(f'avg gt birds = {gt.mean()}')
-        print(f'avg pred birds = {output.mean()}')
-        print(f'num data points after masking = {mask.sum()}')
+        #print(f'avg gt birds = {gt.mean()}')
+        #print(f'avg pred birds = {output.mean()}')
+        #print(f'num data points after masking = {mask.sum()}')
 
         loss = utils.MSE(output, gt, mask)
         eval_dict = {f'{prefix}_loss': loss}
@@ -283,7 +284,7 @@ class FluxRGNNTransition(MessagePassing):
         inputs = [env_i, env_1_j, edge_attr]
         inputs = torch.cat(inputs, dim=1)
 
-        print(f'nans in flux inputs = {torch.isnan(inputs).sum()}')
+        #print(f'nans in flux inputs = {torch.isnan(inputs).sum()}')
 
         # total flux from cell j to cell i
         flux = self.edge_mlp(inputs, hidden_sp_j)
@@ -311,7 +312,9 @@ class FluxRGNNTransition(MessagePassing):
 
         inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
         
-        print(f'nans in source/sink inputs = {torch.isnan(inputs).sum()}')
+        if torch.isnan(inputs).sum() > 0:
+            print(f'x nans = {torch.isnan(x).sum()}, coords nan = {torch.isnan(coords).sum()}, env nans = {torch.isnan(env).sum()}, areas nans = {torch.isnan(areas).sum()}')
+        #print(f'nans in source/sink inputs = {torch.isnan(inputs).sum()}')
 
         hidden = self.node_lstm(inputs)
         source, sink = self.source_sink_mlp(hidden, inputs)
@@ -579,6 +582,7 @@ class RecurrentEncoder(torch.nn.Module):
             inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
 
         inputs = self.input2hidden(inputs)
+        print(f'encoder input nans = {torch.isnan(inputs).sum()}')
         h_t[0], c_t[0] = self.lstm_layers[0](inputs, (h_t[0], c_t[0]))
         for l in range(1, self.n_lstm_layers):
             h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
