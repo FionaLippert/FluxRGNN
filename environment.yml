@@ -4,19 +4,22 @@ channels:
   - pyg
   - anaconda
   - conda-forge
+  - nvidia
 dependencies:
-   - python>=3.8.3
+   - python>=3.8
    - numpy
    - scipy
    - networkx
-   #- torchvision
-   - cudatoolkit>=10.2
    - pytorch
+   - torchvision
+   - torchaudio
+   - torch-cuda
+   - cudatoolkit
    - pytorch-lightning
    - pyg
    - scikit-learn
    - pygam
-   - ruamel.yaml
+#   - ruamel.yaml
    - yaml
    - hydra-core
    - wandb

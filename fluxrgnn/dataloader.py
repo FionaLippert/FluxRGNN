@@ -257,6 +257,7 @@ class RadarData(InMemoryDataset):
             delta_x = np.array([coords[j, 0] - coords[i, 0] for i, j in G.edges()])
             delta_y = np.array([coords[j, 1] - coords[i, 1] for i, j in G.edges()])
 
+            # TODO: rescale face lenths only by maximum to be able to use it in flux computations?!
             face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]))
             edge_attr = torch.stack([
                 torch.tensor(distances, dtype=torch.float),
@@ -420,7 +421,7 @@ class RadarData(InMemoryDataset):
             pickle.dump(info, f)
 
         if self.importance_sampling:
-            np.save(osp.join(self.processed_dir, 'birds_per_seq.npy'), agg)
+            np.save(osp.join(self.processed_dir, 'birds_per_seq.npy'), n_seq)
             np.save(osp.join(self.processed_dir, 'resampling_idx.npy'), seq_index)
 
         data, slices = self.collate(data_list)
