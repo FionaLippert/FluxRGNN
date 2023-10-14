@@ -115,6 +115,10 @@ class FluxRGNN(pl.LightningModule):
 
             # message passing through graph
             x, hidden = self.dynamics(data, x, hidden, hidden_sp, data.env[..., t], data.env[..., t-1])
+
+            if self.config.get('force_zeros', False):
+                x = x * data.local_night[..., t]
+
             y_hat.append(x)
 
             if not self.training:
