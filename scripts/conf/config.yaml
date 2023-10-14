@@ -24,15 +24,17 @@ debugging: False
 trainer:
   _target_: pytorch_lightning.Trainer
   logger: ${logger}
-#  callbacks:
-#    - _target_: callbacks.SamplingCallback
+  log_every_n_steps: 10
+  callbacks:
+    - _target_: callbacks.PredictionCallback
+    - _target_: pytorch_lightning.callbacks.LearningRateMonitor
 #    - _target_: callbacks.ReconstructionCallback
   accelerator: ${device.accelerator}
   devices: ${device.devices}
   deterministic: True
   gradient_clip_algorithm: value
   gradient_clip_val: 0
-  max_epochs: 1
+  max_epochs: 10
 
 dataloader:
   _target_: torch_geometric.data.DataLoader

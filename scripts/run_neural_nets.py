@@ -119,7 +119,7 @@ def training(trainer, model, cfg: DictConfig):
         print(f'number of model parameters: {n_params}')
         print(f'environmental variables: {cfg.datasource.env_vars}')
 
-    trainer.fit(model, dl_train, dl_val)
+    trainer.fit(model, dl_train, dl_train) #dl_val)
 
 
 def testing(trainer, model, cfg: DictConfig, ext=''):
@@ -137,6 +137,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     test_data = test_data[0]
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
+    model.horizon = cfg.model.test_horizon
     trainer.test(model, test_loader)
 
     if cfg.get('save_prediction', False):
