@@ -25,7 +25,7 @@ class FluxRGNN(pl.LightningModule):
         """
 
         super(FluxRGNN, self).__init__()
-        # self.save_hyperparameters()
+        self.save_hyperparameters()
         self.config = kwargs
 
         # settings
@@ -62,6 +62,8 @@ class FluxRGNN(pl.LightningModule):
 
         boundary_nodes = data.boundary.view(-1, 1)
         inner_nodes = torch.logical_not(data.boundary).view(-1, 1)
+        
+        print(f'data size = {data.x.size()}')
 
         # density per km2 for all cells
         x = data.x[..., self.t_context - 1].view(-1, 1)
@@ -116,6 +118,10 @@ class FluxRGNN(pl.LightningModule):
 
             # message passing through graph
             x, hidden = self.dynamics(data, x, hidden, hidden_sp, data.env[..., t], data.env[..., t-1])
+            
+            #if self.config.get('force_zeros', False):
+            #    x = x * data.local_night[..., t]
+            
             y_hat.append(x)
 
             if not self.training:
@@ -132,31 +138,37 @@ class FluxRGNN(pl.LightningModule):
 
         # get teacher forcing probability for current epoch
         p_tf = pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
-        #print(f'tf prob = {p_tf}')
+        self.log('p_tf', p_tf)
 
         # make predictions and compute loss
         output = self.forward(batch, p_tf=p_tf)
         eval_dict = self._eval_step(batch, output, prefix='train')
-        self.log(eval_dict)
+        self.log_dict(eval_dict)
 
         return eval_dict['train_loss']
 
     def validation_step(self, batch, batch_idx):
 
         # make predictions and compute loss
-        output = self.forward(batch)
-        eval_dict = self._eval_step(batch, output, prefix='val')
-        self.log(eval_dict)
+        prediction = self.forward(batch) #, p_tf=1.0) # TODO: set this back to no teacher forcing
+        eval_dict = self._eval_step(batch, prediction, prefix='val')
+        self.log_dict(eval_dict)
 
+        output = {'y_hat': prediction,
+                  'source': self.node_source,
+                  'sink': self.node_sink}
         return output
 
     def test_step(self, batch, batch_idx):
 
         # make predictions and compute evaluation metrics
-        output = self.forward(batch)
-        eval_dict = self._eval_step(batch, output, prefix='test')
-        self.log(eval_dict)
+        prediction = self.forward(batch)
+        eval_dict = self._eval_step(batch, prediction, prefix='test')
+        self.log_dict(eval_dict)
 
+        output = {'y_hat': prediction,
+                  'source': self.node_source,
+                  'sink': self.node_sink}
         return output
 
     def _eval_step(self, batch, output, prefix=''):
@@ -165,6 +177,8 @@ class FluxRGNN(pl.LightningModule):
             mask = torch.logical_and(batch.local_night, torch.logical_not(batch.missing))
         else:
             mask = torch.logical_not(batch.missing)
+
+        print(f'{mask.sum()} out of {mask.numel()} data points used to compute loss')
 
         gt = batch.y[:, self.t_context:]
         mask = mask[:, self.t_context:]
@@ -338,7 +352,7 @@ class FluxRGNNTransition(MessagePassing):
 
         # convert total influxes to influx per km2
         influx = aggr_out  # / areas.view(-1, 1) # if fluxes were multiplied with face_length
-        pred = x + delta + influx
+        pred = x + delta #+ influx # TODO: set this back to include fluxes!
 
         return pred, hidden
 

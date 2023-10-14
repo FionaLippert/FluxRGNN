@@ -208,6 +208,7 @@ class RadarData(InMemoryDataset):
             n_edges = 0
             edge_index = torch.zeros(0, dtype=torch.long)
 
+        print(f'number of nodes in graph = {G.number_of_nodes()}')
 
         # boundary radars and boundary edges
         inner = voronoi['observed'].to_numpy()

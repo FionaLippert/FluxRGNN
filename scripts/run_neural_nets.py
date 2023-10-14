@@ -119,7 +119,7 @@ def training(trainer, model, cfg: DictConfig):
         print(f'number of model parameters: {n_params}')
         print(f'environmental variables: {cfg.datasource.env_vars}')
 
-    trainer.fit(model, dl_train, dl_val)
+    trainer.fit(model, dl_train, dl_train) #dl_val)
 
 
 def testing(trainer, model, cfg: DictConfig, ext=''):
