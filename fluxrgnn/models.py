@@ -43,7 +43,10 @@ class FluxRGNN(pl.LightningModule):
         n_edge_in = 2 * kwargs.get('n_env', 0) + kwargs.get('n_edge_attr', 5)
 
         # setup model components
-        self.dynamics = FluxRGNNTransition(n_node_in, n_edge_in, **kwargs)
+        # self.dynamics = FluxRGNNTransition(n_node_in, n_edge_in, **kwargs)
+        self.dynamics = LSTMTransition(n_node_in, **kwargs)
+
+
         if self.use_encoder:
             self.encoder = RecurrentEncoder(n_node_in, **kwargs)
         if self.use_boundary_model:
@@ -90,6 +93,7 @@ class FluxRGNN(pl.LightningModule):
         # relevant info for later
         if not self.training:
             self.edge_fluxes = torch.zeros((data.edge_index.size(1), 1, self.horizon), device=x.device)
+            self.node_flux = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
             self.node_sink = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
             self.node_source = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
             # self.node_fluxes = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
@@ -124,9 +128,15 @@ class FluxRGNN(pl.LightningModule):
 
             y_hat.append(x)
 
-            if not self.training:
+            if not self.training \
+               and hasattr(self.dynamics, 'node_source') \
+               and hasattr(self.dynamics, 'node_sink') \
+               and hasattr(self.dynamics, 'edge_fluxes') \
+               and hasattr(self.dynamics, 'node_flux'):
+
                 tidx = t - self.t_context
                 self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
+                self.node_flux[..., tidx] = self.dynamics.node_flux
                 self.node_source[..., tidx] = self.dynamics.node_source
                 self.node_sink[..., tidx] = self.dynamics.node_sink
 
@@ -178,14 +188,8 @@ class FluxRGNN(pl.LightningModule):
         else:
             mask = torch.logical_not(batch.missing)
 
-        print(f'{mask.sum()} out of {mask.numel()} data points used to compute loss')
-
         gt = batch.y[:, self.t_context:]
         mask = mask[:, self.t_context:]
-
-        #print(f'avg gt birds = {gt.mean()}')
-        #print(f'avg pred birds = {output.mean()}')
-        #print(f'num data points after masking = {mask.sum()}')
 
         loss = utils.MSE(output, gt, mask)
         eval_dict = {f'{prefix}_loss': loss}
@@ -349,13 +353,53 @@ class FluxRGNNTransition(MessagePassing):
         if not self.training:
             self.node_source = source
             self.node_sink = sink
+            self.node_flux = aggr_out
 
         # convert total influxes to influx per km2
         influx = aggr_out  # / areas.view(-1, 1) # if fluxes were multiplied with face_length
-        pred = x + delta #+ influx # TODO: set this back to include fluxes!
+        pred = x + delta + influx
 
         return pred, hidden
 
+
+class LSTMTransition(torch.nn.Module):
+    """
+    Implements a single LSTM transition from t to t+1, given the previous predictions and hidden states.
+    """
+
+    def __init__(self, n_node_in, *args, **kwargs):
+        """
+        Initialize LSTMransition.
+
+        :param n_env: number of environmental features
+        :param n_edge_attr: number of edge attributes
+        :param coord_dim: dimensionality of senosr coordinate system
+        """
+
+        super(LSTMTransition, self).__init__()
+
+        # setup model components
+        self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+        self.delta_mlp = DeltaMLP(n_node_in, **kwargs)
+
+
+    def forward(self, graph_data, x, hidden, hidden_sp, env, env_1):
+        """
+        Run LSTM prediction for one time step.
+
+        :param data: SensorData instance containing information on static and dynamic features for one time sequence
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        """
+
+        inputs = torch.cat([x.view(-1, 1), graph_data.coords, env, graph_data.areas.view(-1, 1)], dim=1)
+
+        hidden = self.node_lstm(inputs)
+        delta = self.delta_mlp(hidden, inputs)
+
+        x = x + delta
+
+        return x, hidden
 
 
 class EdgeFluxMLP(torch.nn.Module):
@@ -428,6 +472,34 @@ class SourceSinkMLP(torch.nn.Module):
         sink = F.sigmoid(source_sink[:, 1].view(-1, 1))
 
         return source, sink
+
+
+class DeltaMLP(torch.nn.Module):
+    """MLP predicting local delta terms"""
+
+    def __init__(self, n_in, **kwargs):
+        super(DeltaMLP, self).__init__()
+
+        self.n_hidden = kwargs.get('n_hidden', 64)
+        self.dropout_p = kwargs.get('dropout_p', 0)
+
+        self.hidden2delta = torch.nn.Sequential(torch.nn.Linear(self.n_hidden + n_in, self.n_hidden),
+                                                     torch.nn.Dropout(p=self.dropout_p),
+                                                     torch.nn.LeakyReLU(),
+                                                     torch.nn.Linear(self.n_hidden, 2))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.hidden2delta.apply(init_weights)
+
+    def forward(self, hidden, inputs):
+        inputs = torch.cat([hidden, inputs], dim=1)
+
+        delta = self.hidden2delta(inputs).view(-1, 1)
+
+        return delta
+
 
 
 class NodeLSTM(torch.nn.Module):
