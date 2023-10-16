@@ -486,7 +486,7 @@ class DeltaMLP(torch.nn.Module):
         self.hidden2delta = torch.nn.Sequential(torch.nn.Linear(self.n_hidden + n_in, self.n_hidden),
                                                      torch.nn.Dropout(p=self.dropout_p),
                                                      torch.nn.LeakyReLU(),
-                                                     torch.nn.Linear(self.n_hidden, 2))
+                                                     torch.nn.Linear(self.n_hidden, 1))
 
         self.reset_parameters()
 

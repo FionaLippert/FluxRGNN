@@ -32,9 +32,11 @@ class PredictionCallback(Callback):
                     fig, ax = plt.subplots()
                     
                     ax.plot(range(pl_module.horizon), predictions[cell_idx, :].detach().numpy(), label='prediction')
-                    ax.plot(range(pl_module.horizon), output['source'][cell_idx].view(-1).detach().numpy(), label='source')
+                    if 'source' in output:
+                        ax.plot(range(pl_module.horizon), output['source'][cell_idx].view(-1).detach().numpy(), label='source')
 
-                    ax.plot(range(pl_module.horizon), output['sink'][cell_idx].view(-1).detach().numpy(), label='sink')
+                    if 'sink' in output:
+                        ax.plot(range(pl_module.horizon), output['sink'][cell_idx].view(-1).detach().numpy(), label='sink')
 
                     ax.plot(range(-pl_module.t_context, pl_module.horizon), batch.y[cell_idx, :].detach().numpy(), label='data')
                     ax.legend()
