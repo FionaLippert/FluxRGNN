@@ -17,6 +17,10 @@ import numpy as np
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
+OmegaConf.register_new_resolver("sum", sum)
+OmegaConf.register_new_resolver("len", len)
+
+
 # map model name to implementation
 MODEL_MAPPING = {'LocalMLP': LocalMLP,
                  'LocalLSTM': LocalLSTM,
@@ -45,7 +49,7 @@ def run(cfg: DictConfig):
 
     utils.seed_all(cfg.seed + cfg.get('job_id', 0))
 
-    model = instantiate(cfg.model, n_env=len(cfg.datasource.env_vars))
+    model = instantiate(cfg.model)#, n_env=len(cfg.datasource.env_vars))
 
     if cfg.verbose:
         print('------------------ model settings --------------------')
@@ -59,10 +63,10 @@ def run(cfg: DictConfig):
         # if hasattr(cfg, 'importance_sampling'):
         #     cfg.importance_sampling = False
 
-        cfg['fixed_t0'] = True
-        testing(trainer, model, cfg, ext='_fixedT0')
+        # cfg['fixed_t0'] = True
+        # testing(trainer, model, cfg, ext='_fixedT0')
         # cfg['fixed_t0'] = False
-        # testing(trainer, model, cfg, output_dir, log)
+        testing(trainer, model, cfg)
 
         # if cfg.get('test_train_data', False):
         #     # evaluate performance on training data
@@ -71,6 +75,9 @@ def run(cfg: DictConfig):
         #     for y in training_years:
         #         cfg.datasource.test_year = y
         #         testing(trainer, model, cfg, output_dir, log, ext=f'_training_year_{y}')
+
+    if isinstance(cfg.trainer.logger, WandbLogger):
+        wandb.finish()
 
 
 def count_parameters(model):
@@ -119,7 +126,18 @@ def training(trainer, model, cfg: DictConfig):
         print(f'number of model parameters: {n_params}')
         print(f'environmental variables: {cfg.datasource.env_vars}')
 
-    trainer.fit(model, dl_train, dl_train) #dl_val)
+    trainer.fit(model, dl_train, dl_val)
+
+    # save model
+    model_path = osp.join(cfg.output_dir, 'models')
+    os.makedirs(model_path, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(model_path, 'model.pt'))
+
+    if isinstance(cfg.trainer.logger, WandbLogger):
+        # save as artifact for version control
+        artifact = wandb.Artifact(f'model', type='models')
+        artifact.add_dir(model_path)
+        wandb.run.log_artifact(artifact)
 
 
 def testing(trainer, model, cfg: DictConfig, ext=''):
@@ -142,6 +160,19 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
+
+        # save results
+        result_path = osp.join(cfg.output_dir, 'results')
+        os.makedirs(result_path, exist_ok=True)
+        with open(osp.join(result_path, 'results.pickle'), 'wb') as f:
+            pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        if isinstance(cfg.trainer.logger, WandbLogger):
+            # save as artifact for version control
+            artifact = wandb.Artifact(f'results', type='results')
+            artifact.add_dir(result_path)
+            wandb.run.log_artifact(artifact)
+
 
 if __name__ == "__main__":
     run()
