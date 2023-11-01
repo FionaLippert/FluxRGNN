@@ -3,7 +3,10 @@ name: nexrad
 years:
   - 2015
   - 2016
-test_year: 2016
+  - 2017
+  - 2018
+  - 2019
+test_year: 2019
 val_train_split: 0.1
 env_vars:
   - u
@@ -23,6 +26,7 @@ env_vars:
   - solarpos_dt
 use_buffers: True
 n_dummy_radars: 60
+excludes: ${device.root}/data/raw/nexrad/rain_event_list.csv
 
 # will be filled at runtime
 bird_scale: ???

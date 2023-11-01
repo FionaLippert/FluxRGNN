@@ -1,5 +1,8 @@
 # @package model
+_target_: fluxrgnn.models.LocalMLPForecast
+
 name: LocalMLP
+
 n_hidden: 256
 n_fc_layers: 3
 dropout_p: 0.0
@@ -7,8 +10,9 @@ epochs: 300
 lr: 0.0001
 lr_decay: 300
 lr_gamma: 1.0
-horizon: 1
-test_horizon: 72
+horizon: 48
+context: 24
+test_horizon: 48
 test_context: 24
 force_zeros: false
 use_acc_vars: false
@@ -21,4 +25,4 @@ early_stopping: true
 stopping_criterion: 1e-6
 avg_window: 10
 coord_dim: 2
-n_edge_attr: 4
+#n_edge_attr: 4
