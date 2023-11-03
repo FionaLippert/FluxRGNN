@@ -2,7 +2,7 @@
 output_dir: results
 sub_dir: none
 defaults:
-  - datasource: radar
+  - datasource: nexrad
   - model: FluxRGNN
   - task: train_eval
   - device: local
