@@ -24,6 +24,11 @@ class ForecastModel(pl.LightningModule):
         # forecasting settings
         self.horizon = max(1, kwargs.get('horizon', 1))
         self.t_context = max(1, kwargs.get('context', 1))
+        self.tf_start = min(1.0, kwargs.get('teacher_forcing', 1.0))
+
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
 
     def forecast(self, data, teacher_forcing=0):
         """
@@ -70,7 +75,8 @@ class ForecastModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
 
         # get teacher forcing probability for current epoch
-        tf = pow(self.config.get('teacher_forcing_gamma', 1), self.current_epoch)
+        tf = self.tf_start * pow(self.config.get('teacher_forcing_gamma', 1), 
+                                 self.current_epoch)
         self.log('teacher_forcing', tf)
 
         # make predictions and compute loss
@@ -156,23 +162,48 @@ class ForecastModel(pl.LightningModule):
         # loss = batch.num_graphs * float(loss)
 
         if not self.training:
-            # root mean squared error
-            rmse = torch.sqrt(loss)
-            eval_dict.update({f'{prefix}/RMSE': rmse})
+            if self.use_log_transform:
+                log_y = gt / self.scale
+                log_x = output / self.scale
+                x = torch.exp(log_x) - self.log_offset
+                y = torch.exp(log_y) - self.log_offset
 
-            # mean absolute error
-            mae = utils.MAE(output, gt, mask)
-            eval_dict.update({f'{prefix}/MAE': mae})
+            else:
+                y = gt / self.scale
+                x = output / self.scale
+                log_y = torch.log(y + self.log_offset)
+                log_x = torch.log(x + self.log_offset)
+            
+            self._add_eval_metrics(eval_dict, y, x, mask,
+                                   prefix=f'{prefix}/raw')
+    
 
-            # symmetric mean absolute percentage error
-            smape = utils.SMAPE(output, gt, mask)
-            eval_dict.update({f'{prefix}/SMAPE': smape})
-
-            # mean absolute percentage error
-            mape = utils.MAPE(output, gt, mask)
-            eval_dict.update({f'{prefix}/MAPE': mape})
+            self._add_eval_metrics(eval_dict, log_y, log_x, mask,
+                                   prefix=f'{prefix}/log')
 
         return eval_dict
+
+    def _add_eval_metrics(self, eval_dict, gt, output, mask, prefix=''):
+
+        # root mean squared error
+        rmse = torch.sqrt(utils.MSE(output, gt, mask))
+        eval_dict.update({f'{prefix}/RMSE': rmse})
+
+        # mean absolute error
+        mae = utils.MAE(output, gt, mask)
+        eval_dict.update({f'{prefix}/MAE': mae})
+
+        # symmetric mean absolute percentage error
+        smape = utils.SMAPE(output, gt, mask)
+        eval_dict.update({f'{prefix}/SMAPE': smape})
+
+        # mean absolute percentage error
+        mape = utils.MAPE(output, gt, mask)
+        eval_dict.update({f'{prefix}/MAPE': mape})
+
+        #return eval_dict
+
+
 
 
     def configure_optimizers(self):
@@ -512,6 +543,8 @@ class LocalMLPForecast(ForecastModel):
         n_in = kwargs.get('n_env', 0) + kwargs.get('coord_dim', 2) + self.use_acc * 2
         self.mlp = NodeMLP(n_in, **kwargs)
 
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+
 
     def forecast_step(self, model_states, data, t):
 
@@ -519,8 +552,12 @@ class LocalMLPForecast(ForecastModel):
             inputs = torch.cat([data.coords, data.env[..., t], data.acc[..., t]], dim=1)
         else:
             inputs = torch.cat([data.coords, data.env[..., t]], dim=1)
-
+        
+        #print(inputs.size())
         x = self.mlp(inputs)
+
+        if not self.use_log_transform:
+            x = torch.pow(x, 2)
 
         if self.config.get('force_zeros', False):
             x = x * data.local_night[..., t]
@@ -610,7 +647,7 @@ class NodeMLP(torch.nn.Module):
 
         x = self.fc_out(x)
         # x = x.relu()
-        x = x ** 2
+        #x = x ** 2
         #x = torch.exp(x)
 
         return x
@@ -738,6 +775,7 @@ class FluxRGNNTransition(MessagePassing):
         #print(f'nans in flux inputs = {torch.isnan(inputs).sum()}')
 
         # total flux from cell j to cell i
+        # TODO: use relative face length as input (face length / total cell boundary)
         flux = self.edge_mlp(inputs, hidden_sp_j)
 
         # TODO: add flux for self-edges and then use pytorch_geometric.utils.softmax(flux, edge_index[0])
@@ -814,6 +852,8 @@ class LSTMTransition(torch.nn.Module):
         self.node_features = node_features
         self.dynamic_features = dynamic_features
 
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
 
         # setup model components
@@ -856,7 +896,11 @@ class LSTMTransition(torch.nn.Module):
 
         hidden = self.node_lstm(inputs)
         source, sink = self.source_sink_mlp(hidden, inputs)
-        sink = sink * x
+        
+        if self.use_log_transform:
+            source = source #/ torch.exp(x)
+        else:
+            sink = sink * x
         delta = source - sink
 
         x = x + delta
@@ -1098,7 +1142,7 @@ class Extrapolation(MessagePassing):
 class RecurrentEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, n_node_in, **kwargs):
+    def __init__(self, node_features, dynamic_features, **kwargs):
         super(RecurrentEncoder, self).__init__()
 
         self.t_context = kwargs.get('context', 24)
@@ -1106,8 +1150,13 @@ class RecurrentEncoder(torch.nn.Module):
         self.n_lstm_layers = kwargs.get('n_lstm_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
         self.use_uv = kwargs.get('use_uv', False)
-        if self.use_uv:
-            n_node_in = n_node_in + 2
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(node_features.values()) + sum(dynamic_features.values())
+        # if self.use_uv:
+        #     n_node_in = n_node_in + 2
 
         # torch.manual_seed(kwargs.get('seed', 1234))
 
@@ -1129,22 +1178,33 @@ class RecurrentEncoder(torch.nn.Module):
         h_t = [torch.zeros(data.x.size(0), self.n_hidden, device=data.x.device) for _ in range(self.n_lstm_layers)]
         c_t = [torch.zeros(data.x.size(0), self.n_hidden, device=data.x.device) for _ in range(self.n_lstm_layers)]
 
+        node_features = torch.cat([data.get(feature).reshape(data.x.size(0), -1) for
+                                   feature in self.node_features], dim=1)
+
         for t in range(self.t_context):
-            x = data.x[:, t]
-            if self.use_uv:
-                h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, data.bird_uv[..., t], t=t)
-            else:
-                h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, t=t)
+            # x = data.x[:, t]
+
+            # dynamic features for current time step
+            dynamic_features = torch.cat([data.get(feature)[..., t].reshape(data.x.size(0), -1) for
+                                          feature in self.dynamic_features], dim=1)
+            inputs = torch.cat([node_features, dynamic_features], dim=1)
+
+            h_t, c_t = self.update(inputs, h_t, c_t)
+            # if self.use_uv:
+            #     h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, data.bird_uv[..., t], t=t)
+            # else:
+            #     h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, t=t)
 
         return h_t, c_t
 
-    def update(self, x, coords, env, areas, h_t, c_t, bird_uv=None, t=None):
+    # def update(self, x, coords, env, areas, h_t, c_t, bird_uv=None, t=None):
+    def update(self, inputs, h_t, c_t):
         """Include information on the current time step into the hidden state."""
 
-        if self.use_uv:
-            inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1), bird_uv], dim=1)
-        else:
-            inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
+        # if self.use_uv:
+        #     inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1), bird_uv], dim=1)
+        # else:
+        #     inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
 
         inputs = self.input2hidden(inputs)
         # print(f'encoder input nans = {torch.isnan(inputs).sum()}')
@@ -1153,19 +1213,6 @@ class RecurrentEncoder(torch.nn.Module):
             h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
             c_t[l - 1] = F.dropout(c_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
             h_t[l], c_t[l] = self.lstm_layers[l](h_t[l - 1], (h_t[l], c_t[l]))
-
-
-        if torch.isnan(h_t[-1]).sum() > 0:
-            print(f'found nans in encoder step t={t}')
-            print(f'nans in x = {torch.isnan(x).sum()}')
-            print(f'nans in env = {torch.isnan(env).sum()}')
-            if self.use_uv:
-                print(f'nans in uv = {torch.isnan(bird_uv).sum()}')
-
-            for param_name, param_value in self.state_dict().items():
-                print("{}: {}".format(param_name, param_value))
-
-            assert 0
 
         return h_t, c_t
 

@@ -5,6 +5,7 @@ from torch.utils.data import random_split, Subset
 from torch.optim import lr_scheduler
 from torch_geometric.data import DataLoader, DataListLoader
 from torch_geometric.utils import to_dense_adj
+import torch_geometric.transforms as T
 from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra.utils import instantiate
@@ -16,6 +17,8 @@ import numpy as np
 #import ruamel.yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
+
+import transforms
 
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
@@ -84,8 +87,27 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def get_transform(cfg):
+
+    transform_list = []
+
+    if cfg.model.use_log_transform:
+        transform_list.extend([transforms.LogTransform('x', offset=cfg.model.log_offset),
+                               transforms.LogTransform('y', offset=cfg.model.log_offset)])
+
+    transform_list.extend([transforms.Rescaling('x', factor=cfg.model.scale),
+                           transforms.Rescaling('y', factor=cfg.model.scale)])
+
+    transform = T.Compose(transform_list)
+    return transform
+    
+
 def load_training_data(cfg):
-    data = dataloader.load_dataset(cfg, cfg.output_dir, training=True)[0]
+
+    transform = get_transform(cfg)
+    data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
+                                   transform=transform)[0]
+    
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
@@ -151,8 +173,10 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     # cfg.datasource.bird_scale = float(model_cfg['datasource']['bird_scale'])
 
     # load test data
-    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False)
+    transform = get_transform(cfg)
+    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
     test_data = test_data[0]
+
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon

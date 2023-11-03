@@ -66,6 +66,9 @@ class Normalization:
     def absmax(self, key):
         return self.feature_df[key].dropna().abs().max()
 
+    def quantile(self, key, q=0.99):
+        return self.feature_df[key].quantile(q)
+
     def root_min(self, key, root):
         root_transformed = self.feature_df[key].apply(lambda x: np.power(x, 1/root))
         return root_transformed.dropna().min()
@@ -124,6 +127,7 @@ class RadarData(InMemoryDataset):
         self.pref_dirs = kwargs.get('pref_dirs', {'spring': 58, 'fall': 223})
         self.wp_threshold = kwargs.get('wp_threshold', -0.5)
         self.root_transform = kwargs.get('root_transform', 0)
+        self.log_transform = kwargs.get('log_transform', 0)
         self.missing_data_threshold = kwargs.get('missing_data_threshold', 0)
 
         self.start = kwargs.get('start', None)
@@ -416,6 +420,7 @@ class RadarData(InMemoryDataset):
                 'bird_scale': self.bird_scale,
                 'boundaries': voronoi['boundary'].to_dict(),
                 'root_transform': self.root_transform,
+                'log_transform': self.log_transform,
                 'n_seq_discarded': n_seq_discarded}
 
         with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:
@@ -434,12 +439,16 @@ class RadarData(InMemoryDataset):
         if self.root_transform > 0:
             dynamic_feature_df[input_col] = dynamic_feature_df[input_col].apply(
                 lambda x: np.power(x, 1 / self.root_transform))
+        #elif self.log_transform:
+        #    dynamic_feature_df[input_col] = dynamic_feature_df[input_col].apply(
+        #        lambda x: np.log(x + 1e-5))
 
         cidx = ~dynamic_feature_df.columns.isin([input_col, 'birds_km2', 'birds_km2_from_buffer',
                                                  'bird_speed', 'bird_direction',
-                                                 'bird_u', 'bird_v', 'u', 'v',
+                                                 'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
                                                  'radar', 'night', 'boundary',
-                                                 'dusk', 'dawn', 'datetime', 'missing'])
+                                                 'dusk', 'dawn', 'datetime', 'missing'])#,
+                                                 #'cc', 'tp', 'acc_wind', 'acc_rain'])
         dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
             lambda col: (col - self.normalization.min(col.name)) /
                         (self.normalization.max(col.name) - self.normalization.min(col.name)), axis=0)
@@ -448,6 +457,11 @@ class RadarData(InMemoryDataset):
             self.bird_scale = self.normalization.root_max(input_col, self.root_transform)
         else:
             self.bird_scale = self.normalization.max(input_col)
+            # self.bird_scale = self.normalization.quantile(input_col, 0.99)
+        
+        if self.log_transform:
+            # TODO: find a more elegant way to do the log transform
+            self.bird_scale = 1
 
         dynamic_feature_df[input_col] = dynamic_feature_df[input_col] / self.bird_scale
         if self.data_source == 'radar' and input_col != 'birds_km2':
@@ -457,10 +471,27 @@ class RadarData(InMemoryDataset):
         dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
 
         if 'u' in self.env_vars and 'v' in self.env_vars:
+            uv_scale = self.normalization.absmax(['u', 'v']).max()
             dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
+
+        if 'u10' in self.env_vars and 'v10' in self.env_vars:
+            uv_scale = self.normalization.absmax(['u10', 'v10']).max()
+            dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
+
+        #if 'tp' in self.env_vars:
+        #    tp_scale = self.normalization.quantile('tp', 0.99)
+        #    dynamic_feature_df['tp'] = dynamic_feature_df['tp'] / tp_scale
 
         if 'dayofyear' in self.env_vars:
             dynamic_feature_df['dayofyear'] /= self.normalization.max('dayofyear') # always use 365?
+
+        #if 'acc_rain' in dynamic_feature_df.columns:
+        #    acc_scale = self.normalization.quantile('acc_rain', 0.99)
+        #    dynamic_feature_df['acc_rain'] = dynamic_feature_df['acc_rain'] / acc_scale
+
+        #if 'acc_wind' in dynamic_feature_df.columns:
+        #    acc_scale = self.normalization.quantile('acc_wind', 0.99)
+        #    dynamic_feature_df['acc_wind'] = dynamic_feature_df['acc_wind'] / acc_scale
 
         return dynamic_feature_df
 
@@ -532,7 +563,7 @@ class SensorData(Data):
             return super().__inc__(key, value, *args, **kwargs)
 
 
-def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
+def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):
     """
     Load training or testing data, initialize normalizer, setup and save configuration
 
@@ -578,6 +609,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
         with open(osp.join(model_dir, 'normalization.pkl'), 'rb') as f:
             normalization = pickle.load(f)
 
+    print(transform)
+
     # load training and validation data
     data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
                                  **cfg, **cfg.model,
@@ -585,6 +618,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool):
                                  data_source=cfg.datasource.name,
                                  normalization=normalization,
                                  env_vars=cfg.datasource.env_vars,
+                                 transform=transform
                                  )
             for year in years]
 

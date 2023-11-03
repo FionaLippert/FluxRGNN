@@ -36,12 +36,17 @@ compute_fluxes: true
 edge_type: voronoi
 birds_per_km2: true
 
+use_log_transform: true
+log_offset: 0.1
+scale: 1.0
+
 dynamics:
   _target_: fluxrgnn.models.FluxRGNNTransition
   n_hidden: ${model.n_hidden}
   n_fc_layers: 2
   n_lstm_layers: 1
   use_encoder: ${model.use_encoder}
+  use_log_transform: ${model.use_log_transform}
   dropout_p: ${model.dropout_p}
   node_features:
     coords: ${model.coord_dim}
@@ -52,12 +57,17 @@ dynamics:
 
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
-  n_node_in: ${sum:[${model.n_env}, ${model.coord_dim}, 2]}
+#  n_node_in: ${sum:[${model.n_env}, ${model.coord_dim}, 2]}
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_lstm_layers: 1
   dropout_p: ${model.dropout_p}
-  use_uv: true
+  node_features:
+    coords: ${model.coord_dim}
+  dynamic_features:
+    env: ${model.n_env}
+    bird_uv: 2
+    x: 1
 
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation
