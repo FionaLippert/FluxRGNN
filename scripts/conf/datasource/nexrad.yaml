@@ -25,8 +25,9 @@ env_vars:
   - solarpos
   - solarpos_dt
 use_buffers: True
+buffer: 350000
 n_dummy_radars: 60
-excludes: ${device.root}/data/raw/nexrad/rain_event_list.csv
+excludes: rain_event_list.csv
 
 # will be filled at runtime
 bird_scale: ???
