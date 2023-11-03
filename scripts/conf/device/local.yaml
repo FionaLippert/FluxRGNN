@@ -1,6 +1,7 @@
 # @package device
 name: local
 root: /home/${oc.env:USER}/FluxRGNN
-accelerator: gpu
+#accelerator: gpu
+accelerator: cpu
 devices: 1
 slurm: false

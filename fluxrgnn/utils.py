@@ -24,6 +24,33 @@ def val_test_split(dataloader, val_ratio):
 
     return val_loader, test_loader
 
+def SMAPE(output, gt, mask):
+    # compute symmetric mean absolute percentage error
+    abs_diff = torch.abs(output - gt)
+    abs_sum = torch.abs(output) + torch.abs(gt)
+    ratios = (abs_diff * mask) / (abs_sum * mask + 1e-8)
+    smape = ratios.sum(0) / mask.sum(0)
+
+    return smape
+
+def MAPE(output, gt, mask):
+    # compute mean absolute percentage error
+    abs_diff = torch.abs(output - gt)
+    abs_gt = torch.abs(gt)
+    ratios = (abs_diff * mask) / (abs_gt * mask + 1e-8)
+    mape = ratios.sum(0) / mask.sum(0)
+
+    return mape
+
+def MAE(output, gt, mask):
+    # compute mean absolute error
+
+    abs_diff = torch.abs(output - gt)
+    # mae = torch.sum(abs_diff * mask, dim=0) / torch.sum(mask, dim=0)
+    mae = (abs_diff * mask).sum(0) / mask.sum(0)
+
+    return mae
+
 def MSE_numpy(output, gt, mask):
 
     diff = output - gt
@@ -35,7 +62,7 @@ def MSE(output, gt, mask):
 
     diff = torch.abs(output - gt)
     diff2 = torch.square(diff)
-    mse = torch.sum(diff2 * mask) / torch.sum(mask)
+    mse = torch.sum(diff2 * mask, dim=0) / torch.sum(mask, dim=0)
     return mse
 
 def MSE_weighted(output, gt, mask, p=0.75):

@@ -1,36 +1,28 @@
 # @package model
 _target_: fluxrgnn.models.FluxRGNN
 
-name: FluxRGNN
+name: FluxRGNN w/o fluxes
 
 coord_dim: 2
 n_edge_attr: 5
 n_env: ${len:${datasource.env_vars}}
 
 n_hidden: 128
-#n_fc_layers: 2
-#n_lstm_layers: 1
 n_graph_layers: 0
 
 context: 24
-horizon: 24
-test_horizon: 24
+horizon: 48
+test_horizon: 48
 
-#epochs: 300
-#batch_size: 4
 lr: 1e-4
 lr_decay: 300
 lr_gamma: 1.0
-#early_stopping: true
-#stopping_criterion: 1e-6
-#avg_window: 50
 dropout_p: 0.0
-teacher_forcing_gamma: 0.9
+teacher_forcing: 1.0
+teacher_forcing_gamma: 1.0
 
 force_zeros: false
 use_encoder: true
-use_boundary_model: true
-#use_uv: true
 root_transformed_loss: false
 compute_fluxes: true
 edge_type: voronoi
@@ -41,7 +33,7 @@ log_offset: 0.1
 scale: 1.0
 
 dynamics:
-  _target_: fluxrgnn.models.FluxRGNNTransition
+  _target_: fluxrgnn.models.LSTMTransition
   n_hidden: ${model.n_hidden}
   n_fc_layers: 2
   n_lstm_layers: 1
@@ -62,6 +54,7 @@ encoder:
   n_hidden: ${model.n_hidden}
   n_lstm_layers: 1
   dropout_p: ${model.dropout_p}
+#  use_uv: true
   node_features:
     coords: ${model.coord_dim}
   dynamic_features:
@@ -69,7 +62,5 @@ encoder:
     bird_uv: 2
     x: 1
 
-boundary_model:
-  _target_: fluxrgnn.models.Extrapolation
 
 load_states_from: none
