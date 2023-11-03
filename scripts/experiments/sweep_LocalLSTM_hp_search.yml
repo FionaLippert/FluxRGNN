@@ -1,0 +1,29 @@
+program: run_neural_nets.py
+name: sweep_LocalLSTM_hp_search
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - logger.project=nexrad_lstm_hp_search
+  - trainer.max_epochs=2
+  - model=FluxRGNN_without_fluxes
+  - model.use_log_transform=true
+  - model.scale=1.0
+  - model.teacher_forcing=1.0
+  - dataloader.batch_size=8
+  - data_perc=0.1
+method: grid
+metric:
+  name: test/raw/RMSE
+  goal: minimize
+parameters:
+  seed:
+    values: [0, 1, 2, 3, 4]
+  model.lr:
+    values: [1e-4, 1e-5]
+  model.n_hidden:
+    values: [64, 128, 256]
+  model.teacher_forcing_gamma:
+    values: [0.95, 0.9]
+

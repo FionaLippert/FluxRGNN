@@ -1,5 +1,6 @@
 # @package logger
 _target_: pytorch_lightning.loggers.WandbLogger
 project: default
+group: null
 #ckpt_dir: ${output_dir}/checkpoints
 save_dir: logs

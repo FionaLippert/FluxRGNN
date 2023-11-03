@@ -141,6 +141,26 @@ class ForecastModel(pl.LightningModule):
         }
         return result
 
+    def to_raw(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+            raw = torch.exp(log) - self.log_offset
+        else:
+            raw = values / self.scale
+
+        return raw
+
+    def to_log(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+        else:
+            raw = values / self.scale
+            log = torch.log(raw + self.log_offset)
+
+        return log
+
 
     def _eval_step(self, batch, output, prefix='', aggregate_time=True):
 
@@ -162,24 +182,10 @@ class ForecastModel(pl.LightningModule):
         # loss = batch.num_graphs * float(loss)
 
         if not self.training:
-            if self.use_log_transform:
-                log_y = gt / self.scale
-                log_x = output / self.scale
-                x = torch.exp(log_x) - self.log_offset
-                y = torch.exp(log_y) - self.log_offset
-
-            else:
-                y = gt / self.scale
-                x = output / self.scale
-                log_y = torch.log(y + self.log_offset)
-                log_x = torch.log(x + self.log_offset)
-            
-            self._add_eval_metrics(eval_dict, y, x, mask,
-                                   prefix=f'{prefix}/raw')
-    
-
-            self._add_eval_metrics(eval_dict, log_y, log_x, mask,
-                                   prefix=f'{prefix}/log')
+            self._add_eval_metrics(eval_dict, self.to_raw(gt), self.to_raw(output),
+                                   mask, prefix=f'{prefix}/raw')
+            self._add_eval_metrics(eval_dict, self.to_log(gt), self.to_log(output),
+                                   mask, prefix=f'{prefix}/log')
 
         return eval_dict
 
@@ -511,8 +517,8 @@ class FluxRGNN(ForecastModel):
 
         # TODO scale everything appropriately by bird_scale and max Voronoi area
         result = {
-            'y_hat': output,
-            'y': gt,
+            'y_hat': self.to_raw(output),
+            'y': self.to_raw(gt),
             'influx': influxes,
             'outflux': outfluxes,
             'source': self.node_source,
@@ -899,8 +905,13 @@ class LSTMTransition(torch.nn.Module):
         
         if self.use_log_transform:
             source = source #/ torch.exp(x)
+
+            # if not self.training:
+            #     self.node_source = source * torch.exp(x) * graph_data.areas.view(-1, 1)  # total amount of birds taking-off in cell i
+            #     self.node_sink = sink * torch.exp(x) * graph_data.areas.view(-1, 1)  # total amount of birds landing in cell i
         else:
             sink = sink * x
+
         delta = source - sink
 
         x = x + delta

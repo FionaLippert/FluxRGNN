@@ -12,7 +12,7 @@ n_graph_layers: 0
 
 context: 24
 horizon: 48
-test_horizon: 48
+test_horizon: 72
 
 lr: 1e-4
 lr_decay: 300
@@ -24,7 +24,7 @@ teacher_forcing_gamma: 1.0
 force_zeros: false
 use_encoder: true
 root_transformed_loss: false
-compute_fluxes: true
+compute_fluxes: false
 edge_type: voronoi
 birds_per_km2: true
 
