@@ -108,11 +108,12 @@ class RadarData(InMemoryDataset):
         self.root = kwargs.get('data_root')
         self.preprocessed_dirname = preprocessed_dirname
         self.processed_dirname = processed_dirname
-        if kwargs.get('device')['slurm']:
-            # make sure to not overwrite data used by a parallel slurm process
-            self.sub_dir = str(datetime.datetime.utcnow())
-        else:
-            self.sub_dir = ''
+        #if kwargs.get('device')['slurm']:
+        #    # make sure to not overwrite data used by a parallel slurm process
+        #    self.sub_dir = str(datetime.datetime.utcnow())
+        #else:
+        self.sub_dir = ''
+        
         self.season = kwargs.get('season')
         self.year = str(year)
         self.timesteps = timesteps
@@ -419,8 +420,8 @@ class RadarData(InMemoryDataset):
                 'nights': nights,
                 'bird_scale': self.bird_scale,
                 'boundaries': voronoi['boundary'].to_dict(),
-                'root_transform': self.root_transform,
-                'log_transform': self.log_transform,
+                #'root_transform': self.root_transform,
+                #'log_transform': self.log_transform,
                 'n_seq_discarded': n_seq_discarded}
 
         with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:
@@ -436,9 +437,9 @@ class RadarData(InMemoryDataset):
     def normalize_dynamic(self, dynamic_feature_df, input_col):
         """Normalize dynamic features to range between 0 and 1."""
 
-        if self.root_transform > 0:
-            dynamic_feature_df[input_col] = dynamic_feature_df[input_col].apply(
-                lambda x: np.power(x, 1 / self.root_transform))
+        #if self.root_transform > 0:
+        #    dynamic_feature_df[input_col] = dynamic_feature_df[input_col].apply(
+        #        lambda x: np.power(x, 1 / self.root_transform))
         #elif self.log_transform:
         #    dynamic_feature_df[input_col] = dynamic_feature_df[input_col].apply(
         #        lambda x: np.log(x + 1e-5))
@@ -453,19 +454,19 @@ class RadarData(InMemoryDataset):
             lambda col: (col - self.normalization.min(col.name)) /
                         (self.normalization.max(col.name) - self.normalization.min(col.name)), axis=0)
 
-        if self.root_transform > 0:
-            self.bird_scale = self.normalization.root_max(input_col, self.root_transform)
-        else:
-            self.bird_scale = self.normalization.max(input_col)
+        #if self.root_transform > 0:
+        #    self.bird_scale = self.normalization.root_max(input_col, self.root_transform)
+        #else:
+        #    self.bird_scale = self.normalization.max(input_col)
             # self.bird_scale = self.normalization.quantile(input_col, 0.99)
         
-        if self.log_transform:
-            # TODO: find a more elegant way to do the log transform
-            self.bird_scale = 1
+        #if self.log_transform:
+        #    # TODO: find a more elegant way to do the log transform
+        self.bird_scale = 1
 
-        dynamic_feature_df[input_col] = dynamic_feature_df[input_col] / self.bird_scale
-        if self.data_source == 'radar' and input_col != 'birds_km2':
-            dynamic_feature_df['birds_km2'] = dynamic_feature_df['birds_km2'] / self.bird_scale
+        #dynamic_feature_df[input_col] = dynamic_feature_df[input_col] / self.bird_scale
+        #if self.data_source == 'radar' and input_col != 'birds_km2':
+        #    dynamic_feature_df['birds_km2'] = dynamic_feature_df['birds_km2'] / self.bird_scale
 
         uv_scale = self.normalization.absmax(['bird_u', 'bird_v']).max()
         dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale

@@ -1,5 +1,5 @@
 from typing import List, Optional, Union
-
+import copy
 import torch
 
 from torch_geometric.data import Data, HeteroData
@@ -31,7 +31,10 @@ class LogTransform(BaseTransform):
         self.offset = offset
         self.node_types = node_types
 
-    def __call__(
+    def __call__(self, data: Union[Data, HeteroData]) -> Union[Data, HeteroData]:
+        return self.forward(copy.copy(data))
+
+    def forward(
         self,
         data: Union[Data, HeteroData],
     ) -> Union[Data, HeteroData]:
@@ -79,7 +82,11 @@ class Rescaling(BaseTransform):
         self.factor = factor
         self.node_types = node_types
 
-    def __call__(
+    def __call__(self, data: Union[Data, HeteroData]) -> Union[Data, HeteroData]:
+
+        return self.forward(copy.copy(data))
+
+    def forward(
         self,
         data: Union[Data, HeteroData],
     ) -> Union[Data, HeteroData]:

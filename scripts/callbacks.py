@@ -8,10 +8,10 @@ from fluxrgnn import utils
 
 class PredictionCallback(Callback):
 
-    def on_validation_batch_end(self, trainer, pl_module, output, batch, batch_idx):
-        """Called when the validation batch ends."""
+    #def on_validation_batch_end(self, trainer, pl_module, output, batch, batch_idx):
+    #    """Called when the validation batch ends."""
 
-        plot_predictions(5, trainer, pl_module, output, batch, batch_idx, 'val')
+    #    plot_predictions(5, trainer, pl_module, output, batch, batch_idx, 'val')
 
     def on_test_batch_end(self, trainer, pl_module, output, batch, batch_idx):
         """Called when the test batch ends."""
@@ -25,10 +25,10 @@ class PredictionCallback(Callback):
             values = torch.concat(value_list, dim=0).reshape(-1, pl_module.horizon)
 
             fig, ax = plt.subplots()
-            mean = values.mean(0)
-            std = values.std(0)
+            mean = np.nanmean(values.cpu().numpy(), axis=0)
+            #std = values.std(0).cpu().numpy()
             ax.plot(range(0, pl_module.horizon), mean)
-            ax.fill_between(range(0, pl_module.horizon), mean - std, mean + std, alpha=0.2)
+            #ax.fill_between(range(0, pl_module.horizon), mean - std, mean + std, alpha=0.2)
             trainer.logger.log_image(key=m.replace('/', '_'), images=[fig])
             ax.set(xlabel='horizon', ylabel=m)
             plt.close()
@@ -80,7 +80,7 @@ def plot_predictions(n_plots, trainer, pl_module, output, batch, batch_idx, pref
 
     if batch_idx == 0:
 
-        indices = np.where(batch.y[:, pl_module.t_context:].sum(1).detach().numpy() > 0)[0]
+        indices = np.where(batch.y[:, pl_module.t_context:].sum(1).detach().cpu().numpy() > 0)[0]
         print(f'{len(indices)} cells with non-zero values found')
 
         n_cells = len(indices)
@@ -88,24 +88,25 @@ def plot_predictions(n_plots, trainer, pl_module, output, batch, batch_idx, pref
         for idx in np.linspace(0, n_cells - 1, min(n_cells, n_plots)).astype(int):
             cell_idx = indices[idx]
 
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(6, 3)
 
-            ax.plot(range(pl_module.horizon), predictions[cell_idx, :].detach().numpy(), label='prediction')
+            ax.plot(range(pl_module.horizon), pl_module.to_raw(predictions[cell_idx, :]).detach().cpu().numpy(), label='prediction')
             if 'source' in output:
-                ax.plot(range(pl_module.horizon), output['source'][cell_idx].view(-1).detach().numpy(),
+                ax.plot(range(pl_module.horizon), output['source'][cell_idx].view(-1).detach().cpu().numpy(),
                         label='source')
 
             if 'sink' in output:
-                ax.plot(range(pl_module.horizon), output['sink'][cell_idx].view(-1).detach().numpy(),
+                ax.plot(range(pl_module.horizon), output['sink'][cell_idx].view(-1).detach().cpu().numpy(),
                         label='sink')
 
-            ax.plot(range(-pl_module.t_context, pl_module.horizon), batch.y[cell_idx, :].detach().numpy(),
+            ax.plot(range(-pl_module.t_context, pl_module.horizon), pl_module.to_raw(batch.y[cell_idx, :]).detach().cpu().numpy(),
                     label='data')
             ax.legend()
 
-            mse = utils.MSE(predictions[cell_idx, :], batch.y[cell_idx, pl_module.t_context:],
-                            torch.logical_not(batch.missing)[cell_idx, pl_module.t_context:])
-            ax.set(title=f'MSE = {mse:.6f}')
+            #mse = utils.MSE(predictions[cell_idx, :], batch.y[cell_idx, pl_module.t_context:],
+            #                torch.logical_not(batch.missing)[cell_idx, pl_module.t_context:])
+            #ax.set(title=f'MSE = {mse:.6f}')
+            ax.set(xlabel='forecasting horizon', ylabel='birds per km2')
 
             trainer.logger.log_image(key=f'{prefix}_prediction_{cell_idx}_{batch_idx}', images=[fig])
 

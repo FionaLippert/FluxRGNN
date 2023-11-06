@@ -107,7 +107,8 @@ def load_training_data(cfg):
     transform = get_transform(cfg)
     data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
                                    transform=transform)[0]
-    
+    print(f'data min, max = {data[0].y.min()}, {data[0].y.max()}')
+
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
@@ -176,26 +177,36 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     transform = get_transform(cfg)
     test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
     test_data = test_data[0]
+    print(f'data min, max = {test_data.y.min()}, {test_data.y.max()}')
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
     trainer.test(model, test_loader)
 
+    has_results = False
+    result_path = osp.join(cfg.output_dir, 'results')
+
+    if hasattr(model, 'test_results'):
+        os.makedirs(result_path, exist_ok=True)
+        with open(osp.join(result_path, 'test_results.pickle'), 'wb') as f:
+            pickle.dump(model.test_results, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        has_results = True
+
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
 
         # save results
-        result_path = osp.join(cfg.output_dir, 'results')
         os.makedirs(result_path, exist_ok=True)
         with open(osp.join(result_path, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        if isinstance(cfg.trainer.logger, WandbLogger):
-            # save as artifact for version control
-            artifact = wandb.Artifact(f'results', type='results')
-            artifact.add_dir(result_path)
-            wandb.run.log_artifact(artifact)
+    if has_results and isinstance(cfg.trainer.logger, WandbLogger):
+        # save as artifact for version control
+        artifact = wandb.Artifact(f'results', type='results')
+        artifact.add_dir(result_path)
+        wandb.run.log_artifact(artifact)
 
 
 if __name__ == "__main__":

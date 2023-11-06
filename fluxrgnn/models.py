@@ -171,6 +171,8 @@ class ForecastModel(pl.LightningModule):
 
         gt = batch.y[:, self.t_context: self.t_context + self.horizon]
         mask = mask[:, self.t_context: self.t_context + self.horizon]
+        
+        print(f'gt min, max = {gt.min(), gt.max()}')
 
         if aggregate_time:
             gt = gt.reshape(-1)
@@ -206,7 +208,10 @@ class ForecastModel(pl.LightningModule):
         # mean absolute percentage error
         mape = utils.MAPE(output, gt, mask)
         eval_dict.update({f'{prefix}/MAPE': mape})
-
+        
+        # avg residuals
+        mean_res = ((output - gt) * mask).sum(0) / mask.sum(0)
+        eval_dict.update({f'{prefix}/mean_residual': mean_res})
         #return eval_dict
 
 
@@ -501,30 +506,30 @@ class FluxRGNN(ForecastModel):
         gt = batch.y if hasattr(batch, 'y') else None
 
         # get fluxes along edges
-        adj = to_dense_adj(batch.edge_index, edge_attr=self.edge_fluxes)
-        edge_fluxes = adj.view(batch.num_nodes, batch.num_nodes, -1)
+        #adj = to_dense_adj(batch.edge_index, edge_attr=self.edge_fluxes)
+        #edge_fluxes = adj.view(batch.num_nodes, batch.num_nodes, -1)
 
         # get net fluxes per node
-        influxes = edge_fluxes.sum(1)
-        outfluxes = edge_fluxes.permute(1, 0, 2).sum(1)
+        #influxes = edge_fluxes.sum(1)
+        #outfluxes = edge_fluxes.permute(1, 0, 2).sum(1)
 
-        if hasattr(batch, 'fluxes'):
-            # compute approximate fluxes from radar data
-            radar_fluxes = to_dense_adj(batch.edge_index, edge_attr=batch.fluxes).view(
-                batch.num_nodes, batch.num_nodes, -1)
-        else:
-            radar_fluxes = None
+        #if hasattr(batch, 'fluxes'):
+        #    # compute approximate fluxes from radar data
+        #    radar_fluxes = to_dense_adj(batch.edge_index, edge_attr=batch.fluxes).view(
+        #        batch.num_nodes, batch.num_nodes, -1)
+        #else:
+        #    radar_fluxes = None
 
         # TODO scale everything appropriately by bird_scale and max Voronoi area
         result = {
             'y_hat': self.to_raw(output),
             'y': self.to_raw(gt),
-            'influx': influxes,
-            'outflux': outfluxes,
-            'source': self.node_source,
-            'sink': self.node_sink,
-            'edge_fluxes': edge_fluxes,
-            'radar_fluxes': radar_fluxes,
+            #'influx': influxes,
+            #'outflux': outfluxes,
+            #'source': self.node_source,
+            #'sink': self.node_sink,
+            #'edge_fluxes': edge_fluxes,
+            #'radar_fluxes': radar_fluxes,
             'local_night': batch.local_night,
             'missing': batch.missing,
             'tidx': batch.tidx
