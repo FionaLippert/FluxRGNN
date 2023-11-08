@@ -5,7 +5,7 @@ defaults:
   - datasource: nexrad
   - model: FluxRGNN
   - task: train_eval
-  - device: local
+  - device: cluster
   - logger: wandb
 job_id: 0
 season: fall
@@ -29,7 +29,7 @@ trainer:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.EarlyStopping
       monitor: val/loss
-      patience: 2
+      patience: 10
     - _target_: callbacks.GradNormCallback
     - _target_: callbacks.PredictionCallback
   accelerator: ${device.accelerator}
@@ -46,5 +46,5 @@ trainer:
 
 dataloader:
   _target_: torch_geometric.data.DataLoader
-  batch_size: 4
+  batch_size: 8
   shuffle: True

@@ -88,7 +88,7 @@ def plot_predictions(n_plots, trainer, pl_module, output, batch, batch_idx, pref
         for idx in np.linspace(0, n_cells - 1, min(n_cells, n_plots)).astype(int):
             cell_idx = indices[idx]
 
-            fig, ax = plt.subplots(figsize=(6, 3)
+            fig, ax = plt.subplots(figsize=(6, 3))
 
             ax.plot(range(pl_module.horizon), pl_module.to_raw(predictions[cell_idx, :]).detach().cpu().numpy(), label='prediction')
             if 'source' in output:
