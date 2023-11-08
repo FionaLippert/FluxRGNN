@@ -725,13 +725,15 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
             pickle.dump(normalization, f)
     else:
         years = [cfg.datasource.test_year]
-        model_dir = cfg.get('model_dir', output_dir)
-        with open(osp.join(model_dir, 'normalization.pkl'), 'rb') as f:
-            normalization = pickle.load(f)
+        norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
+        if osp.isfile(norm_path):
+            with open(norm_path, 'rb') as f:
+                normalization = pickle.load(f)
+        else:
+            normalization = None
 
-    print(transform)
 
-    # load training and validation data
+    # load training/validation/test data
     data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
                                  **cfg, **cfg.model,
                                  data_root=data_dir,
@@ -741,10 +743,6 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                                  transform=transform
                                  )
             for year in years]
-
-    #data = torch.utils.data.ConcatDataset(data)
-
-
 
     return data, input_col, context, seq_len
 
