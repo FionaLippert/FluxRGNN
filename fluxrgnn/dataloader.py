@@ -86,6 +86,123 @@ class Normalization:
         return osp.join(self.root, 'raw')
 
 
+class SeasonalData(InMemoryDataset):
+
+    def __init__(self, year, preprocessed_dirname, processed_dirname,
+                 transform=None, pre_transform=None, **kwargs):
+
+        self.root = kwargs.get('data_root')
+        self.preprocessed_dirname = preprocessed_dirname
+        self.processed_dirname = processed_dirname
+        self.sub_dir = ''
+
+        self.season = kwargs.get('season')
+        self.year = str(year)
+        self.data_source = kwargs.get('data_source', 'radar')
+        self.use_buffers = kwargs.get('use_buffers', False)
+
+        self.t_unit = kwargs.get('t_unit', '1H')
+        self.birds_per_km2 = kwargs.get('birds_per_km2', False)
+        self.exclude = kwargs.get('exclude', [])
+
+        super(SeasonalData, self).__init__(self.root, transform, pre_transform)
+
+        # run self.process() to generate dataset
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+        # save additional info
+        with open(osp.join(self.processed_dir, self.info_file_name), 'rb') as f:
+            self.info = pickle.load(f)
+
+        print(f'processed data can be found here: {self.processed_dir}')
+
+    @property
+    def raw_file_names(self):
+        return []
+
+    @property
+    def raw_dir(self):
+        return osp.join(self.root, 'raw')
+
+    @property
+    def preprocessed_dir(self):
+        return osp.join(self.root, 'preprocessed', self.preprocessed_dirname,
+                        self.data_source, self.season, self.year)
+
+    @property
+    def processed_dir(self):
+        return osp.join(self.root, 'processed', self.processed_dirname,
+                        self.data_source, self.season, self.year, self.sub_dir)
+
+    @property
+    def processed_file_names(self):
+        return [f'seasonal_data.pt']
+
+    @property
+    def info_file_name(self):
+        return f'info.pkl'
+
+    def download(self):
+        pass
+
+    def process(self):
+
+        if not osp.isdir(self.preprocessed_dir):
+            print('Preprocessed data not available. Please run preprocessing script first.')
+
+        # load features
+        dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
+        voronoi = pd.read_csv(osp.join(self.preprocessed_dir, 'static_features.csv'))
+
+        if not self.birds_per_km2:
+            target_col = 'birds'
+        else:
+            target_col = 'birds_km2'
+        if self.use_buffers:
+            target_col += '_from_buffer'
+
+        time = dynamic_feature_df.datetime.sort_values().unique()
+        tidx = np.arange(len(time))
+
+        data = dict(targets=[], missing=[])
+
+        groups = dynamic_feature_df.groupby('radar')
+        for name in voronoi.radar:
+            df = groups.get_group(name).sort_values(by='datetime').reset_index(drop=True)
+            data['targets'].append(df[target_col].to_numpy())
+            data['missing'].append(df.missing.to_numpy())
+
+        for k, v in data.items():
+            data[k] = np.stack(v, axis=0).astype(float)
+
+        # create graph data objects per sequence
+        data = [SensorData(
+            # graph structure and edge features
+            edge_index=torch.zeros(0, dtype=torch.long),
+
+            # animal densities
+            x=torch.tensor(data['targets'], dtype=torch.float),
+            y=torch.tensor(data['targets'], dtype=torch.float),
+            missing=torch.tensor(data['missing'], dtype=torch.bool),
+
+            # time index of sequence
+            tidx=torch.tensor(tidx, dtype=torch.long))]
+
+
+        # write data to disk
+        os.makedirs(self.processed_dir, exist_ok=True)
+
+        info = {'radars': voronoi.radar.values,
+                'timepoints': time,
+                'tidx': tidx}
+
+        with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:
+            pickle.dump(info, f)
+
+        data, slices = self.collate(data)
+        torch.save((data, slices), self.processed_paths[0])
+
+
 
 class RadarData(InMemoryDataset):
     """
@@ -384,6 +501,7 @@ class RadarData(InMemoryDataset):
                                 coords=torch.tensor(coords, dtype=torch.float),
                                 areas=torch.tensor(areas, dtype=torch.float),
                                 boundary=torch.tensor(np.logical_not(inner), dtype=torch.bool),
+                                ridx=torch.arange(len(voronoi.radar), dtype=torch.long),
 
                                 # input animal densities
                                 x=torch.tensor(data['inputs'][:, :, nidx], dtype=torch.float),
@@ -402,7 +520,8 @@ class RadarData(InMemoryDataset):
                                 bird_uv=torch.tensor(data['bird_uv'][..., nidx], dtype=torch.float),
 
                                 # time index of sequence
-                                tidx=torch.tensor(tidx[:, nidx], dtype=torch.long),)
+                                tidx=torch.tensor(tidx[:, nidx], dtype=torch.long),
+                                )
                 for nidx in seq_index]
 
         print(f'number of sequences = {len(data_list)}')
@@ -628,6 +747,39 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
 
     return data, input_col, context, seq_len
+
+
+def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):
+    """
+    Load seasonal data, initialize normalizer, setup and save configuration
+
+    :param cfg: DictConfig specifying model, data and training/testing details
+    :param output_dir: directory to which config is written to
+    :return: pytorch Dataset
+    """
+    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
+    processed_dirname = f'buffers={cfg.datasource.use_buffers}_ndummy={cfg.datasource.n_dummy_radars}'
+    data_dir = osp.join(cfg.device.root, 'data')
+
+    if training:
+        # initialize normalizer
+        years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+
+        with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+            OmegaConf.save(config=cfg, f=f)
+    else:
+        years = [cfg.datasource.test_year]
+
+    # load training and validation data
+    data = [SeasonalData(year, preprocessed_dirname, processed_dirname,
+                                 **cfg, **cfg.model,
+                                 data_root=data_dir,
+                                 data_source=cfg.datasource.name,
+                                 transform=transform
+                                 )
+            for year in years]
+
+    return data
 
 
 

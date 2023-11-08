@@ -41,10 +41,6 @@ class GradNormCallback(Callback):
         pl_module.log("model/total_grad_norm", total_norm)
         pl_module.log("model/max_grad_norm", max_norm)
 
-# class MyEarlyStoppingCallback(EarlyStopping):
-#
-#     def __init__(self, *args, **kwargs):
-#         super(MyEarlyStoppingCallback, self).__init__(monitor=)
 
 
 class DebuggingCallback(Callback):
@@ -88,7 +84,7 @@ def plot_predictions(n_plots, trainer, pl_module, output, batch, batch_idx, pref
         for idx in np.linspace(0, n_cells - 1, min(n_cells, n_plots)).astype(int):
             cell_idx = indices[idx]
 
-            fig, ax = plt.subplots(figsize=(6, 3)
+            fig, ax = plt.subplots(figsize=(6, 3))
 
             ax.plot(range(pl_module.horizon), pl_module.to_raw(predictions[cell_idx, :]).detach().cpu().numpy(), label='prediction')
             if 'source' in output:

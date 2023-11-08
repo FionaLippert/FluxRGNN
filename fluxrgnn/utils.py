@@ -118,3 +118,4 @@ def finalize_results(results, output_dir, ext=''):
     results['residual_km2'] = results['gt_km2'] - results['prediction_km2']
     df = pd.DataFrame(results)
     df.to_csv(osp.join(output_dir, f'results{ext}.csv'))
+

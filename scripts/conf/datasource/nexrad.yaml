@@ -29,5 +29,4 @@ buffer: 350000
 n_dummy_radars: 60
 excludes: rain_event_list.csv
 
-# will be filled at runtime
-bird_scale: ???
+bird_scale: ${model.scale}

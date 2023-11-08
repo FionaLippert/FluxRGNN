@@ -679,6 +679,51 @@ class Persistence(torch.nn.Module):
         return x, hidden
 
 
+class SeasonalityForecast(ForecastModel):
+    """
+    Forecast model using the seasonal patterns from the training data to predict animal densities.
+    """
+
+    def __init__(self, **kwargs):
+        """
+        Initialize SeasonalityForecast model.
+        """
+
+        super(SeasonalityForecast, self).__init__(**kwargs)
+
+    def forecast_step(self, model_states, data, t):
+
+        # get typical density for each radars at the given time point
+        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]]
+
+        return model_states
+
+    def on_train_epoch_start(self):
+
+        self.seasonal_patterns = []
+        self.missing_patterns = []
+
+
+    def training_step(self, batch, batch_idx):
+
+        # assuming that all batches (i.e. years) cover the same time period
+        self.seasonal_patterns.append(batch.y)
+        self.missing_patterns.append(batch.missing)
+
+        return 0
+
+    def on_train_epoch_end(self):
+
+        self.seasonal_patterns = torch.stack(self.seasonal_patterns, dim=0) # shape [years, radars, timepoints]
+        self.missing_patterns = torch.stack(self.missing_patterns, dim=0) # shape [years, radars, timepoints]
+
+        mask = torch.logical_not(self.missing_patterns)
+        self.seasonal_patterns = (mask * self.seasonal_patterns).sum(0) / mask.sum(0) # shape [radars, timepoints]
+
+
+    def validation_step(self, batch, batch_idx):
+        pass
+
 
 class FluxRGNNTransition(MessagePassing):
     """
