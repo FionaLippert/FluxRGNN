@@ -331,17 +331,17 @@ class FluxRGNN(ForecastModel):
         # x, hidden = self.dynamics(x, hidden, data, data.env[..., t], data.env[..., t - 1])
         x, hidden = self.dynamics(x, hidden, data, t)
 
-        if not self.training \
-                and hasattr(self.dynamics, 'node_source') \
-                and hasattr(self.dynamics, 'node_sink') \
-                and hasattr(self.dynamics, 'edge_fluxes') \
-                and hasattr(self.dynamics, 'node_flux'):
+        if not self.training:
             # save model component outputs
             tidx = t - self.t_context
-            self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
-            self.node_flux[..., tidx] = self.dynamics.node_flux
-            self.node_source[..., tidx] = self.dynamics.node_source
-            self.node_sink[..., tidx] = self.dynamics.node_sink
+
+            if hasattr(self.dynamics, 'node_source') and hasattr(self.dynamics, 'node_sink'):
+                self.node_source[..., tidx] = self.dynamics.node_source
+                self.node_sink[..., tidx] = self.dynamics.node_sink
+
+            if hasattr(self.dynamics, 'edge_fluxes') and hasattr(self.dynamics, 'node_flux'):
+                self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
+                self.node_flux[..., tidx] = self.dynamics.node_flux
 
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -764,18 +764,20 @@ class FluxRGNNTransition(MessagePassing):
         return x, hidden
 
     # def message(self, x_j, hidden_sp_j, env_current_i, env_previous_j, edge_attr, reverse_edges):
-    def message(self, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
-                edge_features, reverse_edges, areas_j):
+    def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
+                edge_features, reverse_edges, areas_i, areas_j):
         """
         Construct message from node j to node i (for all edges in parallel)
 
+        :param x_i: features of nodes i with shape [#edges, #node_features]
         :param x_j: features of nodes j with shape [#edges, #node_features]
         :param hidden_sp_j: hidden features of nodes j with shape [#edges, #hidden_features]
-        :param env_i: environmental features for nodes i with shape [#edges, #env_features]
-        :param env_1_j: environmental features for nodes j from the previous time step with shape [#edges, #env_features]
-        :param edge_attr: edge attributes for edges (j->i) with shape [#edges, #edge_features]
-        :param t: time index
+        :param dynamic_features_t0_i: dynamic features for nodes i with shape [#edges, #features]
+        :param dynamic_features_t1_j: dynamic features for nodes j from the previous time step with shape [#edges, #features]
+        :param edge_features: edge attributes for edges (j->i) with shape [#edges, #features]
         :param reverse_edges: edge index for reverse edges (i->j)
+        :param areas_i: Voronoi cell areas for nodes i
+        :param areas_j: Voronoi cell areas for nodes j
         :return: edge fluxes with shape [#edges, 1]
         """
 
@@ -791,18 +793,33 @@ class FluxRGNNTransition(MessagePassing):
 
         # TODO: add flux for self-edges and then use pytorch_geometric.utils.softmax(flux, edge_index[0])
         #  to make sure that mass is conserved
-        flux = flux * x_j * areas_j.view(-1, 1)
+        # flux = flux * x_j * areas_j.view(-1, 1)
 
         # explicitly compute based on face length
         # TODO: make sure that they are rescaled properly, so that they are not 0!
         # flux_total = flux * x_j * edge_attr[:, -1]
 
-        if not self.training: self.edge_fluxes = flux
 
-        flux = flux - flux[reverse_edges]
-        flux = flux.view(-1, 1)
+        if self.use_log_transform:
+            total_i = torch.exp(x_i) * areas_i.view(-1, 1)
+            total_j = torch.exp(x_j) * areas_j.view(-1, 1)
+            in_flux = flux * total_j / total_i
+            out_flux = flux[reverse_edges]
+            net_flux = in_flux - out_flux
+            raw_out_flux = out_flux * self.to_raw(x_i) * areas_i.view(-1, 1)
+            raw_net_flux = raw_out_flux[reverse_edges] - raw_out_flux
+        else:
+            in_flux = flux * x_j * areas_j.view(-1, 1)
+            out_flux = in_flux[reverse_edges]
+            net_flux = (in_flux - out_flux) / areas_i.view(-1, 1) # net influx into cell i per km2
+            raw_net_flux = self.to_raw(in_flux - out_flux)
 
-        return flux
+        if not self.training:
+            # self.edge_fluxes = flux
+            self.edge_fluxes = raw_net_flux
+
+        return net_flux.view(-1, 1)
+
 
     def update(self, aggr_out, x, node_features, dynamic_features_t0, areas):
         """
@@ -811,10 +828,9 @@ class FluxRGNNTransition(MessagePassing):
 
         :param aggr_out: sum of incoming messages (fluxes)
         :param x: local densities from previous time step
-        :param coords: sensor coordinates
+        :param node_features: tensor containing all static node features
+        :param dynamic_features_t0: tensor containing all dynamic node features
         :param areas: Voronoi cell areas
-        :param env: environmental features
-        :param t: time index
         :return: prediction and updated hidden states for all nodes
         """
 
@@ -829,16 +845,35 @@ class FluxRGNNTransition(MessagePassing):
 
         hidden = self.node_lstm(inputs)
         source, sink = self.source_sink_mlp(hidden, inputs)
-        sink = sink * x
-        delta = source - sink # change in birds per km2
+        # sink = sink * x
+        # delta = source - sink # change in birds per km2
+
+        if self.use_log_transform:
+            # both source and sink are fractions (total source/sink divided by current density x)
+            delta = source - sink
+            raw_x = self.to_raw(x)
+            raw_source = raw_x * source
+            raw_sink = raw_x * sink
+            raw_node_flux = raw_x * aggr_out
+        else:
+            # source is the total density while sink is a fraction
+            delta = source - sink * x
+            raw_source = self.to_raw(source)
+            raw_sink = self.node_sink = self.to_raw(x) * sink
+            raw_node_flux = aggr_out
 
         if not self.training:
-            self.node_source = source * areas.view(-1, 1) # total amount of birds taking-off in cell i
-            self.node_sink = sink * areas.view(-1, 1) # total amount of birds landing in cell i
-            self.node_flux = aggr_out
+            self.node_source = raw_source  # birds/km2 taking-off in cell i
+            self.node_sink = raw_sink  # birds/km2 landing in cell i
+            self.node_flux = raw_node_flux # birds/km2 flying in/out of cell i
 
-        # convert total influxes to influx per km2
-        influx = aggr_out / areas.view(-1, 1)
+
+        # if not self.training:
+        #     self.node_source = source * areas.view(-1, 1) # total amount of birds taking-off in cell i
+        #     self.node_sink = sink * areas.view(-1, 1) # total amount of birds landing in cell i
+        #     self.node_flux = aggr_out
+
+        influx = aggr_out
         pred = x + delta + influx
 
         return pred, hidden
@@ -909,15 +944,19 @@ class LSTMTransition(torch.nn.Module):
         source, sink = self.source_sink_mlp(hidden, inputs)
         
         if self.use_log_transform:
-            source = source #/ torch.exp(x)
-
-            # if not self.training:
-            #     self.node_source = source * torch.exp(x) * graph_data.areas.view(-1, 1)  # total amount of birds taking-off in cell i
-            #     self.node_sink = sink * torch.exp(x) * graph_data.areas.view(-1, 1)  # total amount of birds landing in cell i
+            # both source and sink are fractions (total source/sink divided by current density x)
+            delta = source - sink
+            raw_source = self.to_raw(x) * source
+            raw_sink = self.to_raw(x) * sink
         else:
-            sink = sink * x
+            # source is the total density while sink is a fraction
+            delta = source - sink * x
+            raw_source = self.to_raw(source)
+            raw_sink = self.node_sink = self.to_raw(x) * sink
 
-        delta = source - sink
+        if not self.training:
+            self.node_source = raw_source  # birds/km2 taking-off in cell i
+            self.node_sink = raw_sink  # birds/km2 landing in cell i
 
         x = x + delta
 
