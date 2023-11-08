@@ -359,7 +359,8 @@ class RadarData(InMemoryDataset):
 
 
         # normalize dynamic features
-        dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df, input_col)
+        if self.normalization is not None:
+            dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df, input_col)
 
         # normalize static features
         coord_cols = ['x', 'y']
@@ -467,9 +468,10 @@ class RadarData(InMemoryDataset):
         data['direction'] = (data['direction'] + 360) % 360
         data['direction'] = rescale(data['direction'], min=0, max=360)
 
-        min_speed = self.normalization.min('bird_speed') if self.data_source == 'radar' else 0
-        max_speed = self.normalization.max('bird_speed') if self.data_source == 'radar' else 1
-        data['speed'] = (data['speed'] - min_speed) / (max_speed - min_speed)
+        if self.data_source in ['radar', 'nexrad'] and self.normalization is not None:
+            min_speed = self.normalization.min('bird_speed')
+            max_speed = self.normalization.max('bird_speed')
+            data['speed'] = (data['speed'] - min_speed) / (max_speed - min_speed)
 
 
         # set animal densities during the day to zero
