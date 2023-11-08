@@ -102,9 +102,7 @@ def load_training_data(cfg):
     transform = get_transform(cfg)
     data = dataloader.load_seasonal_dataset(cfg, cfg.output_dir, training=True,
                                    transform=transform)
-
     data = torch.utils.data.ConcatDataset(data)
-
     train_loader = instantiate(cfg.dataloader, data, batch_size=1)
 
     return train_loader
@@ -119,11 +117,24 @@ def training(trainer, model, cfg: DictConfig):
     :param cfg: DictConfig specifying model, data and training details
     """
 
-    if cfg.debugging: torch.autograd.set_detect_anomaly(True)
-
     dl_train = load_training_data(cfg)
 
-    trainer.fit(model, dl_train)
+    seasonal_patterns = []
+    missing_patterns = []
+
+    for nidx, data in enumerate(dl_train):
+        data = data.to(model.device)
+
+        seasonal_patterns.append(data.y)
+        missing_patterns.append(data.missing)
+
+    seasonal_patterns = torch.stack(seasonal_patterns, dim=0)  # shape [years, radars, timepoints]
+    missing_patterns = torch.stack(missing_patterns, dim=0)  # shape [years, radars, timepoints]
+
+    mask = torch.logical_not(missing_patterns)
+    seasonal_patterns = (mask * seasonal_patterns).sum(0) / mask.sum(0)  # shape [radars, timepoints]
+
+    model.seasonal_patterns = seasonal_patterns
 
     # save model
     model_path = osp.join(cfg.output_dir, 'models')
