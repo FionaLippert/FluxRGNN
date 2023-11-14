@@ -13,8 +13,8 @@ n_hidden: 128
 n_graph_layers: 0
 
 context: 24
-horizon: 24
-test_horizon: 24
+horizon: 48
+test_horizon: 72
 
 #epochs: 300
 #batch_size: 4
@@ -39,6 +39,8 @@ birds_per_km2: true
 use_log_transform: true
 log_offset: 0.1
 scale: 1.0
+
+regularizer_weight: 0.1
 
 dynamics:
   _target_: fluxrgnn.models.FluxRGNNTransition

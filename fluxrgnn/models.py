@@ -29,6 +29,11 @@ class ForecastModel(pl.LightningModule):
         self.use_log_transform = kwargs.get('use_log_transform', False)
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
+        
+        if self.use_log_transform:
+            self.zero_value = np.log(self.log_offset) * self.scale
+        else:
+            self.zero_value = 0
 
     def forecast(self, data, teacher_forcing=0):
         """
@@ -102,6 +107,10 @@ class ForecastModel(pl.LightningModule):
     def on_test_epoch_start(self):
 
         self.test_results = {}
+        #self.residuals = []
+        self.test_gt = []
+        self.test_predictions = []
+        self.test_masks = []
 
 
     def test_step(self, batch, batch_idx):
@@ -120,11 +129,27 @@ class ForecastModel(pl.LightningModule):
             else:
                 self.test_results[m] = [values]
 
+        # self.residuals.append(self._get_residuals(batch, prediction))
+        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
+        mask = torch.logical_not(batch.missing[:, self.t_context: self.t_context + self.horizon])
+        self.test_gt.append(gt)
+        self.test_predictions.append(prediction)
+        self.test_masks.append(mask)
+
         output = {'y_hat': prediction,
                   'y': batch.y if hasattr(batch, 'y') else None}
 
         return output
 
+    def on_test_epoch_end(self):
+        print('concat test results')
+        for m, value_list in self.test_results.items():
+            self.test_results[m] = torch.concat(value_list, dim=0).reshape(-1, self.horizon)
+
+        # self.residuals = torch.stack(self.residuals, dim=0)
+        self.test_gt = torch.stack(self.test_gt)
+        self.test_predictions = torch.stack(self.test_predictions)
+        self.test_masks = torch.stack(self.test_masks)
 
     def predict_step(self, batch, batch_idx):
 
@@ -143,6 +168,8 @@ class ForecastModel(pl.LightningModule):
 
     def to_raw(self, values):
 
+        values = torch.clamp(values, min=self.zero_value)
+
         if self.use_log_transform:
             log = values / self.scale
             raw = torch.exp(log) - self.log_offset
@@ -153,6 +180,8 @@ class ForecastModel(pl.LightningModule):
 
     def to_log(self, values):
 
+        values = torch.clamp(values, min=self.zero_value)
+
         if self.use_log_transform:
             log = values / self.scale
         else:
@@ -161,6 +190,17 @@ class ForecastModel(pl.LightningModule):
 
         return log
 
+    def _get_residuals(self, batch, output):
+        
+        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
+        mask = torch.logical_not(batch.missing)[:, self.t_context: self.t_context + self.horizon]
+
+        residuals = (output - gt) * mask
+
+        return residuals
+
+    def _regularizer(self):
+        return 0
 
     def _eval_step(self, batch, output, prefix='', aggregate_time=True):
 
@@ -172,22 +212,28 @@ class ForecastModel(pl.LightningModule):
         gt = batch.y[:, self.t_context: self.t_context + self.horizon]
         mask = mask[:, self.t_context: self.t_context + self.horizon]
         
-        print(f'gt min, max = {gt.min(), gt.max()}')
-
         if aggregate_time:
             gt = gt.reshape(-1)
             mask = mask.reshape(-1)
             output = output.reshape(-1)
 
         loss = utils.MSE(output, gt, mask)
-        eval_dict = {f'{prefix}/loss': loss}
-        # loss = batch.num_graphs * float(loss)
+        
+        if self.training:
+            regularizer = self._regularizer()
+            loss = loss + self.config.get('regularizer_weight', 1.0) * regularizer
+            eval_dict = {f'{prefix}/loss': loss,
+                         f'{prefix}/regularizer': regularizer}
+        else:
+            eval_dict = {f'{prefix}/loss': loss}
 
         if not self.training:
             self._add_eval_metrics(eval_dict, self.to_raw(gt), self.to_raw(output),
                                    mask, prefix=f'{prefix}/raw')
             self._add_eval_metrics(eval_dict, self.to_log(gt), self.to_log(output),
                                    mask, prefix=f'{prefix}/log')
+            # print(f'negative predictions = {(output < 0).sum()}')
+            # print(f'val mask entries = {mask.sum()}')
 
         return eval_dict
 
@@ -294,6 +340,7 @@ class FluxRGNN(ForecastModel):
             h_t, c_t = None, None
 
         self.dynamics.initialize(data, h_t, c_t)
+        self.deltas = []
 
         # setup model components
         if hasattr(self, 'boundary_model'):
@@ -329,7 +376,7 @@ class FluxRGNN(ForecastModel):
 
         # message passing through graph
         # x, hidden = self.dynamics(x, hidden, data, data.env[..., t], data.env[..., t - 1])
-        x, hidden = self.dynamics(x, hidden, data, t)
+        x, hidden, delta = self.dynamics(x, hidden, data, t)
 
         if not self.training:
             # save model component outputs
@@ -343,10 +390,26 @@ class FluxRGNN(ForecastModel):
                 self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
                 self.node_flux[..., tidx] = self.dynamics.node_flux
 
+        if self.config.get('force_zeros', False):
+            x = x * graph_data.local_night[..., t]
+            x = x + self.zero_value * torch.logical_not(graph_data.local_night[..., t])
+        
         model_states['x'] = x
         model_states['hidden'] = hidden
+        model_states['delta'] = delta
+
+        if self.training:
+            self.deltas.append(delta)
 
         return model_states
+
+    def _regularizer(self):
+        
+        deltas = torch.cat(self.deltas, dim=0)
+        # penalty = torch.linalg.vector_norm(deltas)
+        penalty = deltas.pow(2).mean()
+
+        return penalty
 
 
     # def forward(self, data, p_tf=0):
@@ -572,6 +635,7 @@ class LocalMLPForecast(ForecastModel):
 
         if self.config.get('force_zeros', False):
             x = x * data.local_night[..., t]
+            x = x + self.zero_value * torch.logical_not(data.local_night[..., t])
 
         model_states['x'] = x
 
@@ -694,9 +758,9 @@ class SeasonalityForecast(ForecastModel):
         self.automatic_optimization = False
 
     def forecast_step(self, model_states, data, t):
-
+        #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
-        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]]
+        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]].view(-1, 1)
 
         return model_states
 
@@ -710,7 +774,43 @@ class SeasonalityForecast(ForecastModel):
         return None
 
 
-class FluxRGNNTransition(MessagePassing):
+class Dynamics(MessagePassing):
+
+    def __init__(self, **kwargs):
+        super(Dynamics, self).__init__(aggr='add', node_dim=0)
+        
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+        
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+
+    def to_raw(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+            raw = torch.exp(log) - self.log_offset
+        else:
+            raw = values / self.scale
+
+        return raw
+
+    def to_log(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+        else:
+            raw = values / self.scale
+            log = torch.log(raw + self.log_offset)
+
+        return log
+
+    def initialize(self, data, *args):
+        pass
+
+    def forward(self, x, hidden, graph_data, t):
+        raise NotImplementedError
+
+class FluxRGNNTransition(Dynamics):
     """
     Implements a single FluxRGNN transition from t to t+1, given the previous predictions and hidden states.
     """
@@ -719,18 +819,16 @@ class FluxRGNNTransition(MessagePassing):
     def __init__(self, node_features, edge_features, dynamic_features,
                  n_graph_layers=0, **kwargs):
         """
-        Initialize FluxRGNNTransition.
-
-        :param n_env: number of environmental features
-        :param n_edge_attr: number of edge attributes
-        :param coord_dim: dimensionality of senosr coordinate system
+        Initialize FluxRGNNTransition
         """
 
-        super(FluxRGNNTransition, self).__init__(aggr='add', node_dim=0)
+        super(FluxRGNNTransition, self).__init__(**kwargs)
 
         self.node_features = node_features
         self.edge_features = edge_features
         self.dynamic_features = dynamic_features
+
+        # self.use_log_transform = kwargs.get('use_log_transform', False)
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
         n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
@@ -780,7 +878,7 @@ class FluxRGNNTransition(MessagePassing):
                                          feature in self.dynamic_features], dim=1)
 
         # message passing through graph
-        x, hidden = self.propagate(graph_data.edge_index,
+        x, hidden, delta = self.propagate(graph_data.edge_index,
                                    reverse_edges=graph_data.reverse_edges,
                                    x=x,
                                    hidden=hidden,
@@ -791,7 +889,7 @@ class FluxRGNNTransition(MessagePassing):
                                    dynamic_features_t1=dynamic_features_t1,
                                    areas=graph_data.areas)
 
-        return x, hidden
+        return x, hidden, delta
 
     # def message(self, x_j, hidden_sp_j, env_current_i, env_previous_j, edge_attr, reverse_edges):
     def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
@@ -810,6 +908,8 @@ class FluxRGNNTransition(MessagePassing):
         :param areas_j: Voronoi cell areas for nodes j
         :return: edge fluxes with shape [#edges, 1]
         """
+
+        # print(f'min area = {areas_i.min()}')
 
         # inputs = [env_current_i, env_previous_j, edge_attr]
         inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
@@ -904,12 +1004,18 @@ class FluxRGNNTransition(MessagePassing):
         #     self.node_flux = aggr_out
 
         influx = aggr_out
+        #print(f'mean influx = {influx.mean()}')
+        #print(f'mean sink = {sink.mean()}')
+        #print(f'mean source = {source.mean()}')
+        #print(f'delta = {delta}')
+        #print(f'net influx = {influx}')
         pred = x + delta + influx
 
-        return pred, hidden
+        return pred, hidden, delta
 
 
-class LSTMTransition(torch.nn.Module):
+#class LSTMTransition(torch.nn.Module):
+class LSTMTransition(Dynamics):
     """
     Implements a single LSTM transition from t to t+1, given the previous predictions and hidden states.
     """
@@ -923,12 +1029,12 @@ class LSTMTransition(torch.nn.Module):
         :param coord_dim: dimensionality of senosr coordinate system
         """
 
-        super(LSTMTransition, self).__init__()
+        super(LSTMTransition, self).__init__(**kwargs)
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
 
-        self.use_log_transform = kwargs.get('use_log_transform', False)
+        # self.use_log_transform = kwargs.get('use_log_transform', False)
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
 
@@ -990,7 +1096,8 @@ class LSTMTransition(torch.nn.Module):
 
         x = x + delta
 
-        return x, hidden
+        
+        return x, hidden, delta
 
 
 class EdgeFluxMLP(torch.nn.Module):
@@ -1031,8 +1138,9 @@ class EdgeFluxMLP(torch.nn.Module):
 
         # map hidden state to relative flux
         flux = self.hidden2output(flux)
-        flux = torch.sigmoid(flux) # fraction of birds moving from cell j to cell i
-
+        # flux = torch.sigmoid(flux) # fraction of birds moving from cell j to cell i
+        flux = torch.tanh(flux).pow(2) # between 0 and 1, with initial random outputs close to 0
+        
         return flux
 
 
@@ -1062,7 +1170,9 @@ class SourceSinkMLP(torch.nn.Module):
 
         # source = F.sigmoid(source_sink[:, 0].view(-1, 1))
         source = source_sink[:, 0].view(-1, 1).pow(2) # total density of birds taking off (per km2)
-        sink = F.sigmoid(source_sink[:, 1].view(-1, 1)) # fraction of landing birds
+        #sink = F.sigmoid(source_sink[:, 1].view(-1, 1)) # fraction of landing birds
+
+        sink = torch.tanh(source_sink[:, 1].view(-1, 1)).pow(2) # between 0 and 1, with initial random outputs close to 0
 
         return source, sink
 
