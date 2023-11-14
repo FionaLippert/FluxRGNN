@@ -118,6 +118,8 @@ def training(trainer, model, cfg: DictConfig):
     """
 
     dl_train = load_training_data(cfg)
+    if trainer.accelerator == 'gpu' and torch.cuda.is_available():
+        model.cuda()
 
     seasonal_patterns = []
     missing_patterns = []
@@ -132,8 +134,9 @@ def training(trainer, model, cfg: DictConfig):
     missing_patterns = torch.stack(missing_patterns, dim=0)  # shape [years, radars, timepoints]
 
     mask = torch.logical_not(missing_patterns)
-    seasonal_patterns = (mask * seasonal_patterns).sum(0) / mask.sum(0)  # shape [radars, timepoints]
-
+    print(f'number of zeros = {(mask.sum(0) == 0).sum()}')
+    #seasonal_patterns = (mask * seasonal_patterns).sum(0) / mask.sum(0)  # shape [radars, timepoints]
+    seasonal_patterns = seasonal_patterns.mean(0)
     model.seasonal_patterns = seasonal_patterns
 
     # save model
@@ -165,31 +168,46 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
+
+    print(model.device, model.seasonal_patterns.device)
+    model.seasonal_patterns.to(model.device)
     trainer.test(model, test_loader)
 
-    has_results = False
-    result_path = osp.join(cfg.output_dir, 'results')
+    #has_results = False
+    #result_path = osp.join(cfg.output_dir, 'results')
 
     if hasattr(model, 'test_results'):
-        os.makedirs(result_path, exist_ok=True)
-        with open(osp.join(result_path, 'test_results.pickle'), 'wb') as f:
-            pickle.dump(model.test_results, f, protocol=pickle.HIGHEST_PROTOCOL)
-        
-        has_results = True
+        eval_path = osp.join(cfg.output_dir, 'evaluation')
+        #os.makedirs(eval_path, exist_ok=True)
+        #with open(osp.join(eval_path, 'test_results.pickle'), 'wb') as f:
+        #    pickle.dump(model.test_results, f, protocol=pickle.HIGHEST_PROTOCOL)
+        utils.dump_outputs(model.test_results, eval_path)
+        utils.dump_outputs({'test/gt': model.test_gt,
+                            'test/predictions': model.test_predictions,
+                            'test/masks': model.test_masks},
+                            eval_path)
+
+        if isinstance(cfg.trainer.logger, WandbLogger):
+            artifact = wandb.Artifact('evaluation', type='evaluation')
+            artifact.add_dir(eval_path)
+            wandb.run.log_artifact(artifact)
 
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
 
         # save results
-        os.makedirs(result_path, exist_ok=True)
-        with open(osp.join(result_path, 'results.pickle'), 'wb') as f:
-            pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+        #os.makedirs(result_path, exist_ok=True)
+        #with open(osp.join(result_path, 'results.pickle'), 'wb') as f:
+        #    pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    if has_results and isinstance(cfg.trainer.logger, WandbLogger):
-        # save as artifact for version control
-        artifact = wandb.Artifact(f'results', type='results')
-        artifact.add_dir(result_path)
-        wandb.run.log_artifact(artifact)
+        pred_path = osp.join(cfg.output_dir, 'prediction')
+        utils.dump_outputs(results, pred_path)
+        
+        if isinstance(cfg.trainer.logger, WandbLogger):
+            # save as artifact for version control
+            artifact = wandb.Artifact(f'prediction', type='prediction')
+            artifact.add_dir(pred_path)
+            wandb.run.log_artifact(artifact)
 
 
 if __name__ == "__main__":

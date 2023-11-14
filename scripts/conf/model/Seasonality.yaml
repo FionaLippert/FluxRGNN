@@ -1,5 +1,5 @@
 # @package model
-_target_: fluxrgnn.models.SeasonalForecast
+_target_: fluxrgnn.models.SeasonalityForecast
 
 name: Seasonality
 

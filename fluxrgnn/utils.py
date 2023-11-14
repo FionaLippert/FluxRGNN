@@ -1,5 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
+import os
 import os.path as osp
 import torch
 import warnings
@@ -23,6 +24,13 @@ def val_test_split(dataloader, val_ratio):
     test_loader = [list(dataloader)[i] for i in range(N) if i not in val_idx]
 
     return val_loader, test_loader
+
+def dump_outputs(output_dict, dir):
+
+    for k, v in output_dict.items():
+        fp = osp.join(dir, f'{k}.pt')
+        os.makedirs(osp.dirname(fp), exist_ok=True)
+        torch.save(v.cpu(), fp)
 
 def SMAPE(output, gt, mask):
     # compute symmetric mean absolute percentage error

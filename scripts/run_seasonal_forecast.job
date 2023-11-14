@@ -1,12 +1,11 @@
 #!/bin/bash
 
-#SBATCH --partition=gpu
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=1
-#SBATCH --job-name=fluxrgnn_training
-#SBATCH --time=08:00:00
+#SBATCH --job-name=seasonality
+#SBATCH --time=1:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
@@ -21,5 +20,5 @@ OVERRIDES=$1
 
 echo $OVERRIDES
 
-srun python run_neural_nets.py $OVERRIDES
+srun python run_seasonal_forecast.py $OVERRIDES
 

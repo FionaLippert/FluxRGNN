@@ -15,14 +15,14 @@ class PredictionCallback(Callback):
 
     def on_test_batch_end(self, trainer, pl_module, output, batch, batch_idx):
         """Called when the test batch ends."""
+        indices = [0, 35, 71, 106, 142]
+        plot_predictions(indices, trainer, pl_module, output, batch, batch_idx, 'test')
 
-        plot_predictions(5, trainer, pl_module, output, batch, batch_idx, 'test')
-
-    def on_test_epoch_end(self, trainer, pl_module):
+    def on_test_end(self, trainer, pl_module):
         """Called when the test epoch ends."""
 
-        for m, value_list in pl_module.test_results.items():
-            values = torch.concat(value_list, dim=0).reshape(-1, pl_module.horizon)
+        for m, values in pl_module.test_results.items():
+            #values = torch.concat(value_list, dim=0).reshape(-1, pl_module.horizon)
 
             fig, ax = plt.subplots()
             mean = np.nanmean(values.cpu().numpy(), axis=0)
@@ -70,19 +70,19 @@ def gradient_norm(model):
 
     return total_norm, max_norm
 
-def plot_predictions(n_plots, trainer, pl_module, output, batch, batch_idx, prefix='val'):
+def plot_predictions(indices, trainer, pl_module, output, batch, batch_idx, prefix='val'):
 
     predictions = output['y_hat']
 
     if batch_idx == 0:
 
-        indices = np.where(batch.y[:, pl_module.t_context:].sum(1).detach().cpu().numpy() > 0)[0]
-        print(f'{len(indices)} cells with non-zero values found')
+        #indices = np.where(batch.y[:, pl_module.t_context:].sum(1).detach().cpu().numpy() > 0)[0]
+        #print(f'{len(indices)} cells with non-zero values found')
 
         n_cells = len(indices)
 
-        for idx in np.linspace(0, n_cells - 1, min(n_cells, n_plots)).astype(int):
-            cell_idx = indices[idx]
+        for idx, cell_idx in enumerate(indices): #np.linspace(0, n_cells - 1, min(n_cells, n_plots)).astype(int):
+            #cell_idx = indices[idx]
 
             fig, ax = plt.subplots(figsize=(6, 3))
 

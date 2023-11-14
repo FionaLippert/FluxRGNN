@@ -29,6 +29,11 @@ class ForecastModel(pl.LightningModule):
         self.use_log_transform = kwargs.get('use_log_transform', False)
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
+        
+        if self.use_log_transform:
+            self.zero_value = np.log(self.log_offset) * self.scale
+        else:
+            self.zero_value = 0
 
     def forecast(self, data, teacher_forcing=0):
         """
@@ -103,6 +108,10 @@ class ForecastModel(pl.LightningModule):
     def on_test_epoch_start(self):
 
         self.test_results = {}
+        #self.residuals = []
+        self.test_gt = []
+        self.test_predictions = []
+        self.test_masks = []
 
 
     def test_step(self, batch, batch_idx):
@@ -121,6 +130,23 @@ class ForecastModel(pl.LightningModule):
             else:
                 self.test_results[m] = [values]
 
+        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
+        mask = torch.logical_not(batch.missing[:, self.t_context: self.t_context + self.horizon])
+        self.test_gt.append(gt)
+        self.test_predictions.append(prediction)
+        self.test_masks.append(mask)
+
+
+    def on_test_epoch_end(self):
+
+        for m, value_list in self.test_results.items():
+            self.test_results[m] = torch.concat(value_list, dim=0).reshape(-1, self.horizon)
+
+        # self.residuals = torch.stack(self.residuals, dim=0)
+        self.test_gt = torch.stack(self.test_gt)
+        self.test_predictions = torch.stack(self.test_predictions)
+        self.test_masks = torch.stack(self.test_masks)
+
 
     def predict_step(self, batch, batch_idx):
 
@@ -138,6 +164,8 @@ class ForecastModel(pl.LightningModule):
 
     def to_raw(self, values):
 
+        values = torch.clamp(values, min=self.zero_value)
+
         if self.use_log_transform:
             log = values / self.scale
             raw = torch.exp(log) - self.log_offset
@@ -148,6 +176,8 @@ class ForecastModel(pl.LightningModule):
 
     def to_log(self, values):
 
+        values = torch.clamp(values, min=self.zero_value)
+
         if self.use_log_transform:
             log = values / self.scale
         else:
@@ -156,6 +186,17 @@ class ForecastModel(pl.LightningModule):
 
         return log
 
+    def _get_residuals(self, batch, output):
+        
+        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
+        mask = torch.logical_not(batch.missing)[:, self.t_context: self.t_context + self.horizon]
+
+        residuals = (output - gt) * mask
+
+        return residuals
+
+    def _regularizer(self):
+        return 0
 
     def _eval_step(self, batch, output, prefix='', aggregate_time=True):
 
@@ -167,22 +208,28 @@ class ForecastModel(pl.LightningModule):
         gt = batch.y[:, self.t_context: self.t_context + self.horizon]
         mask = mask[:, self.t_context: self.t_context + self.horizon]
         
-        print(f'gt min, max = {gt.min(), gt.max()}')
-
         if aggregate_time:
             gt = gt.reshape(-1)
             mask = mask.reshape(-1)
             output = output.reshape(-1)
 
         loss = utils.MSE(output, gt, mask)
-        eval_dict = {f'{prefix}/loss': loss}
-        # loss = batch.num_graphs * float(loss)
+        
+        if self.training:
+            regularizer = self._regularizer()
+            loss = loss + self.config.get('regularizer_weight', 1.0) * regularizer
+            eval_dict = {f'{prefix}/loss': loss,
+                         f'{prefix}/regularizer': regularizer}
+        else:
+            eval_dict = {f'{prefix}/loss': loss}
 
         if not self.training:
             self._add_eval_metrics(eval_dict, self.to_raw(gt), self.to_raw(output),
                                    mask, prefix=f'{prefix}/raw')
             self._add_eval_metrics(eval_dict, self.to_log(gt), self.to_log(output),
                                    mask, prefix=f'{prefix}/log')
+            # print(f'negative predictions = {(output < 0).sum()}')
+            # print(f'val mask entries = {mask.sum()}')
 
         return eval_dict
 
@@ -266,6 +313,7 @@ class FluxRGNN(ForecastModel):
             h_t, c_t = None, None
 
         self.dynamics.initialize(data, h_t, c_t)
+        self.deltas = []
 
         # setup model components
         if hasattr(self, 'boundary_model'):
@@ -286,7 +334,7 @@ class FluxRGNN(ForecastModel):
 
         return model_states
 
-    def forecast_step(self, model_states, data, t):
+    def forecast_step(self, model_states, graph_data, t):
 
         x = model_states['x']
         hidden = model_states['hidden']
@@ -299,7 +347,7 @@ class FluxRGNN(ForecastModel):
 
 
         # message passing through graph
-        x, hidden = self.dynamics(x, hidden, data, t)
+        x, hidden, delta = self.dynamics(x, hidden, graph_data, t)
 
         if not self.training:
             # save model component outputs
@@ -313,10 +361,26 @@ class FluxRGNN(ForecastModel):
                 self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
                 self.node_flux[..., tidx] = self.dynamics.node_flux
 
+        if self.config.get('force_zeros', False):
+            x = x * graph_data.local_night[..., t]
+            x = x + self.zero_value * torch.logical_not(graph_data.local_night[..., t])
+        
         model_states['x'] = x
         model_states['hidden'] = hidden
+        model_states['delta'] = delta
+
+        if self.training:
+            self.deltas.append(delta)
 
         return model_states
+
+    def _regularizer(self):
+        
+        deltas = torch.cat(self.deltas, dim=0)
+        # penalty = torch.linalg.vector_norm(deltas)
+        penalty = deltas.pow(2).mean()
+
+        return penalty
 
 
     def predict_step(self, batch, batch_idx):
@@ -390,6 +454,7 @@ class LocalMLPForecast(ForecastModel):
 
         if self.config.get('force_zeros', False):
             x = x * data.local_night[..., t]
+            x = x + self.zero_value * torch.logical_not(data.local_night[..., t])
 
         model_states['x'] = x
 
@@ -467,9 +532,9 @@ class SeasonalityForecast(ForecastModel):
         self.automatic_optimization = False
 
     def forecast_step(self, model_states, data, t):
-
+        #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
-        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]]
+        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]].view(-1, 1)
 
         return model_states
 
@@ -483,7 +548,43 @@ class SeasonalityForecast(ForecastModel):
         return None
 
 
-class FluxRGNNTransition(MessagePassing):
+class Dynamics(MessagePassing):
+
+    def __init__(self, **kwargs):
+        super(Dynamics, self).__init__(aggr='add', node_dim=0)
+        
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+        
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+
+    def to_raw(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+            raw = torch.exp(log) - self.log_offset
+        else:
+            raw = values / self.scale
+
+        return raw
+
+    def to_log(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+        else:
+            raw = values / self.scale
+            log = torch.log(raw + self.log_offset)
+
+        return log
+
+    def initialize(self, data, *args):
+        pass
+
+    def forward(self, x, hidden, graph_data, t):
+        raise NotImplementedError
+
+class FluxRGNNTransition(Dynamics):
     """
     Implements a single FluxRGNN transition from t to t+1, given the previous predictions and hidden states.
     """
@@ -499,11 +600,13 @@ class FluxRGNNTransition(MessagePassing):
         :param n_graph_layers: number of graph NN layers to use for hidden representations
         """
 
-        super(FluxRGNNTransition, self).__init__(aggr='add', node_dim=0)
+        super(FluxRGNNTransition, self).__init__(**kwargs)
 
         self.node_features = node_features
         self.edge_features = edge_features
         self.dynamic_features = dynamic_features
+
+        # self.use_log_transform = kwargs.get('use_log_transform', False)
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
         n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
@@ -554,7 +657,7 @@ class FluxRGNNTransition(MessagePassing):
                                          feature in self.dynamic_features], dim=1)
 
         # message passing through graph
-        x, hidden = self.propagate(graph_data.edge_index,
+        x, hidden, delta = self.propagate(graph_data.edge_index,
                                    reverse_edges=graph_data.reverse_edges,
                                    x=x,
                                    hidden=hidden,
@@ -565,7 +668,7 @@ class FluxRGNNTransition(MessagePassing):
                                    dynamic_features_t1=dynamic_features_t1,
                                    areas=graph_data.areas)
 
-        return x, hidden
+        return x, hidden, delta
 
 
     def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
@@ -654,12 +757,13 @@ class FluxRGNNTransition(MessagePassing):
             self.node_flux = raw_node_flux # birds/km2 flying in/out of cell i
 
         influx = aggr_out
+
         pred = x + delta + influx
 
-        return pred, hidden
+        return pred, hidden, delta
 
 
-class LSTMTransition(torch.nn.Module):
+class LSTMTransition(Dynamics):
     """
     Implements a single LSTM transition from t to t+1, given the previous predictions and hidden states.
     """
@@ -672,12 +776,10 @@ class LSTMTransition(torch.nn.Module):
         :param dynamic_features: tensor containing all dynamic node features
         """
 
-        super(LSTMTransition, self).__init__()
+        super(LSTMTransition, self).__init__(**kwargs)
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
-
-        self.use_log_transform = kwargs.get('use_log_transform', False)
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
 
@@ -737,7 +839,8 @@ class LSTMTransition(torch.nn.Module):
 
         x = x + delta
 
-        return x, hidden
+        
+        return x, hidden, delta
 
 
 class EdgeFluxMLP(torch.nn.Module):
@@ -778,8 +881,9 @@ class EdgeFluxMLP(torch.nn.Module):
 
         # map hidden state to relative flux
         flux = self.hidden2output(flux)
-        flux = torch.sigmoid(flux) # fraction of birds moving from cell j to cell i
-
+        # flux = torch.sigmoid(flux) # fraction of birds moving from cell j to cell i
+        flux = torch.tanh(flux).pow(2) # between 0 and 1, with initial random outputs close to 0
+        
         return flux
 
 
@@ -808,7 +912,8 @@ class SourceSinkMLP(torch.nn.Module):
         source_sink = self.hidden2sourcesink(inputs)
 
         source = source_sink[:, 0].view(-1, 1).pow(2) # total density of birds taking off (per km2)
-        sink = F.sigmoid(source_sink[:, 1].view(-1, 1)) # fraction of landing birds
+
+        sink = torch.tanh(source_sink[:, 1].view(-1, 1)).pow(2) # between 0 and 1, with initial random outputs close to 0
 
         return source, sink
 
@@ -920,9 +1025,6 @@ class GraphLayer(MessagePassing):
         self.fc_edge = torch.nn.Linear(self.n_hidden, self.n_hidden)
         self.fc_node = torch.nn.Linear(self.n_hidden, self.n_hidden)
 
-        # seed = kwargs.get('seed', 1234)
-        # torch.manual_seed(seed)
-
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -986,10 +1088,6 @@ class RecurrentEncoder(torch.nn.Module):
         self.dynamic_features = dynamic_features
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values())
-        # if self.use_uv:
-        #     n_node_in = n_node_in + 2
-
-        # torch.manual_seed(kwargs.get('seed', 1234))
 
         self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
         self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
@@ -1013,7 +1111,6 @@ class RecurrentEncoder(torch.nn.Module):
                                    feature in self.node_features], dim=1)
 
         for t in range(self.t_context):
-            # x = data.x[:, t]
 
             # dynamic features for current time step
             dynamic_features = torch.cat([data.get(feature)[..., t].reshape(data.x.size(0), -1) for
@@ -1021,24 +1118,14 @@ class RecurrentEncoder(torch.nn.Module):
             inputs = torch.cat([node_features, dynamic_features], dim=1)
 
             h_t, c_t = self.update(inputs, h_t, c_t)
-            # if self.use_uv:
-            #     h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, data.bird_uv[..., t], t=t)
-            # else:
-            #     h_t, c_t = self.update(x, data.coords, data.env[..., t], data.areas, h_t, c_t, t=t)
 
         return h_t, c_t
 
-    # def update(self, x, coords, env, areas, h_t, c_t, bird_uv=None, t=None):
     def update(self, inputs, h_t, c_t):
         """Include information on the current time step into the hidden state."""
 
-        # if self.use_uv:
-        #     inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1), bird_uv], dim=1)
-        # else:
-        #     inputs = torch.cat([x.view(-1, 1), coords, env, areas.view(-1, 1)], dim=1)
-
         inputs = self.input2hidden(inputs)
-        # print(f'encoder input nans = {torch.isnan(inputs).sum()}')
+
         h_t[0], c_t[0] = self.lstm_layers[0](inputs, (h_t[0], c_t[0]))
         for l in range(1, self.n_lstm_layers):
             h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
@@ -1066,8 +1153,6 @@ class LocalLSTM(torch.nn.Module):
         self.node_lstm = NodeLSTM(n_in, **kwargs)
         self.output_mlp = SourceSinkMLP(n_in, **kwargs)
 
-        # seed = kwargs.get('seed', 1234)
-        # torch.manual_seed(seed)
 
     def forward(self, data):
 
@@ -1132,8 +1217,6 @@ class LSTM(torch.nn.Module):
         self.force_zeros = kwargs.get('force_zeros', False)
         self.teacher_forcing = kwargs.get('teacher_forcing', 0)
 
-        # torch.manual_seed(kwargs.get('seed', 1234))
-
         self.fc_in = torch.nn.Linear(self.n_in*self.n_nodes, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden) for l in range(self.n_layers)])
         self.fc_out = torch.nn.Linear(self.n_hidden, self.n_nodes)
@@ -1159,7 +1242,7 @@ class LSTM(torch.nn.Module):
                                 x], dim=0).view(1, -1)
 
             # multi-layer LSTM
-            inputs = self.fc_in(inputs) #.relu()
+            inputs = self.fc_in(inputs)
             h_t[0], c_t[0] = self.lstm_layers[0](inputs, (h_t[0], c_t[0]))
             for l in range(1, self.n_layers):
                 h_t[l], c_t[l] = self.lstm_layers[l](h_t[l-1], (h_t[l], c_t[l]))
@@ -1180,11 +1263,10 @@ class MLP(torch.nn.Module):
     Standard MLP mapping concatenated features of all nodes at time t to migration intensities
     of all nodes at time t
     """
-    # def __init__(self, in_channels, hidden_channels, out_channels, horizon, n_layers=1, dropout_p=0.5):
+
     def __init__(self, **kwargs):
         super(MLP, self).__init__()
 
-        # torch.manual_seed(seed)
         in_channels = kwargs.get('n_env') + kwargs.get('coord_dim', 2)
         hidden_channels = kwargs.get('n_hidden', 64)
         out_channels = kwargs.get('out_channels', 1)
@@ -1247,8 +1329,6 @@ class LocalMLP(torch.nn.Module):
         self.force_zeros = kwargs.get('force_zeros', False)
 
         self.n_in = n_env + coord_dim + self.use_acc * 2
-
-        # torch.manual_seed(kwargs.get('seed', 1234))
 
         self.fc_in = torch.nn.Linear(self.n_in, self.n_hidden)
         self.fc_hidden = nn.ModuleList([torch.nn.Linear(self.n_hidden, self.n_hidden)
