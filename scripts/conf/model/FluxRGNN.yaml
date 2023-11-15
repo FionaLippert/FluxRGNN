@@ -88,6 +88,22 @@ source_sink_model:
   dropout_p: ${model.dropout_p}
 
 
+initial_model:
+  _target_: fluxrgnn.models.InitialState
+  node_features:
+    coords: ${model.coord_dim}
+  dynamic_features:
+    env: ${model.n_env}
+  n_hidden: ${model.n_hidden}
+  n_fc_layers: 1
+  activation:
+    _target_: torch.nn.ReLU
+  use_log_transform: ${model.use_log_transform}
+  log_offset: ${model.log_offset}
+  scale: ${model.scale}
+  dropout_p: ${model.dropout_p}
+
+
 #dynamics:
 #  _target_: fluxrgnn.models.FluxRGNNTransition
 #  n_hidden: ${model.n_hidden}
@@ -113,8 +129,8 @@ encoder:
     coords: ${model.coord_dim}
   dynamic_features:
     env: ${model.n_env}
-    bird_uv: 2
-    x: 1
+#    bird_uv: 2
+#    x: 1
 
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation

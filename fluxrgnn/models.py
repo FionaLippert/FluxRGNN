@@ -281,13 +281,14 @@ class FluxRGNN(ForecastModel):
     """
 
     def __init__(self, decoder, flux_model=None, source_sink_model=None,
-                 encoder=None, boundary_model=None, ground_model=None, **kwargs):
+                 encoder=None, boundary_model=None, initial_model=None, **kwargs):
         """
         Initialize FluxRGNN and all its components.
 
         :param dynamics: transition model (e.g. FluxRGNNTransition, LSTMTransition or Persistence)
         :param encoder: encoder model (e.g. RecurrentEncoder)
         :param boundary_model: model handling boundary cells (e.g. Extrapolation)
+        :param initial_model: model predicting the initial state
         """
 
         super(FluxRGNN, self).__init__(**kwargs)
@@ -297,13 +298,10 @@ class FluxRGNN(ForecastModel):
         self.flux_model = flux_model
         self.source_sink_model = source_sink_model
         self.boundary_model = boundary_model
-        self.ground_model = ground_model
+        self.initial_model = initial_model
 
 
     def initialize(self, data):
-
-        # initial system state
-        x = data.x[..., self.t_context - 1].view(-1, 1)
 
         # TODO: use separate topographical / location embedding model whose output is fed to all other model components?
 
@@ -311,9 +309,9 @@ class FluxRGNN(ForecastModel):
             # push context timeseries through encoder to initialize decoder
             h_t, c_t = self.encoder(data)
         else:
-            h_t = [torch.zeros(data.x.size(0), self.decoder.n_hidden, device=data.device) for
+            h_t = [torch.zeros(data.num_nodes, self.decoder.n_hidden, device=data.edge_index.device) for
                    _ in range(self.decoder.n_lstm_layers)]
-            c_t = [torch.zeros(data.x.size(0), self.decoder.n_hidden, device=data.device) for
+            c_t = [torch.zeros(data.num_nodes, self.decoder.n_hidden, device=data.edge_index.device) for
                    _ in range(self.decoder.n_lstm_layers)]
 
         self.decoder.initialize(h_t, c_t)
@@ -326,18 +324,24 @@ class FluxRGNN(ForecastModel):
 
         # relevant info for later
         if not self.training:
-            self.edge_fluxes = torch.zeros((data.edge_index.size(1), 1, self.horizon), device=x.device)
-            self.node_flux = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
-            self.node_sink = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
-            self.node_source = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
+            self.edge_fluxes = torch.zeros((data.edge_index.size(1), 1, self.horizon), device=data.edge_index.device)
+            self.node_flux = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
+            self.node_sink = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
+            self.node_source = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
+
+        # initial system state
+        if self.initial_model is not None:
+            x = self.initial_model(h_t[-1], data, self.t_context - 1)
+        else:
+            x = data.x[..., self.t_context - 1].view(-1, 1)
 
         model_states = {'x': x,
                         'hidden': h_t[-1],
                         'boundary_nodes': data.boundary.view(-1, 1),
                         'inner_nodes': torch.logical_not(data.boundary).view(-1, 1)}
 
-        if self.ground_model is not None:
-            model_states['ground_states'] = self.ground_model(h_t)
+        # if self.ground_model is not None:
+        #     model_states['ground_states'] = self.ground_model(h_t)
 
         return model_states
 
@@ -767,7 +771,7 @@ class SourceSink(torch.nn.Module):
     Predict source and sink terms for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, node_features, dynamic_features, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -777,8 +781,8 @@ class SourceSink(torch.nn.Module):
 
         super(SourceSink, self).__init__()
 
-        self.node_features = kwargs.get('node_features')
-        self.dynamic_features = kwargs.get('dynamic_features')
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
 
         n_node_in = sum(self.node_features.values()) + \
                     sum(self.dynamic_features.values()) + \
@@ -878,6 +882,67 @@ class SourceSink(torch.nn.Module):
             self.node_sink = raw_sink  # birds/km2 landing in cell i
 
         return delta
+
+
+class InitialState(torch.nn.Module):
+    """
+    Predict initial bird densities for all cells based on encoder hidden states.
+    """
+
+    def __init__(self, node_features, dynamic_features, **kwargs):
+        """
+        Initialize InitialState module.
+
+        :param node_features: tensor containing all static node features
+        :param dynamic_features: tensor containing all dynamic node features
+        """
+
+        super(InitialState, self).__init__()
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(self.node_features.values()) + \
+                    sum(self.dynamic_features.values()) + \
+                    kwargs.get('n_hidden')
+
+        self.mlp = MLP(n_node_in, 1, **kwargs)
+
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+
+        if self.use_log_transform:
+            self.zero_value = np.log(self.log_offset) * self.scale
+        else:
+            self.zero_value = 0
+
+
+    def forward(self, hidden, graph_data, t):
+        """
+        Predict initial bird densities.
+
+        :return hidden: updated hidden states for all cells and time points
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index of first forecasting step
+        """
+
+        # static graph features
+        node_features = torch.cat([graph_data.get(feature).reshape(graph_data.num_nodes, -1) for
+                                          feature in self.node_features], dim=1)
+
+        # dynamic features for current and previous time step
+        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(graph_data.num_nodes, -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+        inputs = torch.cat([node_features, dynamic_features_t0, hidden], dim=1)
+
+        x0 = self.mlp(inputs)
+
+        if self.use_log_transform:
+            return torch.clamp(x0, min=self.zero_value)
+        else:
+            return x0.pow(2)
 
 
 
@@ -1474,7 +1539,6 @@ class RecurrentEncoder(torch.nn.Module):
         self.n_hidden = kwargs.get('n_hidden', 64)
         self.n_lstm_layers = kwargs.get('n_lstm_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
-        self.use_uv = kwargs.get('use_uv', False)
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
