@@ -10,7 +10,6 @@ n_env: ${len:${datasource.env_vars}}
 n_hidden: 128
 #n_fc_layers: 2
 #n_lstm_layers: 1
-n_graph_layers: 0
 
 context: 24
 horizon: 48
@@ -42,13 +41,10 @@ scale: 1.0
 
 regularizer_weight: 0.1
 
-dynamics:
-  _target_: fluxrgnn.models.FluxRGNNTransition
+decoder:
+  _target_: fluxrgnn.models.RecurrentDecoder
   n_hidden: ${model.n_hidden}
-  n_fc_layers: 2
   n_lstm_layers: 1
-  use_encoder: ${model.use_encoder}
-  use_log_transform: ${model.use_log_transform}
   dropout_p: ${model.dropout_p}
   node_features:
     coords: ${model.coord_dim}
@@ -57,9 +53,58 @@ dynamics:
   dynamic_features:
     env: ${model.n_env}
 
+flux_model:
+  _target_: fluxrgnn.models.Fluxes
+  node_features:
+    coords: ${model.coord_dim}
+  edge_features:
+    edge_attr: ${model.n_edge_attr}
+  dynamic_features:
+    env: ${model.n_env}
+  n_hidden: ${model.n_hidden}
+  n_fc_layers: 2
+  n_graph_layers: 0
+  activation:
+    _target_: torch.nn.ReLU
+  use_log_transform: ${model.use_log_transform}
+  log_offset: ${model.log_offset}
+  scale: ${model.scale}
+  dropout_p: ${model.dropout_p}
+
+
+source_sink_model:
+  _target_: fluxrgnn.models.SourceSink
+  node_features:
+    coords: ${model.coord_dim}
+  dynamic_features:
+    env: ${model.n_env}
+  n_hidden: ${model.n_hidden}
+  n_fc_layers: 1
+  activation:
+    _target_: torch.nn.ReLU
+  use_log_transform: ${model.use_log_transform}
+  log_offset: ${model.log_offset}
+  scale: ${model.scale}
+  dropout_p: ${model.dropout_p}
+
+
+#dynamics:
+#  _target_: fluxrgnn.models.FluxRGNNTransition
+#  n_hidden: ${model.n_hidden}
+#  n_fc_layers: 2
+#  n_lstm_layers: 1
+#  use_encoder: ${model.use_encoder}
+#  use_log_transform: ${model.use_log_transform}
+#  dropout_p: ${model.dropout_p}
+#  node_features:
+#    coords: ${model.coord_dim}
+#  edge_features:
+#    edge_attr: ${model.n_edge_attr}
+#  dynamic_features:
+#    env: ${model.n_env}
+
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
-#  n_node_in: ${sum:[${model.n_env}, ${model.coord_dim}, 2]}
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_lstm_layers: 1

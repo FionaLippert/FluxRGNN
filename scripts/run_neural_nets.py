@@ -31,6 +31,10 @@ MODEL_MAPPING = {'LocalMLP': LocalMLP,
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+# trade precision for performance
+torch.set_float32_matmul_precision('medium')
+
+
 @hydra.main(config_path="conf", config_name="config")
 def run(cfg: DictConfig):
     """
@@ -41,9 +45,6 @@ def run(cfg: DictConfig):
     :param log: log file
     """
     os.makedirs(cfg.output_dir, exist_ok=True)
-
-    # use CUDA tensor cores to trade precision for performance
-    torch.set_float32_matmul_precision('medium')
 
     trainer = instantiate(cfg.trainer)
 
@@ -110,7 +111,8 @@ def load_training_data(cfg):
     transform = get_transform(cfg)
     data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
                                    transform=transform)[0]
-    print(f'data min, max = {data[0].y.min()}, {data[0].y.max()}')
+    print(data[0])
+    # print(f'data min, max = {data[0].y.min()}, {data[0].y.max()}')
 
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
@@ -125,6 +127,8 @@ def load_training_data(cfg):
         print(f'total number of sequences = {n_data}')
         print(f'number of training sequences = {n_train}')
         print(f'number of validation sequences = {n_val}')
+
+    # TODO: use a consecutive chunk as validation data instead of random sequences
 
     train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
     train_loader = instantiate(cfg.dataloader, train_data)
@@ -180,7 +184,6 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     transform = get_transform(cfg)
     test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
     test_data = test_data[0]
-    print(f'data min, max = {test_data.y.min()}, {test_data.y.max()}')
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 

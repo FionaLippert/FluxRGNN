@@ -130,8 +130,10 @@ class ForecastModel(pl.LightningModule):
             else:
                 self.test_results[m] = [values]
 
-        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
-        mask = torch.logical_not(batch.missing[:, self.t_context: self.t_context + self.horizon])
+        # gt = batch.y[:, self.t_context: self.t_context + self.horizon]
+        # mask = torch.logical_not(batch.missing[:, self.t_context: self.t_context + self.horizon])
+        gt = batch.y
+        mask = torch.logical_not(batch.missing)
         self.test_gt.append(gt)
         self.test_predictions.append(prediction)
         self.test_masks.append(mask)
@@ -278,7 +280,8 @@ class FluxRGNN(ForecastModel):
     on the Voronoi tesselation of sensor network sites.
     """
 
-    def __init__(self, dynamics, encoder=None, boundary_model=None, **kwargs):
+    def __init__(self, decoder, flux_model=None, source_sink_model=None,
+                 encoder=None, boundary_model=None, ground_model=None, **kwargs):
         """
         Initialize FluxRGNN and all its components.
 
@@ -289,16 +292,12 @@ class FluxRGNN(ForecastModel):
 
         super(FluxRGNN, self).__init__(**kwargs)
 
-        self.use_encoder = kwargs.get('use_encoder', True)
-        self.use_boundary_model = kwargs.get('use_boundary_model', True)
-        self.n_graph_layers = kwargs.get('n_graph_layers', 0)
-
-        self.dynamics = dynamics
-
-        if self.use_encoder and encoder is not None:
-            self.encoder = encoder
-        if self.use_boundary_model and boundary_model is not None:
-            self.boundary_model = boundary_model
+        self.encoder = encoder
+        self.decoder = decoder
+        self.flux_model = flux_model
+        self.source_sink_model = source_sink_model
+        self.boundary_model = boundary_model
+        self.ground_model = ground_model
 
 
     def initialize(self, data):
@@ -306,17 +305,23 @@ class FluxRGNN(ForecastModel):
         # initial system state
         x = data.x[..., self.t_context - 1].view(-1, 1)
 
-        if hasattr(self, 'encoder'):
+        # TODO: use separate topographical / location embedding model whose output is fed to all other model components?
+
+        if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
             h_t, c_t = self.encoder(data)
         else:
-            h_t, c_t = None, None
+            h_t = [torch.zeros(data.x.size(0), self.decoder.n_hidden, device=data.device) for
+                   _ in range(self.decoder.n_lstm_layers)]
+            c_t = [torch.zeros(data.x.size(0), self.decoder.n_hidden, device=data.device) for
+                   _ in range(self.decoder.n_lstm_layers)]
 
-        self.dynamics.initialize(data, h_t, c_t)
+        self.decoder.initialize(h_t, c_t)
+
         self.deltas = []
 
         # setup model components
-        if hasattr(self, 'boundary_model'):
+        if self.boundary_model is not None:
             self.boundary_model.initialize(data)
 
         # relevant info for later
@@ -325,12 +330,14 @@ class FluxRGNN(ForecastModel):
             self.node_flux = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
             self.node_sink = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
             self.node_source = torch.zeros((data.x.size(0), 1, self.horizon), device=x.device)
-            # self.node_fluxes = torch.zeros((data.x.size(0), 1, self.horizon), device=data.device)
 
         model_states = {'x': x,
                         'hidden': h_t[-1],
                         'boundary_nodes': data.boundary.view(-1, 1),
                         'inner_nodes': torch.logical_not(data.boundary).view(-1, 1)}
+
+        if self.ground_model is not None:
+            model_states['ground_states'] = self.ground_model(h_t)
 
         return model_states
 
@@ -338,28 +345,43 @@ class FluxRGNN(ForecastModel):
 
         x = model_states['x']
         hidden = model_states['hidden']
+        tidx = t - self.t_context
 
-        if hasattr(self, 'boundary_model'):
+        if self.boundary_model is not None:
             x_boundary = self.boundary_model(x)
             h_boundary = self.boundary_model(hidden)
             x = x * model_states['inner_nodes'] + x_boundary * model_states['boundary_nodes']
             hidden = hidden * model_states['inner_nodes'] + h_boundary * model_states['boundary_nodes']
 
 
-        # message passing through graph
-        x, hidden, delta = self.dynamics(x, hidden, graph_data, t)
+        # update hidden states
+        hidden = self.decoder(x, hidden, graph_data, t)
 
-        if not self.training:
-            # save model component outputs
-            tidx = t - self.t_context
+        # predict movements
+        if self.flux_model is not None:
 
-            if hasattr(self.dynamics, 'node_source') and hasattr(self.dynamics, 'node_sink'):
-                self.node_source[..., tidx] = self.dynamics.node_source
-                self.node_sink[..., tidx] = self.dynamics.node_sink
+            # predict fluxes between neighboring cells
+            net_flux = self.flux_model(x, hidden, graph_data, t)
+            x = x + net_flux
 
-            if hasattr(self.dynamics, 'edge_fluxes') and hasattr(self.dynamics, 'node_flux'):
-                self.edge_fluxes[..., tidx] = self.dynamics.edge_fluxes
-                self.node_flux[..., tidx] = self.dynamics.node_flux
+            if not self.training:
+                # save model component outputs
+                self.edge_fluxes[..., tidx] = self.flux_model.edge_fluxes
+                self.node_flux[..., tidx] = self.flux_model.node_flux
+
+        if self.source_sink_model is not None:
+
+            # predict local source/sink terms
+            delta = self.source_sink_model(x, hidden, graph_data, t,
+                                           ground_states=model_states.get('ground_states', None))
+            x = x + delta
+
+            if not self.training:
+                # save model component outputs
+                self.node_source[..., tidx] = self.source_sink_model.node_source
+                self.node_sink[..., tidx] = self.source_sink_model.node_sink
+            else:
+                self.deltas.append(delta)
 
         if self.config.get('force_zeros', False):
             x = x * graph_data.local_night[..., t]
@@ -367,18 +389,16 @@ class FluxRGNN(ForecastModel):
         
         model_states['x'] = x
         model_states['hidden'] = hidden
-        model_states['delta'] = delta
-
-        if self.training:
-            self.deltas.append(delta)
 
         return model_states
 
     def _regularizer(self):
-        
-        deltas = torch.cat(self.deltas, dim=0)
-        # penalty = torch.linalg.vector_norm(deltas)
-        penalty = deltas.pow(2).mean()
+
+        if len(self.deltas) > 0:
+            deltas = torch.cat(self.deltas, dim=0)
+            penalty = deltas.pow(2).mean()
+        else:
+            penalty = 0
 
         return penalty
 
@@ -502,19 +522,19 @@ class NodeMLP(torch.nn.Module):
         return x
 
 
-class Persistence(torch.nn.Module):
-
-    def __init__(self):
-
-        super(Persistence, self).__init__()
-
-    def initialize(self, *args):
-
-        return None
-
-    def forward(self, data, x, hidden, *args, **kwargs):
-
-        return x, hidden
+# class Persistence(torch.nn.Module):
+#
+#     def __init__(self):
+#
+#         super(Persistence, self).__init__()
+#
+#     def initialize(self, *args):
+#
+#         return None
+#
+#     def forward(self, data, x, hidden, *args, **kwargs):
+#
+#         return x, hidden
 
 
 class SeasonalityForecast(ForecastModel):
@@ -548,13 +568,74 @@ class SeasonalityForecast(ForecastModel):
         return None
 
 
-class Dynamics(MessagePassing):
+# class Dynamics(MessagePassing):
+#
+#     def __init__(self, **kwargs):
+#         super(Dynamics, self).__init__(aggr='add', node_dim=0)
+#
+#         self.use_log_transform = kwargs.get('use_log_transform', False)
+#
+#         self.scale = kwargs.get('scale', 1.0)
+#         self.log_offset = kwargs.get('log_offset', 1e-8)
+#
+#     def to_raw(self, values):
+#
+#         if self.use_log_transform:
+#             log = values / self.scale
+#             raw = torch.exp(log) - self.log_offset
+#         else:
+#             raw = values / self.scale
+#
+#         return raw
+#
+#     def to_log(self, values):
+#
+#         if self.use_log_transform:
+#             log = values / self.scale
+#         else:
+#             raw = values / self.scale
+#             log = torch.log(raw + self.log_offset)
+#
+#         return log
+#
+#     def initialize(self, data, *args):
+#         pass
+#
+#     def forward(self, x, hidden, graph_data, t):
+#         raise NotImplementedError
 
-    def __init__(self, **kwargs):
-        super(Dynamics, self).__init__(aggr='add', node_dim=0)
-        
+
+class Fluxes(MessagePassing):
+    """
+    Predicts fluxes for time step t -> t+1, given previous predictions and hidden states.
+    """
+
+    def __init__(self, node_features, edge_features, dynamic_features, **kwargs):
+        """
+        Initialize Fluxes.
+
+        :param node_features: tensor containing all static node features
+        :param edge_features: tensor containing all static edge features
+        :param dynamic_features: tensor containing all dynamic node features
+        :param n_graph_layers: number of graph NN layers to use for hidden representations
+        """
+
+        super(Fluxes, self).__init__(aggr='add', node_dim=0)
+
+        self.node_features = node_features
+        self.edge_features = edge_features
+        self.dynamic_features = dynamic_features
+
+        n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
+
+        # setup model components
+        # self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
+        self.edge_mlp = MLP(n_edge_in + kwargs.get('n_hidden'), 1, **kwargs)
+        n_graph_layers = kwargs.get('n_graph_layers', 0)
+        self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
+
         self.use_log_transform = kwargs.get('use_log_transform', False)
-        
+
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
 
@@ -578,60 +659,10 @@ class Dynamics(MessagePassing):
 
         return log
 
-    def initialize(self, data, *args):
-        pass
-
-    def forward(self, x, hidden, graph_data, t):
-        raise NotImplementedError
-
-class FluxRGNNTransition(Dynamics):
-    """
-    Implements a single FluxRGNN transition from t to t+1, given the previous predictions and hidden states.
-    """
-
-    def __init__(self, node_features, edge_features, dynamic_features,
-                 n_graph_layers=0, **kwargs):
-        """
-        Initialize FluxRGNNTransition.
-
-        :param node_features: tensor containing all static node features
-        :param edge_features: tensor containing all static edge features
-        :param dynamic_features: tensor containing all dynamic node features
-        :param n_graph_layers: number of graph NN layers to use for hidden representations
-        """
-
-        super(FluxRGNNTransition, self).__init__(**kwargs)
-
-        self.node_features = node_features
-        self.edge_features = edge_features
-        self.dynamic_features = dynamic_features
-
-        # self.use_log_transform = kwargs.get('use_log_transform', False)
-
-        n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
-        n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
-
-        # setup model components
-        self.node_lstm = NodeLSTM(n_node_in, **kwargs)
-        self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
-        self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
-        self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
-
-    def initialize(self, data, h_t, c_t):
-
-        if h_t is None or c_t is None:
-            # start with all zeros
-            h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
-            c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
-
-        self.node_lstm.setup_states(h_t, c_t)
-
 
     def forward(self, x, hidden, graph_data, t):
         """
-        Run FluxRGNN prediction for one time step.
+        Predict fluxes for one time step.
 
         :return x: predicted migration intensities for all cells and time points
         :return hidden: updated hidden states for all cells and time points
@@ -646,29 +677,37 @@ class FluxRGNNTransition(Dynamics):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                          feature in self.node_features], dim=1)
+                                   feature in self.node_features], dim=1)
         edge_features = torch.cat([graph_data.get(feature).reshape(graph_data.edge_index.size(1), -1) for
                                    feature in self.edge_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
-        dynamic_features_t1 = torch.cat([graph_data.get(feature)[..., t-1].reshape(x.size(0), -1) for
+        dynamic_features_t1 = torch.cat([graph_data.get(feature)[..., t - 1].reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
         # message passing through graph
-        x, hidden, delta = self.propagate(graph_data.edge_index,
-                                   reverse_edges=graph_data.reverse_edges,
-                                   x=x,
-                                   hidden=hidden,
-                                   hidden_sp=hidden_sp,
-                                   node_features=node_features,
-                                   edge_features=edge_features,
-                                   dynamic_features_t0=dynamic_features_t0,
-                                   dynamic_features_t1=dynamic_features_t1,
-                                   areas=graph_data.areas)
+        net_flux = self.propagate(graph_data.edge_index,
+                                          reverse_edges=graph_data.reverse_edges,
+                                          x=x,
+                                          hidden=hidden,
+                                          hidden_sp=hidden_sp,
+                                          node_features=node_features,
+                                          edge_features=edge_features,
+                                          dynamic_features_t0=dynamic_features_t0,
+                                          dynamic_features_t1=dynamic_features_t1,
+                                          areas=graph_data.areas)
 
-        return x, hidden, delta
+        if self.use_log_transform:
+            raw_net_flux = self.to_raw(x) * net_flux
+        else:
+            raw_net_flux = self.to_raw(net_flux)
+
+        if not self.training:
+            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+
+        return net_flux
 
 
     def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
@@ -688,12 +727,15 @@ class FluxRGNNTransition(Dynamics):
         :return: edge fluxes with shape [#edges, 1]
         """
 
-        inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
+        # inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
+        inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features, hidden_sp_j]
         inputs = torch.cat(inputs, dim=1)
 
         # total flux from cell j to cell i
         # TODO: use relative face length as input (face length / total cell boundary)
-        flux = self.edge_mlp(inputs, hidden_sp_j)
+        # flux = self.edge_mlp(inputs, hidden_sp_j)
+        flux = self.edge_mlp(inputs)
+        flux = torch.tanh(flux).pow(2)  # between 0 and 1, with initial random outputs close to 0
 
         # TODO: add flux for self-edges and then use pytorch_geometric.utils.softmax(flux, edge_index[0])
         #  to make sure that mass is conserved
@@ -710,7 +752,7 @@ class FluxRGNNTransition(Dynamics):
         else:
             in_flux = flux * x_j * areas_j.view(-1, 1)
             out_flux = in_flux[reverse_edges]
-            net_flux = (in_flux - out_flux) / areas_i.view(-1, 1) # net influx into cell i per km2
+            net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
             raw_net_flux = self.to_raw(in_flux - out_flux)
 
         if not self.training:
@@ -719,128 +761,435 @@ class FluxRGNNTransition(Dynamics):
         return net_flux.view(-1, 1)
 
 
-    def update(self, aggr_out, x, node_features, dynamic_features_t0, areas):
-        """
-        Aggregate all received messages (fluxes) and combine them with local source/sink
-        terms into a single prediction per node.
 
-        :param aggr_out: sum of incoming messages (fluxes)
-        :param x: local densities from previous time step
-        :param node_features: tensor containing all static node features
-        :param dynamic_features_t0: tensor containing all dynamic node features
-        :param areas: Voronoi cell areas
-        :return: prediction and updated hidden states for all nodes
-        """
-
-        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
-
-        hidden = self.node_lstm(inputs)
-        source, sink = self.source_sink_mlp(hidden, inputs)
-
-        if self.use_log_transform:
-            # both source and sink are fractions (total source/sink divided by current density x)
-            delta = source - sink
-            raw_x = self.to_raw(x)
-            raw_source = raw_x * source
-            raw_sink = raw_x * sink
-            raw_node_flux = raw_x * aggr_out
-        else:
-            # source is the total density while sink is a fraction
-            delta = source - sink * x
-            raw_source = self.to_raw(source)
-            raw_sink = self.node_sink = self.to_raw(x) * sink
-            raw_node_flux = aggr_out
-
-        if not self.training:
-            self.node_source = raw_source  # birds/km2 taking-off in cell i
-            self.node_sink = raw_sink  # birds/km2 landing in cell i
-            self.node_flux = raw_node_flux # birds/km2 flying in/out of cell i
-
-        influx = aggr_out
-
-        pred = x + delta + influx
-
-        return pred, hidden, delta
-
-
-class LSTMTransition(Dynamics):
+class SourceSink(torch.nn.Module):
     """
-    Implements a single LSTM transition from t to t+1, given the previous predictions and hidden states.
+    Predict source and sink terms for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, node_features, dynamic_features, *args, **kwargs):
+    def __init__(self, **kwargs):
         """
-        Initialize LSTMransition.
+        Initialize RecurrentDecoder module.
 
         :param node_features: tensor containing all static node features
         :param dynamic_features: tensor containing all dynamic node features
         """
 
-        super(LSTMTransition, self).__init__(**kwargs)
+        super(SourceSink, self).__init__()
+
+        self.node_features = kwargs.get('node_features')
+        self.dynamic_features = kwargs.get('dynamic_features')
+
+        n_node_in = sum(self.node_features.values()) + \
+                    sum(self.dynamic_features.values()) + \
+                    1 + kwargs.get('n_hidden')
+
+        # setup model components
+        # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+        # self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
+        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+
+    def to_raw(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+            raw = torch.exp(log) - self.log_offset
+        else:
+            raw = values / self.scale
+
+        return raw
+
+    def to_log(self, values):
+
+        if self.use_log_transform:
+            log = values / self.scale
+        else:
+            raw = values / self.scale
+            log = torch.log(raw + self.log_offset)
+
+        return log
+
+
+    def forward(self, x, hidden, graph_data, t, ground_states=None):
+        """
+        Predict source and sink terms for one time step.
+
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index
+        :param ground_states: estimates of birds on the ground
+        """
+
+        # static graph features
+        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
+                                          feature in self.node_features], dim=1)
+
+        # dynamic features for current and previous time step
+        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
+        inputs = torch.cat([hidden, inputs], dim=1)
+
+        # hidden = self.node_lstm(inputs)
+        # source, sink = self.source_sink_mlp(hidden, inputs)
+        source_sink = self.source_sink_mlp(inputs)
+
+        if ground_states is None:
+            # total density of birds taking off (must be positive)
+            source = source_sink[:, 0].view(-1, 1).pow(2)
+        else:
+            # fraction of birds taking off (between 0 and 1, with initial random outputs close to 0)
+            frac_source = torch.tanh(source_sink[:, 0].view(-1, 1)).pow(2)
+
+        # fraction of birds landing (between 0 and 1, with initial random outputs close to 0)
+        frac_sink = torch.tanh(source_sink[:, 1].view(-1, 1)).pow(2)
+
+
+        if self.use_log_transform:
+            # both source and sink are fractions (total source/sink divided by current density x)
+            if ground_states is not None:
+                source = frac_source * torch.exp(ground_states) / torch.exp(x)
+                ground_states = ground_states - frac_source + frac_sink * torch.exp(x) / torch.exp(ground_states)
+
+            delta = source - frac_sink
+            raw_x = self.to_raw(x)
+            # TODO: make sure this conversion is correct
+            raw_source = raw_x * source
+            raw_sink = raw_x * frac_sink
+        else:
+            # source is the total density while sink is a fraction
+            sink = frac_sink * x
+            if ground_states is not None:
+                source = frac_source * ground_states
+                ground_states = ground_states - source + sink
+            delta = source - sink
+            raw_source = self.to_raw(source)
+            raw_sink = self.to_raw(sink)
+
+        if not self.training:
+            self.node_source = raw_source  # birds/km2 taking-off in cell i
+            self.node_sink = raw_sink  # birds/km2 landing in cell i
+
+        return delta
+
+
+
+class RecurrentDecoder(torch.nn.Module):
+    """
+    Recurrent neural network predicting the hidden states during forecasting.
+    """
+
+    def __init__(self, node_features, dynamic_features, **kwargs):
+        """
+        Initialize RecurrentDecoder module.
+
+        :param node_features: tensor containing all static node features
+        :param dynamic_features: tensor containing all dynamic node features
+        """
+
+        super(RecurrentDecoder, self).__init__()
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
 
         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
 
-        # setup model components
         self.node_lstm = NodeLSTM(n_node_in, **kwargs)
-        self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
 
-
-    def initialize(self, data, h_t, c_t):
-        if h_t is None or c_t is None:
-            # start with all zeros
-            h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
-            c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
-                   _ in range(self.node_lstm.n_lstm_layers)]
+    def initialize(self, h_t, c_t):
 
         self.node_lstm.setup_states(h_t, c_t)
 
 
     def forward(self, x, hidden, graph_data, t):
         """
-        Run LSTM prediction for one time step.
+        Predict next hidden state.
 
         :return x: predicted migration intensities for all cells and time points
         :return hidden: updated hidden states for all cells and time points
-        :param graph_data: SensorData instance containing information on static and dynamic features for one time sequence
+        :param graph_data: SensorData instance containing information on static and dynamic features
         :param t: time index
         """
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                   feature in self.node_features], dim=1)
+                                          feature in self.node_features], dim=1)
 
-        # dynamic features for current time step
-        dynamic_features = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
-                                      feature in self.dynamic_features], dim=1)
+        # dynamic features for current and previous time step
+        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+                                         feature in self.dynamic_features], dim=1)
 
-        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features], dim=1)
+        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
 
         hidden = self.node_lstm(inputs)
-        source, sink = self.source_sink_mlp(hidden, inputs)
-        
-        if self.use_log_transform:
-            # both source and sink are fractions (total source/sink divided by current density x)
-            delta = source - sink
-            raw_source = self.to_raw(x) * source
-            raw_sink = self.to_raw(x) * sink
-        else:
-            # source is the total density while sink is a fraction
-            delta = source - sink * x
-            raw_source = self.to_raw(source)
-            raw_sink = self.node_sink = self.to_raw(x) * sink
 
-        if not self.training:
-            self.node_source = raw_source  # birds/km2 taking-off in cell i
-            self.node_sink = raw_sink  # birds/km2 landing in cell i
+        return hidden
 
-        x = x + delta
 
-        
-        return x, hidden, delta
+
+# class FluxRGNNTransition(Dynamics):
+#     """
+#     Implements a single FluxRGNN transition from t to t+1, given the previous predictions and hidden states.
+#     """
+#
+#     def __init__(self, node_features, edge_features, dynamic_features,
+#                  n_graph_layers=0, **kwargs):
+#         """
+#         Initialize FluxRGNNTransition.
+#
+#         :param node_features: tensor containing all static node features
+#         :param edge_features: tensor containing all static edge features
+#         :param dynamic_features: tensor containing all dynamic node features
+#         :param n_graph_layers: number of graph NN layers to use for hidden representations
+#         """
+#
+#         super(FluxRGNNTransition, self).__init__(**kwargs)
+#
+#         self.node_features = node_features
+#         self.edge_features = edge_features
+#         self.dynamic_features = dynamic_features
+#
+#         # self.use_log_transform = kwargs.get('use_log_transform', False)
+#
+#         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
+#         n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
+#
+#         # setup model components
+#         self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+#         self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
+#         self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
+#         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
+#
+#     def initialize(self, data, h_t, c_t):
+#
+#         if h_t is None or c_t is None:
+#             # start with all zeros
+#             h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
+#                    _ in range(self.node_lstm.n_lstm_layers)]
+#             c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
+#                    _ in range(self.node_lstm.n_lstm_layers)]
+#
+#         self.node_lstm.setup_states(h_t, c_t)
+#
+#     def forward(self, x, hidden, graph_data, t):
+#         """
+#         Run FluxRGNN prediction for one time step.
+#
+#         :return x: predicted migration intensities for all cells and time points
+#         :return hidden: updated hidden states for all cells and time points
+#         :param graph_data: SensorData instance containing information on static and dynamic features
+#         :param t: time index
+#         """
+#
+#         # propagate hidden states through graph to combine spatial information
+#         hidden_sp = hidden
+#         for layer in self.graph_layers:
+#             hidden_sp = layer([graph_data.edge_index, hidden_sp])
+#
+#         # static graph features
+#         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
+#                                    feature in self.node_features], dim=1)
+#         edge_features = torch.cat([graph_data.get(feature).reshape(graph_data.edge_index.size(1), -1) for
+#                                    feature in self.edge_features], dim=1)
+#
+#         # dynamic features for current and previous time step
+#         dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+#                                          feature in self.dynamic_features], dim=1)
+#         dynamic_features_t1 = torch.cat([graph_data.get(feature)[..., t - 1].reshape(x.size(0), -1) for
+#                                          feature in self.dynamic_features], dim=1)
+#
+#         # message passing through graph
+#         x, hidden, delta = self.propagate(graph_data.edge_index,
+#                                           reverse_edges=graph_data.reverse_edges,
+#                                           x=x,
+#                                           hidden=hidden,
+#                                           hidden_sp=hidden_sp,
+#                                           node_features=node_features,
+#                                           edge_features=edge_features,
+#                                           dynamic_features_t0=dynamic_features_t0,
+#                                           dynamic_features_t1=dynamic_features_t1,
+#                                           areas=graph_data.areas)
+#
+#         return x, hidden, delta
+#
+#     def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
+#                 edge_features, reverse_edges, areas_i, areas_j):
+#         """
+#         Construct message from node j to node i (for all edges in parallel)
+#
+#         :param x_i: features of nodes i with shape [#edges, #node_features]
+#         :param x_j: features of nodes j with shape [#edges, #node_features]
+#         :param hidden_sp_j: hidden features of nodes j with shape [#edges, #hidden_features]
+#         :param dynamic_features_t0_i: dynamic features for nodes i with shape [#edges, #features]
+#         :param dynamic_features_t1_j: dynamic features for nodes j from the previous time step with shape [#edges, #features]
+#         :param edge_features: edge attributes for edges (j->i) with shape [#edges, #features]
+#         :param reverse_edges: edge index for reverse edges (i->j)
+#         :param areas_i: Voronoi cell areas for nodes i
+#         :param areas_j: Voronoi cell areas for nodes j
+#         :return: edge fluxes with shape [#edges, 1]
+#         """
+#
+#         inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
+#         inputs = torch.cat(inputs, dim=1)
+#
+#         # total flux from cell j to cell i
+#         # TODO: use relative face length as input (face length / total cell boundary)
+#         flux = self.edge_mlp(inputs, hidden_sp_j)
+#
+#         # TODO: add flux for self-edges and then use pytorch_geometric.utils.softmax(flux, edge_index[0])
+#         #  to make sure that mass is conserved
+#         # flux = flux * x_j * areas_j.view(-1, 1)
+#
+#         if self.use_log_transform:
+#             total_i = torch.exp(x_i) * areas_i.view(-1, 1)
+#             total_j = torch.exp(x_j) * areas_j.view(-1, 1)
+#             in_flux = flux * total_j / total_i
+#             out_flux = flux[reverse_edges]
+#             net_flux = in_flux - out_flux
+#             raw_out_flux = out_flux * self.to_raw(x_i) * areas_i.view(-1, 1)
+#             raw_net_flux = raw_out_flux[reverse_edges] - raw_out_flux
+#         else:
+#             in_flux = flux * x_j * areas_j.view(-1, 1)
+#             out_flux = in_flux[reverse_edges]
+#             net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
+#             raw_net_flux = self.to_raw(in_flux - out_flux)
+#
+#         if not self.training:
+#             self.edge_fluxes = raw_net_flux
+#
+#         return net_flux.view(-1, 1)
+#
+#     def update(self, aggr_out, x, node_features, dynamic_features_t0, areas):
+#         """
+#         Aggregate all received messages (fluxes) and combine them with local source/sink
+#         terms into a single prediction per node.
+#
+#         :param aggr_out: sum of incoming messages (fluxes)
+#         :param x: local densities from previous time step
+#         :param node_features: tensor containing all static node features
+#         :param dynamic_features_t0: tensor containing all dynamic node features
+#         :param areas: Voronoi cell areas
+#         :return: prediction and updated hidden states for all nodes
+#         """
+#
+#         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
+#
+#         hidden = self.node_lstm(inputs)
+#         source, sink = self.source_sink_mlp(hidden, inputs)
+#
+#         if self.use_log_transform:
+#             # both source and sink are fractions (total source/sink divided by current density x)
+#             delta = source - sink
+#             raw_x = self.to_raw(x)
+#             raw_source = raw_x * source
+#             raw_sink = raw_x * sink
+#             raw_node_flux = raw_x * aggr_out
+#         else:
+#             # source is the total density while sink is a fraction
+#             delta = source - sink * x
+#             raw_source = self.to_raw(source)
+#             raw_sink = self.node_sink = self.to_raw(x) * sink
+#             raw_node_flux = aggr_out
+#
+#         if not self.training:
+#             self.node_source = raw_source  # birds/km2 taking-off in cell i
+#             self.node_sink = raw_sink  # birds/km2 landing in cell i
+#             self.node_flux = raw_node_flux  # birds/km2 flying in/out of cell i
+#
+#         influx = aggr_out
+#
+#         pred = x + delta + influx
+#
+#         return pred, hidden, delta
+
+
+
+
+# class LSTMTransition(Dynamics):
+#     """
+#     Implements a single LSTM transition from t to t+1, given the previous predictions and hidden states.
+#     """
+#
+#     def __init__(self, node_features, dynamic_features, *args, **kwargs):
+#         """
+#         Initialize LSTMransition.
+#
+#         :param node_features: tensor containing all static node features
+#         :param dynamic_features: tensor containing all dynamic node features
+#         """
+#
+#         super(LSTMTransition, self).__init__(**kwargs)
+#
+#         self.node_features = node_features
+#         self.dynamic_features = dynamic_features
+#
+#         n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
+#
+#         # setup model components
+#         self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+#         self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
+#
+#
+#     def initialize(self, data, h_t, c_t):
+#         if h_t is None or c_t is None:
+#             # start with all zeros
+#             h_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
+#                    _ in range(self.node_lstm.n_lstm_layers)]
+#             c_t = [torch.zeros(data.x.size(0), self.node_lstm.n_hidden, device=data.device) for
+#                    _ in range(self.node_lstm.n_lstm_layers)]
+#
+#         self.node_lstm.setup_states(h_t, c_t)
+#
+#
+#     def forward(self, x, hidden, graph_data, t):
+#         """
+#         Run LSTM prediction for one time step.
+#
+#         :return x: predicted migration intensities for all cells and time points
+#         :return hidden: updated hidden states for all cells and time points
+#         :param graph_data: SensorData instance containing information on static and dynamic features for one time sequence
+#         :param t: time index
+#         """
+#
+#         # static graph features
+#         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
+#                                    feature in self.node_features], dim=1)
+#
+#         # dynamic features for current time step
+#         dynamic_features = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+#                                       feature in self.dynamic_features], dim=1)
+#
+#         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features], dim=1)
+#
+#         hidden = self.node_lstm(inputs)
+#         source, sink = self.source_sink_mlp(hidden, inputs)
+#
+#         if self.use_log_transform:
+#             # both source and sink are fractions (total source/sink divided by current density x)
+#             delta = source - sink
+#             raw_source = self.to_raw(x) * source
+#             raw_sink = self.to_raw(x) * sink
+#         else:
+#             # source is the total density while sink is a fraction
+#             delta = source - sink * x
+#             raw_source = self.to_raw(source)
+#             raw_sink = self.node_sink = self.to_raw(x) * sink
+#
+#         if not self.training:
+#             self.node_source = raw_source  # birds/km2 taking-off in cell i
+#             self.node_sink = raw_sink  # birds/km2 landing in cell i
+#
+#         x = x + delta
+#
+#
+#         return x, hidden, delta
 
 
 class EdgeFluxMLP(torch.nn.Module):
@@ -875,8 +1224,8 @@ class EdgeFluxMLP(torch.nn.Module):
 
         flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
 
-        for l in self.fc_edge_hidden:
-            flux = F.relu(l(flux))
+        for layer in self.fc_edge_hidden:
+            flux = F.relu(layer(flux))
             flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
 
         # map hidden state to relative flux
@@ -943,6 +1292,49 @@ class DeltaMLP(torch.nn.Module):
         delta = self.hidden2delta(inputs).view(-1, 1)
 
         return delta
+
+
+class MLP(torch.nn.Module):
+    """Simple MLP"""
+
+    def __init__(self, n_in, n_out, activation, **kwargs):
+        super(MLP, self).__init__()
+
+        n_hidden = kwargs.get('n_hidden', 64)
+        n_fc_layers = kwargs.get('n_fc_layers', 1)
+        self.dropout_p = kwargs.get('dropout_p', 0)
+
+        self.activation = activation
+        self.layer_norm = torch.nn.LayerNorm(n_hidden)
+
+        self.input2hidden = torch.nn.Linear(n_in, n_hidden)
+        self.hidden_layers = nn.ModuleList([torch.nn.Linear(n_hidden, n_hidden)
+                                             for _ in range(n_fc_layers - 1)])
+        self.hidden2output = torch.nn.Linear(n_hidden, n_out)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+
+        init_weights(self.input2hidden)
+        self.hidden_layers.apply(init_weights)
+        init_weights(self.hidden2output)
+
+    def forward(self, inputs):
+
+        hidden = self.input2hidden(inputs)
+        hidden = self.layer_norm(hidden)
+        hidden = self.activation(hidden)
+
+        for layer in self.hidden_layers:
+            hidden = layer(hidden)
+            hidden = self.layer_norm(hidden)
+            hidden = self.activation(hidden)
+            hidden = F.dropout(hidden, p=self.dropout_p, training=self.training, inplace=False)
+
+        output = self.hidden2output(hidden)
+
+        return output
 
 
 
@@ -1258,62 +1650,62 @@ class LSTM(torch.nn.Module):
         return torch.stack(y_hat, dim=1)
 
 
-class MLP(torch.nn.Module):
-    """
-    Standard MLP mapping concatenated features of all nodes at time t to migration intensities
-    of all nodes at time t
-    """
-
-    def __init__(self, **kwargs):
-        super(MLP, self).__init__()
-
-        in_channels = kwargs.get('n_env') + kwargs.get('coord_dim', 2)
-        hidden_channels = kwargs.get('n_hidden', 64)
-        out_channels = kwargs.get('out_channels', 1)
-        horizon = kwargs.get('horizon', 1)
-        n_layers = kwargs.get('n_fc_layers', 1)
-        dropout_p = kwargs.get('dropout_p', 0.0)
-
-        self.fc_in = torch.nn.Linear(in_channels, hidden_channels)
-        self.fc_hidden = nn.ModuleList([torch.nn.Linear(hidden_channels, hidden_channels) for _ in range(n_layers - 1)])
-        self.fc_out = torch.nn.Linear(hidden_channels, out_channels)
-        self.horizon = horizon
-        self.dropout_p = dropout_p
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-
-        init_weights(self.fc_in)
-        init_weights(self.fc_out)
-        self.fc_hidden.apply(init_weights)
-
-    def forward(self, data):
-
-        y_hat = []
-        for t in range(self.horizon + 1):
-
-            features = torch.cat([data.coords.flatten(),
-                                  data.env[..., t].flatten()], dim=0)
-            x = self.fc_in(features)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout_p, training=self.training)
-
-            for l in self.fc_hidden:
-                x = l(x)
-                x = F.relu(x)
-                x = F.dropout(x, p=self.dropout_p, training=self.training)
-
-            x = self.fc_out(x)
-            x = x.sigmoid()
-
-            # for locations where it is night: set birds in the air to zero
-            x = x * data.local_night[:, t]
-
-            y_hat.append(x)
-
-        return torch.stack(y_hat, dim=1)
-
+# class MLP(torch.nn.Module):
+#     """
+#     Standard MLP mapping concatenated features of all nodes at time t to migration intensities
+#     of all nodes at time t
+#     """
+#
+#     def __init__(self, **kwargs):
+#         super(MLP, self).__init__()
+#
+#         in_channels = kwargs.get('n_env') + kwargs.get('coord_dim', 2)
+#         hidden_channels = kwargs.get('n_hidden', 64)
+#         out_channels = kwargs.get('out_channels', 1)
+#         horizon = kwargs.get('horizon', 1)
+#         n_layers = kwargs.get('n_fc_layers', 1)
+#         dropout_p = kwargs.get('dropout_p', 0.0)
+#
+#         self.fc_in = torch.nn.Linear(in_channels, hidden_channels)
+#         self.fc_hidden = nn.ModuleList([torch.nn.Linear(hidden_channels, hidden_channels) for _ in range(n_layers - 1)])
+#         self.fc_out = torch.nn.Linear(hidden_channels, out_channels)
+#         self.horizon = horizon
+#         self.dropout_p = dropout_p
+#
+#         self.reset_parameters()
+#
+#     def reset_parameters(self):
+#
+#         init_weights(self.fc_in)
+#         init_weights(self.fc_out)
+#         self.fc_hidden.apply(init_weights)
+#
+#     def forward(self, data):
+#
+#         y_hat = []
+#         for t in range(self.horizon + 1):
+#
+#             features = torch.cat([data.coords.flatten(),
+#                                   data.env[..., t].flatten()], dim=0)
+#             x = self.fc_in(features)
+#             x = F.relu(x)
+#             x = F.dropout(x, p=self.dropout_p, training=self.training)
+#
+#             for l in self.fc_hidden:
+#                 x = l(x)
+#                 x = F.relu(x)
+#                 x = F.dropout(x, p=self.dropout_p, training=self.training)
+#
+#             x = self.fc_out(x)
+#             x = x.sigmoid()
+#
+#             # for locations where it is night: set birds in the air to zero
+#             x = x * data.local_night[:, t]
+#
+#             y_hat.append(x)
+#
+#         return torch.stack(y_hat, dim=1)
+#
 
 class LocalMLP(torch.nn.Module):
     """Standard MLP mapping concatenated features of a single nodes at time t to migration intensities at time t."""
