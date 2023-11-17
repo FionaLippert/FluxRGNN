@@ -633,8 +633,9 @@ class Fluxes(MessagePassing):
         n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
 
         # setup model components
-        # self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
-        self.edge_mlp = MLP(n_edge_in + kwargs.get('n_hidden'), 1, **kwargs)
+        self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
+        #self.input2hidden = torch.nn.Linear(n_edge_in, kwargs.get('n_hidden'), bias=False)
+        #self.edge_mlp = MLP(2 * kwargs.get('n_hidden'), 1, **kwargs)
         n_graph_layers = kwargs.get('n_graph_layers', 0)
         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
 
@@ -731,15 +732,18 @@ class Fluxes(MessagePassing):
         :return: edge fluxes with shape [#edges, 1]
         """
 
-        # inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
-        inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features, hidden_sp_j]
+        inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features]
+        #inputs = [dynamic_features_t0_i, dynamic_features_t1_j, edge_features, hidden_sp_j]
         inputs = torch.cat(inputs, dim=1)
+
+        #embedding = self.input2hidden(inputs)
+        #inputs = torch.cat([embedding, hidden_sp_j], dim=1)
 
         # total flux from cell j to cell i
         # TODO: use relative face length as input (face length / total cell boundary)
-        # flux = self.edge_mlp(inputs, hidden_sp_j)
-        flux = self.edge_mlp(inputs)
-        flux = torch.tanh(flux).pow(2)  # between 0 and 1, with initial random outputs close to 0
+        flux = self.edge_mlp(inputs, hidden_sp_j)
+        #flux = self.edge_mlp(inputs)
+        #flux = torch.tanh(flux).pow(2)  # between 0 and 1, with initial random outputs close to 0
 
         # TODO: add flux for self-edges and then use pytorch_geometric.utils.softmax(flux, edge_index[0])
         #  to make sure that mass is conserved
@@ -790,7 +794,7 @@ class SourceSink(torch.nn.Module):
 
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
-        # self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
+        #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
         self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
@@ -842,7 +846,7 @@ class SourceSink(torch.nn.Module):
         inputs = torch.cat([hidden, inputs], dim=1)
 
         # hidden = self.node_lstm(inputs)
-        # source, sink = self.source_sink_mlp(hidden, inputs)
+        #source, frac_sink = self.source_sink_mlp(hidden, inputs)
         source_sink = self.source_sink_mlp(inputs)
 
         if ground_states is None:
@@ -1267,34 +1271,44 @@ class EdgeFluxMLP(torch.nn.Module):
         self.n_fc_layers = kwargs.get('n_fc_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
+        self.activation = kwargs.get('activation', torch.nn.ReLU())
+
         self.input2hidden = torch.nn.Linear(n_in, self.n_hidden, bias=False)
-        self.fc_edge_in = torch.nn.Linear(self.n_hidden * 2, self.n_hidden)
-        self.fc_edge_hidden = nn.ModuleList([torch.nn.Linear(self.n_hidden, self.n_hidden)
-                                             for _ in range(self.n_fc_layers - 1)])
-        self.hidden2output = torch.nn.Linear(self.n_hidden, 1)
+        #self.fc_edge_in = torch.nn.Linear(self.n_hidden * 2, self.n_hidden)
+        #self.fc_edge_hidden = nn.ModuleList([torch.nn.Linear(self.n_hidden, self.n_hidden)
+        #                                     for _ in range(self.n_fc_layers - 1)])
+        
+        #self.hidden2output = torch.nn.Linear(self.n_hidden, 1)
+
+        self.edge_mlp = MLP(self.n_hidden * 2, 1, **kwargs)
 
         self.reset_parameters()
 
     def reset_parameters(self):
         init_weights(self.input2hidden)
-        init_weights(self.fc_edge_in)
-        self.fc_edge_hidden.apply(init_weights)
-        init_weights(self.hidden2output)
+        #init_weights(self.fc_edge_in)
+        #self.fc_edge_hidden.apply(init_weights)
+        #init_weights(self.hidden2output)
+        #self.edge_mlp.apply(init_weights)
 
     def forward(self, inputs, hidden_j):
         inputs = self.input2hidden(inputs)
         inputs = torch.cat([inputs, hidden_j], dim=1)
 
-        flux = F.relu(self.fc_edge_in(inputs))
+        flux = self.edge_mlp(inputs)
 
-        flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
+        #flux = self.fc_edge_in(inputs)
+        #flux = self.activation(flux)
 
-        for layer in self.fc_edge_hidden:
-            flux = F.relu(layer(flux))
-            flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
+        # flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
+
+        #for layer in self.fc_edge_hidden:
+        #    flux = layer(flux)
+        #    flux = self.activation(flux)
+        #    flux = F.dropout(flux, p=self.dropout_p, training=self.training, inplace=False)
 
         # map hidden state to relative flux
-        flux = self.hidden2output(flux)
+        #flux = self.hidden2output(flux)
         # flux = torch.sigmoid(flux) # fraction of birds moving from cell j to cell i
         flux = torch.tanh(flux).pow(2) # between 0 and 1, with initial random outputs close to 0
         
@@ -1370,7 +1384,9 @@ class MLP(torch.nn.Module):
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         self.activation = activation
-        self.layer_norm = torch.nn.LayerNorm(n_hidden)
+        #self.layer_norm = torch.nn.LayerNorm(n_hidden)
+        #self.layer_norm = torch.nn.BatchNorm1d(n_hidden)
+
 
         self.input2hidden = torch.nn.Linear(n_in, n_hidden)
         self.hidden_layers = nn.ModuleList([torch.nn.Linear(n_hidden, n_hidden)
@@ -1388,14 +1404,15 @@ class MLP(torch.nn.Module):
     def forward(self, inputs):
 
         hidden = self.input2hidden(inputs)
-        hidden = self.layer_norm(hidden)
+        #hidden = self.layer_norm(hidden)
+        hidden = F.dropout(hidden, p=self.dropout_p, training=self.training, inplace=False) 
         hidden = self.activation(hidden)
 
         for layer in self.hidden_layers:
             hidden = layer(hidden)
-            hidden = self.layer_norm(hidden)
-            hidden = self.activation(hidden)
+            #hidden = self.layer_norm(hidden)
             hidden = F.dropout(hidden, p=self.dropout_p, training=self.training, inplace=False)
+            hidden = self.activation(hidden)
 
         output = self.hidden2output(hidden)
 

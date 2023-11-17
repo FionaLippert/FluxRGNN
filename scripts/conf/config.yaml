@@ -37,7 +37,7 @@ trainer:
   deterministic: True
   gradient_clip_algorithm: value
   gradient_clip_val: 0
-  max_epochs: 50
+  max_epochs: 20
   # for debugging
 #  overfit_batches: 10
 #  track_grad_norm: 2
@@ -46,5 +46,5 @@ trainer:
 
 dataloader:
   _target_: torch_geometric.data.DataLoader
-  batch_size: 8
+  batch_size: 128
   shuffle: True
