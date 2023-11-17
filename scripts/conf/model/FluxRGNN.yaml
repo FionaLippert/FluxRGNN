@@ -89,7 +89,7 @@ source_sink_model:
 
 
 initial_model:
-  _target_: fluxrgnn.models.InitialState
+  _target_: fluxrgnn.models.InitialStateMLP
   node_features:
     coords: ${model.coord_dim}
   dynamic_features:
@@ -102,6 +102,14 @@ initial_model:
   log_offset: ${model.log_offset}
   scale: ${model.scale}
   dropout_p: ${model.dropout_p}
+
+#initial_model:
+#  _target_: fluxrgnn.models.GraphInterpolation
+#  n_graph_layers: 1
+#  use_log_transform: ${model.use_log_transform}
+#  log_offset: ${model.log_offset}
+#  scale: ${model.scale}
+#  dropout_p: ${model.dropout_p}
 
 
 #dynamics:

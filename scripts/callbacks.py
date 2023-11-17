@@ -31,7 +31,7 @@ class PredictionCallback(Callback):
         """Called when the test epoch ends."""
 
         # plot evaluation metrics over time
-        for m, values in pl_module.test_results.items():
+        for m, values in pl_module.test_metrics.items():
             #values = torch.concat(value_list, dim=0).reshape(-1, pl_module.horizon)
 
             fig, ax = plt.subplots()
@@ -46,8 +46,8 @@ class PredictionCallback(Callback):
         # plot a few example predictions
         seq_idx = 0
         indices = [0, 35, 71, 106, 142]
-        all_predictions = pl_module.test_predictions
-        all_gt = pl_module.test_gt
+        all_predictions = pl_module.test_results['y_hat']
+        all_gt = pl_module.test_resulst['y']
 
         for i in indices:
             prediction = all_predictions[seq_idx, i].cpu().numpy()
