@@ -1003,21 +1003,21 @@ class GraphInterpolation(InitialState):
         validity = graph_data.missing[:, t]
 
         # propagate data through graph
-        for _ in self.graph_layers:
+        for _ in range(self.n_graph_layers):
             # message passing through graph
             x, validity = self.propagate(graph_data.edge_index, x=graph_data.x, mask=observation_mask,
-                                         validity=validity, edge_weight=graph_data.edge_weight)
+                                         validity=validity)#, edge_weight=graph_data.edge_weight)
 
         return x
 
-    def message(self, x_j, validity_j, edge_weight):
+    def message(self, x_j, validity_j): #, edge_weight):
         """
         Construct message from node j to node i (for all edges in parallel)
         """
 
         # message from node j to node i
-        value = x_j * edge_weight * validity_j
-        weight = edge_weight * validity_j
+        value = x_j * validity_j # * edge_weight
+        weight = validity_j # * edge_weight
 
         return value, weight
 
