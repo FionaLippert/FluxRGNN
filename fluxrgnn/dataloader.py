@@ -333,14 +333,14 @@ class RadarData(InMemoryDataset):
         print(f'number of nodes in graph = {G.number_of_nodes()}')
 
         # boundary radars and boundary edges
-        inner = voronoi['observed'].to_numpy()
-        boundary2inner_edges = torch.tensor([(not inner[edge_index[0, idx]] and inner[edge_index[1, idx]])
+        boundary = voronoi['boundary'].to_numpy()
+        boundary2inner_edges = torch.tensor([(boundary[edge_index[0, idx]] and not boundary[edge_index[1, idx]])
                                             for idx in range(n_edges)])
-        inner2boundary_edges = torch.tensor([(inner[edge_index[0, idx]] and not inner[edge_index[1, idx]])
+        inner2boundary_edges = torch.tensor([(not boundary[edge_index[0, idx]] and boundary[edge_index[1, idx]])
                                              for idx in range(n_edges)])
-        inner_edges = torch.tensor([(inner[edge_index[0, idx]] and inner[edge_index[1, idx]])
+        inner_edges = torch.tensor([(not boundary[edge_index[0, idx]] and not boundary[edge_index[1, idx]])
                                     for idx in range(n_edges)])
-        boundary2boundary_edges = torch.tensor([(not inner[edge_index[0, idx]] and not inner[edge_index[1, idx]])
+        boundary2boundary_edges = torch.tensor([(boundary[edge_index[0, idx]] and boundary[edge_index[1, idx]])
                                     for idx in range(n_edges)])
 
         reverse_edges = torch.zeros(n_edges, dtype=torch.long)
@@ -376,13 +376,12 @@ class RadarData(InMemoryDataset):
         else:
             print('Use Voronoi tessellation')
             # get distances, angles and face lengths between radars
-            distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]))
+            distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
             angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
             delta_x = np.array([coords[j, 0] - coords[i, 0] for i, j in G.edges()])
             delta_y = np.array([coords[j, 1] - coords[i, 1] for i, j in G.edges()])
 
-            # TODO: rescale face lenths only by maximum to be able to use it in flux computations?!
-            face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]))
+            face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]), min=0)
             edge_attr = torch.stack([
                 torch.tensor(distances, dtype=torch.float),
                 torch.tensor(angles, dtype=torch.float),
@@ -408,9 +407,9 @@ class RadarData(InMemoryDataset):
             data['direction'] = []
             data['birds_km2'] = []
 
-        groups = dynamic_feature_df.groupby('radar')
-        for name in voronoi.radar:
-            df = groups.get_group(name).sort_values(by='datetime').reset_index(drop=True)
+        groups = dynamic_feature_df.groupby('ID')
+        for id in voronoi.ID:
+            df = groups.get_group(id).sort_values(by='datetime').reset_index(drop=True)
             data['inputs'].append(df[input_col].to_numpy())
             data['targets'].append(df[target_col].to_numpy())
             data['env'].append(df[env_cols].to_numpy().T)
@@ -419,6 +418,7 @@ class RadarData(InMemoryDataset):
                 data['acc'].append(df[acc_cols].to_numpy().T)
             else:
                 data['acc'].append(np.zeros((len(acc_cols), df.night.size)))
+
             data['nighttime'].append(df.night.to_numpy())
             data['missing'].append(df.missing.to_numpy())
             data['bird_uv'].append(df[['bird_u', 'bird_v']].to_numpy().T)
@@ -502,7 +502,7 @@ class RadarData(InMemoryDataset):
                                 # static node features
                                 coords=torch.tensor(coords, dtype=torch.float),
                                 areas=torch.tensor(areas, dtype=torch.float),
-                                boundary=torch.tensor(np.logical_not(inner), dtype=torch.bool),
+                                boundary=torch.tensor(boundary, dtype=torch.bool),
                                 ridx=torch.arange(len(voronoi.radar), dtype=torch.long),
 
                                 # input animal densities

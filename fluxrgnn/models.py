@@ -54,7 +54,7 @@ class ForecastModel(pl.LightningModule):
 
             # use gt data instead of model output with probability 'teacher_forcing'
             r = torch.rand(1)
-            if r < teacher_forcing:
+            if hasattr(data, 'x') and (r < teacher_forcing):
                 model_states['x'] = data.x[..., t - 1].view(-1, 1)
 
             # make prediction for next time step
@@ -68,7 +68,10 @@ class ForecastModel(pl.LightningModule):
 
     def initialize(self, data):
 
-        model_states = {'x': data.x[..., self.t_context - 1].view(-1, 1)}
+        model_states = {}
+
+        if hasattr(data, 'x'):
+            model_states['x'] = data.x[..., self.t_context - 1].view(-1, 1)
 
         return model_states
 
@@ -100,18 +103,11 @@ class ForecastModel(pl.LightningModule):
         eval_dict = self._eval_step(batch, prediction, prefix='val')
         self.log_dict(eval_dict)
 
-        output = {'y_hat': prediction,
-                  'y': batch.y if hasattr(batch, 'y') else None}
-
-        return output
 
     def on_test_epoch_start(self):
 
         self.test_results = {}
-        #self.residuals = []
-        self.test_gt = []
-        self.test_predictions = []
-        self.test_masks = []
+        self.test_metrics = {}
 
 
     def test_step(self, batch, batch_idx):
@@ -125,29 +121,23 @@ class ForecastModel(pl.LightningModule):
         eval_dict_per_t = self._eval_step(batch, prediction, prefix='test', aggregate_time=False)
 
         for m, values in eval_dict_per_t.items():
-            if m in self.test_results:
-                self.test_results[m].append(values)
+            if m in self.test_metrics:
+                self.test_metrics[m].append(values)
             else:
-                self.test_results[m] = [values]
+                self.test_metrics[m] = [values]
 
-        # gt = batch.y[:, self.t_context: self.t_context + self.horizon]
-        # mask = torch.logical_not(batch.missing[:, self.t_context: self.t_context + self.horizon])
-        gt = batch.y
-        mask = torch.logical_not(batch.missing)
-        self.test_gt.append(gt)
-        self.test_predictions.append(prediction)
-        self.test_masks.append(mask)
+        self.test_results['test/mask'].append(torch.logical_not(batch.missing)[:, :self.t_context + self.horizon])
+        self.test_results['test/y'].append(self.to_raw(batch.y)[:, :self.t_context + self.horizon])
+        self.test_results['test/y_hat'].append(prediction)
 
 
     def on_test_epoch_end(self):
 
-        for m, value_list in self.test_results.items():
-            self.test_results[m] = torch.concat(value_list, dim=0).reshape(-1, self.horizon)
+        for m, value_list in self.test_metrics.items():
+            self.test_metrics[m] = torch.concat(value_list, dim=0).reshape(-1, self.horizon)
 
-        # self.residuals = torch.stack(self.residuals, dim=0)
-        self.test_gt = torch.stack(self.test_gt)
-        self.test_predictions = torch.stack(self.test_predictions)
-        self.test_masks = torch.stack(self.test_masks)
+        for m, value_list in self.test_results.items():
+            self.test_results[m] = torch.stack(value_list)
 
 
     def predict_step(self, batch, batch_idx):
@@ -331,7 +321,7 @@ class FluxRGNN(ForecastModel):
 
         # initial system state
         if self.initial_model is not None:
-            x = self.initial_model(h_t[-1], data, self.t_context - 1)
+            x = self.initial_model(data, self.t_context - 1, h_t[-1])
         else:
             x = data.x[..., self.t_context - 1].view(-1, 1)
 
@@ -884,7 +874,51 @@ class SourceSink(torch.nn.Module):
         return delta
 
 
-class InitialState(torch.nn.Module):
+class InitialState(MessagePassing):
+    """
+    Base class for estimating initial bird densities.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize InitialState module.
+        """
+
+        super(InitialState, self).__init__(aggr='add', node_dim=0)
+
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+        self.scale = kwargs.get('scale', 1.0)
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+
+        if self.use_log_transform:
+            self.zero_value = np.log(self.log_offset) * self.scale
+        else:
+            self.zero_value = 0
+
+    def forward(self, graph_data, t, *args, **kwargs):
+        """
+        Determine initial bird densities.
+
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index of first forecasting step
+        :return x0: initial bird density estimates
+        """
+
+        x0 = self.initial_state(graph_data, t, *args, **kwargs)
+
+        if self.use_log_transform:
+            x0 = torch.clamp(x0, min=self.zero_value)
+        else:
+            x0 = x0.pow(2)
+
+        return x0
+
+    def initial_state(self, graph_data, t, *args, **kwargs):
+
+        raise NotImplementedError
+
+
+class InitialStateMLP(InitialState):
     """
     Predict initial bird densities for all cells based on encoder hidden states.
     """
@@ -897,7 +931,7 @@ class InitialState(torch.nn.Module):
         :param dynamic_features: tensor containing all dynamic node features
         """
 
-        super(InitialState, self).__init__()
+        super(InitialStateMLP, self).__init__()
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
@@ -908,23 +942,15 @@ class InitialState(torch.nn.Module):
 
         self.mlp = MLP(n_node_in, 1, **kwargs)
 
-        self.use_log_transform = kwargs.get('use_log_transform', False)
-        self.scale = kwargs.get('scale', 1.0)
-        self.log_offset = kwargs.get('log_offset', 1e-8)
 
-        if self.use_log_transform:
-            self.zero_value = np.log(self.log_offset) * self.scale
-        else:
-            self.zero_value = 0
-
-
-    def forward(self, hidden, graph_data, t):
+    def initial_state(self, graph_data, t, hidden):
         """
         Predict initial bird densities.
 
-        :return hidden: updated hidden states for all cells and time points
         :param graph_data: SensorData instance containing information on static and dynamic features
         :param t: time index of first forecasting step
+        :param hidden: updated hidden states for all cells and time points
+        :return x0: initial state estimate
         """
 
         # static graph features
@@ -939,11 +965,72 @@ class InitialState(torch.nn.Module):
 
         x0 = self.mlp(inputs)
 
-        if self.use_log_transform:
-            return torch.clamp(x0, min=self.zero_value)
-        else:
-            return x0.pow(2)
+        return x0
 
+
+class GraphInterpolation(InitialState):
+    """
+    Interpolates values on a partially observed graph.
+    """
+
+    def __init__(self, **kwargs):
+        """
+        Initialize GraphInterpolation.
+
+        :param n_graph_layers: number of message passing rounds to use
+        """
+
+        super(GraphInterpolation, self).__init__(aggr='add', node_dim=0)
+
+        self.n_graph_layers = kwargs.get('n_graph_layers', 1)
+
+    def initial_state(self, graph_data, t, *args, **kwargs):
+        """
+        Interpolate graph signals.
+
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index of first forecasting step
+        :return x0: initial state estimate
+        """
+
+        assert hasattr(graph_data, 'x')
+
+        observation_mask = graph_data.missing[:, t]
+        validity = graph_data.missing[:, t]
+
+        # propagate data through graph
+        for _ in self.graph_layers:
+            # message passing through graph
+            x, validity = self.propagate(graph_data.edge_index, x=graph_data.x, mask=observation_mask,
+                                         validity=validity, edge_weight=graph_data.edge_weight)
+
+        return x
+
+    def message(self, x_j, validity_j, edge_weight):
+        """
+        Construct message from node j to node i (for all edges in parallel)
+        """
+
+        # message from node j to node i
+        value = x_j * edge_weight * validity_j
+        weight = edge_weight * validity_j
+
+        return value, weight
+
+    def update(self, agg_out, x, mask):
+        agg_value, agg_weight = agg_out
+
+        # fix observed nodes
+        x_observed = mask * x
+
+        # weighted average for unobserved nodes
+        validity = agg_weight > 0
+        agg_weight = agg_weight + torch.logical_not(validity)  # to avoid division by zero
+        x_unobserved = torch.logical_not(mask) * validity * agg_value / agg_weight
+
+        x = x_observed + x_unobserved
+
+        return x, validity
 
 
 class RecurrentDecoder(torch.nn.Module):
@@ -996,6 +1083,10 @@ class RecurrentDecoder(torch.nn.Module):
         hidden = self.node_lstm(inputs)
 
         return hidden
+
+
+
+
 
 
 
