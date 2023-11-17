@@ -55,6 +55,8 @@ class ForecastModel(pl.LightningModule):
             # use gt data instead of model output with probability 'teacher_forcing'
             r = torch.rand(1)
             if hasattr(data, 'x') and (r < teacher_forcing):
+                # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
+                #  or use smaller horizon instead of teacher forcing?
                 model_states['x'] = data.x[..., t - 1].view(-1, 1)
 
             # make prediction for next time step
@@ -82,6 +84,12 @@ class ForecastModel(pl.LightningModule):
 
 
     def training_step(self, batch, batch_idx):
+
+        print(batch)
+        print(batch.get_node_storage('cell'))
+
+        cell_data = batch.node_type_subgraph(['cell'])
+        print(cell_data)
 
         # get teacher forcing probability for current epoch
         tf = self.tf_start * pow(self.config.get('teacher_forcing_gamma', 1), 

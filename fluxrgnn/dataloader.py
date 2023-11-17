@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data, DataLoader, Dataset, InMemoryDataset
+from torch_geometric.data import Data, HeteroData, DataLoader, Dataset, InMemoryDataset
 import numpy as np
 import networkx as nx
 import os.path as osp
@@ -32,7 +32,8 @@ class Normalization:
         self.season = kwargs.get('season', 'fall')
         self.t_unit = kwargs.get('t_unit', '1H')
 
-        all_dfs = []
+        all_features = []
+        all_measurements = []
         print(years)
         for year in years:
             dir = self.preprocessed_dir(year)
@@ -42,8 +43,13 @@ class Normalization:
 
             # load features
             dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'dynamic_features.csv'))
-            all_dfs.append(dynamic_feature_df)
-        self.feature_df = pd.concat(all_dfs)
+            all_features.append(dynamic_feature_df)
+
+            measurement_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'measurements.csv'))
+            all_measurements.append(measurement_df)
+
+        self.feature_df = pd.concat(all_features)
+        self.measurement_df = pd.concat(all_measurements)
 
     def normalize(self, data, key):
         min = self.min(key)
@@ -58,24 +64,28 @@ class Normalization:
         return data
 
     def min(self, key):
-        return self.feature_df[key].dropna().min()
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().min()
+        else:
+            return self.feature_df[key].dropna().min()
 
     def max(self, key):
-        return self.feature_df[key].dropna().max()
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().max()
+        else:
+            return self.feature_df[key].dropna().max()
 
     def absmax(self, key):
-        return self.feature_df[key].dropna().abs().max()
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().absmax()
+        else:
+            return self.feature_df[key].dropna().absmax()
 
     def quantile(self, key, q=0.99):
-        return self.feature_df[key].quantile(q)
-
-    def root_min(self, key, root):
-        root_transformed = self.feature_df[key].apply(lambda x: np.power(x, 1/root))
-        return root_transformed.dropna().min()
-
-    def root_max(self, key, root):
-        root_transformed = self.feature_df[key].apply(lambda x: np.power(x, 1/root))
-        return root_transformed.dropna().max()
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().quantile(q)
+        else:
+            return self.feature_df[key].dropna().quantile(q)
 
     def preprocessed_dir(self, year):
         return osp.join(self.root, 'preprocessed', self.preprocessed_dirname,
@@ -671,11 +681,372 @@ class RadarData(InMemoryDataset):
         return n_seq, seq_index
 
 
+class RadarHeteroData(InMemoryDataset):
+    """
+    Container for radar data (simulated or measured) that can be fed directly to FluxRGNN for training and testing.
+    """
+
+    def __init__(self, year, timesteps, preprocessed_dirname, processed_dirname,
+                 transform=None, pre_transform=None, **kwargs):
+        """
+        Initialize data set.
+
+        :param year: year of interest
+        :param timesteps: number of timesteps per sequence (context + forecasting horizon)
+        :param preprocessed_dirname: name of directory containing all preprocessed data of interest
+        :param processed_dirname: name of directory to which the final dataset is written to
+        :param transform: required for InMemoryDataset, but not used here
+        :param pre_transform: required for InMemoryDataset, but not used here
+        """
+
+        self.root = kwargs.get('data_root')
+        self.preprocessed_dirname = preprocessed_dirname
+        self.processed_dirname = processed_dirname
+
+        self.season = kwargs.get('season')
+        self.year = str(year)
+        self.timesteps = timesteps
+
+        self.data_source = kwargs.get('data_source', 'radar')
+        self.env_vars = kwargs.get('env_vars', ['dusk', 'dawn', 'night', 'dayofyear', 'solarpos', 'solarpos_dt'])
+
+        self.wp_threshold = kwargs.get('wp_threshold', -0.5)
+        self.missing_data_threshold = kwargs.get('missing_data_threshold', 0)
+
+        self.start = kwargs.get('start', None)
+        self.end = kwargs.get('end', None)
+        self.normalization = kwargs.get('normalization', None)
+
+        self.edge_type = kwargs.get('edge_type', 'voronoi')
+        self.t_unit = kwargs.get('t_unit', '1H')
+        self.birds_per_km2 = kwargs.get('birds_per_km2', False)
+        self.exclude = kwargs.get('exclude', [])
+
+        self.use_nights = kwargs.get('fixed_t0', True)
+        self.seed = kwargs.get('seed', 1234)
+        self.rng = np.random.default_rng(self.seed)
+        self.data_perc = kwargs.get('data_perc', 1.0)
+
+        super(RadarHeteroData, self).__init__(self.root, transform, pre_transform)
+
+        # run self.process() to generate dataset
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+        # save additional info
+        with open(osp.join(self.processed_dir, self.info_file_name), 'rb') as f:
+            self.info = pickle.load(f)
+
+        print(f'processed data can be found here: {self.processed_dir}')
+
+    @property
+    def raw_file_names(self):
+        return []
+
+    @property
+    def raw_dir(self):
+        return osp.join(self.root, 'raw')
+
+    @property
+    def preprocessed_dir(self):
+        return osp.join(self.root, 'preprocessed', self.preprocessed_dirname,
+                        self.data_source, self.season, self.year)
+
+    @property
+    def processed_dir(self):
+        return osp.join(self.root, 'processed', self.processed_dirname,
+                        self.data_source, self.season, self.year)
+
+    @property
+    def processed_file_names(self):
+        return [f'data_timesteps={self.timesteps}.pt']
+
+    @property
+    def info_file_name(self):
+        return f'info_timesteps={self.timesteps}.pkl'
+
+    def download(self):
+        pass
+
+    def process(self):
+        """
+        Prepare dataset consisting of a set of time sequences where for each sequence,
+        a graph data object is created containing static and dynamic features for all sensors.
+        """
+
+        if not osp.isdir(self.preprocessed_dir):
+            print('Preprocessed data not available. Please run preprocessing script first.')
+
+        # load features
+        dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
+        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'measurements.csv'))
+        cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_features.csv'))
+
+        # relationship between cells and radars
+        cell_to_radar_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'cell_to_radar_edges.csv'))
+        radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
+
+        cell_to_radar_edge_index = torch.tensor(cell_to_radar_edges[['cidx', 'ridx']].values, dtype=torch.long)
+        cell_to_radar_edge_index = cell_to_radar_edge_index.t().contiguous()
+        cell_to_radar_weights = torch.tensor(cell_to_radar_edges['weight'].values, dtype=torch.float)
+
+        radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
+        radar_to_cell_edge_index = radar_to_cell_edge_index.t().contiguous()
+        radar_to_cell_weights = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)
+
+        graph_file = osp.join(self.preprocessed_dir, 'delaunay.graphml')
+        if osp.isfile(graph_file) and not self.edge_type == 'none':
+            # load Delaunay triangulation with edge features
+            G = nx.read_graphml(graph_file, node_type=int)
+            edges = torch.tensor(list(G.edges()), dtype=torch.long)
+            edge_index = edges.t().contiguous()
+            n_edges = edge_index.size(1)
+        else:
+            # don't use graph structure
+            G = nx.Graph()
+            n_edges = 0
+            edge_index = torch.zeros(0, dtype=torch.long)
+
+        print(f'number of nodes in graph = {G.number_of_nodes()}')
+
+        # boundary cells and boundary edges
+        boundary = cells['boundary'].to_numpy()
+        boundary2inner_edges = torch.tensor([(boundary[edge_index[0, idx]] and not boundary[edge_index[1, idx]])
+                                             for idx in range(n_edges)])
+        inner2boundary_edges = torch.tensor([(not boundary[edge_index[0, idx]] and boundary[edge_index[1, idx]])
+                                             for idx in range(n_edges)])
+        inner_edges = torch.tensor([(not boundary[edge_index[0, idx]] and not boundary[edge_index[1, idx]])
+                                    for idx in range(n_edges)])
+        boundary2boundary_edges = torch.tensor([(boundary[edge_index[0, idx]] and boundary[edge_index[1, idx]])
+                                                for idx in range(n_edges)])
+
+        reverse_edges = torch.zeros(n_edges, dtype=torch.long)
+        for idx in range(n_edges):
+            for jdx in range(n_edges):
+                if (edge_index[:, idx] == torch.flip(edge_index[:, jdx], dims=[0])).all():
+                    reverse_edges[idx] = jdx
+
+        if self.birds_per_km2:
+            target_col = 'birds_km2'
+        else:
+            target_col = 'birds'
+
+        # normalize dynamic features
+        if self.normalization is not None:
+            dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df)
+            measurement_df = self.normalize_dynamic(measurement_df)
+
+        # normalize static features
+        coord_cols = ['x', 'y']
+        xy_scale = cells[coord_cols].abs().max().max()
+        cells[coord_cols] = cells[coord_cols] / xy_scale
+        coords = cells[coord_cols].to_numpy()
+
+        areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
+        if self.edge_type == 'none':
+            print('No graph structure used')
+            areas = np.ones(areas.shape)
+            edge_attr = torch.zeros(0)
+        else:
+            print('Use tessellation')
+            # get distances, angles and face lengths between radars
+            distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
+            angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
+            delta_x = np.array([coords[j, 0] - coords[i, 0] for i, j in G.edges()])
+            delta_y = np.array([coords[j, 1] - coords[i, 1] for i, j in G.edges()])
+
+            face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]), min=0)
+            edge_attr = torch.stack([
+                torch.tensor(distances, dtype=torch.float),
+                torch.tensor(angles, dtype=torch.float),
+                torch.tensor(delta_x, dtype=torch.float),
+                torch.tensor(delta_y, dtype=torch.float),
+                torch.tensor(face_lengths, dtype=torch.float)
+            ], dim=1)
+
+
+        time = dynamic_feature_df.datetime.sort_values().unique()
+        tidx = np.arange(len(time))
+
+        data = dict(env=[], nighttime=[])
+
+        # process dynamic cell features
+        groups = dynamic_feature_df.groupby('ID')
+        for id in cells.ID.sort_values():
+            df = groups.get_group(id).sort_values(by='datetime').reset_index(drop=True)
+            data['env'].append(df[self.env_vars].to_numpy().T)
+            data['nighttime'].append(df.night.to_numpy())
+
+        # process radar measurements
+        radar_ids = measurement_df.ID.unique()
+        for id, group_df in measurement_df.groupby('ID'):
+            group_df = group_df.sort_values(by='datetime').reset_index(drop=True)
+            data[target_col].append(group_df[target_col].to_numpy())
+            data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
+            data['missing'].append(group_df['missing'].to_numpy())
+
+        for k, v in data.items():
+            data[k] = np.stack(v, axis=0).astype(float)
+
+        # find timesteps where it's night for all cells
+        check_all = data['nighttime'].all(axis=0)
+
+        # group into nights
+        groups = [list(g) for k, g in it.groupby(enumerate(check_all), key=lambda x: x[-1])]
+        nights = [[item[0] for item in g] for g in groups if g[0][1]]
+
+        # reshape data into sequences
+        for k, v in data.items():
+            data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights)
+
+        tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights)
+
+
+        # remove sequences with too much missing data
+        perc_missing = data['missing'].reshape(-1, data['missing'].shape[-1]).mean(0)
+        valid_idx = perc_missing <= self.missing_data_threshold
+
+        for k, v in data.items():
+            data[k] = data[k][..., valid_idx]
+        tidx = tidx[..., valid_idx]
+
+
+        # sample sequences uniformly
+        n_seq = int(self.data_perc * valid_idx.sum())
+        seq_index = self.rng.permutation(valid_idx.sum())[:n_seq]
+
+        # Delaunay triangulation features
+        cell2cell_edges = {
+            'edge_index': edge_index,
+            'reverse_edges': reverse_edges,
+            'boundary2inner_edges': boundary2inner_edges.bool(),
+            'inner2boundary_edges': inner2boundary_edges.bool(),
+            'boundary2boundary_edges': boundary2boundary_edges.bool(),
+            'inner_edges': inner_edges.bool(),
+            'edge_attr': edge_attr
+        }
+
+        # observation model structure
+        cell2radar_edges = {
+            'edge_index': cell_to_radar_edge_index,
+            'edge_weight': cell_to_radar_weights
+        }
+
+        # interpolation model structure
+        radar2cell_edges = {
+            'edge_index': radar_to_cell_edge_index,
+            'edge_weight': radar_to_cell_weights
+        }
+
+        # create graph data objects per sequence
+        data_list = []
+        for idx in seq_index:
+
+            cell_data = {
+                # static cell features
+                'coords': torch.tensor(coords, dtype=torch.float),
+                'areas': torch.tensor(areas, dtype=torch.float),
+                'boundary': torch.tensor(boundary, dtype=torch.bool),
+                'cidx': torch.arange(len(cells), dtype=torch.long),
+
+                # dynamic cell features
+                'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
+                'local_night': torch.tensor(data['nighttime'][..., idx], dtype=torch.bool),
+                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
+            }
+
+            radar_data = {
+                # static radar features
+                'ridx': torch.arange(len(radar_ids), dtype=torch.long),
+
+                # dynamic radar features
+                'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
+                'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
+                'bird_uv': torch.tensor(data['bird_uv'][..., idx], dtype=torch.float),
+                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
+            }
+
+            # heterogeneous graph with two types of nodes: cells and radars
+            data_list.append(SensorHeteroData(
+                cell = cell_data,
+                radar = radar_data,
+                cell__to__cell = cell2cell_edges,
+                cell__to__radar = cell2radar_edges,
+                radar__to__cell = radar2cell_edges
+            ))
+
+
+        print(f'number of sequences = {len(data_list)}')
+
+        # write data to disk
+        os.makedirs(self.processed_dir, exist_ok=True)
+        n_seq_discarded = valid_idx.size - valid_idx.sum()
+        print(f'discarded {n_seq_discarded} sequences due to missing data')
+
+        info = {
+                'env_vars': self.env_vars,
+                'timepoints': time,
+                'tidx': tidx,
+                'nights': nights,
+                'n_seq_discarded': n_seq_discarded
+        }
+
+        with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:
+            pickle.dump(info, f)
+
+
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])
+
+
+    def normalize_dynamic(self, dynamic_feature_df):
+        """Normalize dynamic features to range between 0 and 1."""
+
+        cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
+                                                 'bird_speed', 'bird_direction',
+                                                 'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
+                                                 'radar', 'night', 'boundary',
+                                                 'dusk', 'dawn', 'datetime', 'missing'])
+
+        dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
+            lambda col: (col - self.normalization.min(col.name)) /
+                        (self.normalization.max(col.name) - self.normalization.min(col.name)), axis=0)
+
+        if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
+            uv_scale = self.normalization.absmax(['bird_u', 'bird_v']).max()
+            dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
+
+        if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
+            uv_scale = self.normalization.absmax(['u', 'v']).max()
+            dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
+
+        if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
+            uv_scale = self.normalization.absmax(['u10', 'v10']).max()
+            dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
+
+        if 'dayofyear' in dynamic_feature_df:
+            dynamic_feature_df['dayofyear'] /= self.normalization.max('dayofyear')  # always use 365?
+
+        return dynamic_feature_df
+
+
 class SensorData(Data):
     """Graph data object where reverse edges are treated the same as the regular 'edge_index'."""
 
     def __init__(self, **kwargs):
         super(SensorData, self).__init__(**kwargs)
+
+    def __inc__(self, key, value, *args, **kwargs):
+        # in mini-batches, increase edge indices in reverse_edges by the number of edges in the graph
+        if key == 'reverse_edges':
+            return self.num_edges
+        else:
+            return super().__inc__(key, value, *args, **kwargs)
+
+class SensorHeteroData(HeteroData):
+    """Heterogeneous graph data object where reverse edges are treated the same as the regular 'edge_index'."""
+
+    def __init__(self, **kwargs):
+        super(SensorHeteroData, self).__init__(**kwargs)
 
     def __inc__(self, key, value, *args, **kwargs):
         # in mini-batches, increase edge indices in reverse_edges by the number of edges in the graph
@@ -705,13 +1076,13 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                         f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}_dataperc={cfg.data_perc}'
     data_dir = osp.join(cfg.device.root, 'data')
 
-    if cfg.model.birds_per_km2:
-        input_col = 'birds_km2'
-    else:
-        if cfg.datasource.use_buffers:
-            input_col = 'birds_from_buffer'
-        else:
-            input_col = 'birds'
+    # if cfg.model.birds_per_km2:
+    #     input_col = 'birds_km2'
+    # else:
+    #     if cfg.datasource.use_buffers:
+    #         input_col = 'birds_from_buffer'
+    #     else:
+    #         input_col = 'birds'
 
     if training:
         # initialize normalizer
@@ -719,7 +1090,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
         normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
 
         # complete config and write it together with normalizer to disk
-        cfg.datasource.bird_scale = float(normalization.max(input_col))
+        # cfg.datasource.bird_scale = float(normalization.max(input_col))
         cfg.model_seed = seed
         with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
             OmegaConf.save(config=cfg, f=f)
@@ -736,17 +1107,28 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
 
     # load training/validation/test data
-    data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
-                                 **cfg, **cfg.model,
-                                 data_root=data_dir,
-                                 data_source=cfg.datasource.name,
-                                 normalization=normalization,
-                                 env_vars=cfg.datasource.env_vars,
-                                 transform=transform
-                                 )
+    # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
+    #                              **cfg, **cfg.model,
+    #                              data_root=data_dir,
+    #                              data_source=cfg.datasource.name,
+    #                              normalization=normalization,
+    #                              env_vars=cfg.datasource.env_vars,
+    #                              transform=transform
+    #                              )
+    #         for year in years]
+
+    data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
+                      **cfg, **cfg.model,
+                      data_root=data_dir,
+                      data_source=cfg.datasource.name,
+                      normalization=normalization,
+                      env_vars=cfg.datasource.env_vars,
+                      transform=transform
+                      )
             for year in years]
 
-    return data, input_col, context, seq_len
+    # return data, input_col, context, seq_len
+    return data, context, seq_len
 
 
 def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):
