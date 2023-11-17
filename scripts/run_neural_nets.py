@@ -112,7 +112,6 @@ def load_training_data(cfg):
     data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
                                    transform=transform)[0]
     print(data[0])
-    # print(f'data min, max = {data[0].y.min()}, {data[0].y.max()}')
 
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
@@ -182,7 +181,8 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
+    # test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
     test_data = test_data[0]
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
