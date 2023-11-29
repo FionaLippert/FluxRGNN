@@ -725,6 +725,9 @@ class RadarHeteroData(InMemoryDataset):
         self.exclude = kwargs.get('exclude', [])
 
         self.use_nights = kwargs.get('fixed_t0', True)
+        self.tidx_start = kwargs.get('tidx_start', 0)
+        self.tidx_step = kwargs.get('tidx_step', 1)
+
         self.seed = kwargs.get('seed', 1234)
         self.rng = np.random.default_rng(self.seed)
         self.data_perc = kwargs.get('data_perc', 1.0)
@@ -907,11 +910,14 @@ class RadarHeteroData(InMemoryDataset):
         groups = [list(g) for k, g in it.groupby(enumerate(check_all), key=lambda x: x[-1])]
         nights = [[item[0] for item in g] for g in groups if g[0][1]]
 
+
         # reshape data into sequences
         for k, v in data.items():
-            data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights)
+            data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
+                              self.tidx_start, self.tidx_step)
 
-        tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights)
+        tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
+                       self.tidx_start, self.tidx_step)
 
 
         # remove sequences with too much missing data
@@ -1086,7 +1092,9 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     context = cfg.model.get('context', 0)
     if context == 0 and not training:
         context = cfg.model.get('test_context', 0)
-    seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
+
+    # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
+    seq_len = context + max(cfg.model.horizon, cfg.model.test_horizon) + cfg.datasource.get('tidx_step', 1) - 1
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
@@ -1124,7 +1132,6 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
         else:
             normalization = None
 
-    print(cfg.model.birds_per_km2)
     # load training/validation/test data
     # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
     #                              **cfg, **cfg.model,
@@ -1137,11 +1144,11 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     #         for year in years]
 
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
-                      **cfg, **cfg.model,
+                      **cfg, **cfg.model, **cfg.datasource,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,
-                      env_vars=cfg.datasource.env_vars,
+                      # env_vars=cfg.datasource.env_vars,
                       transform=transform
                       )
             for year in years]
@@ -1200,13 +1207,13 @@ def rescale(features, min=None, max=None):
         rescaled /= (max - min)
     return rescaled
 
-def reshape(data, nights, mask, timesteps, use_nights=True):
+def reshape(data, nights, mask, timesteps, use_nights=True, t0=0, step=1):
     """Reshape data to have dimensions [nodes, features, timesteps, sequences]"""
 
     if use_nights:
         reshaped = reshape_nights(data, nights, mask, timesteps)
     else:
-        reshaped = reshape_t(data, timesteps)
+        reshaped = reshape_t(data, timesteps, t0, step)
     return reshaped
 
 def reshape_nights(data, nights, mask, timesteps):
@@ -1217,10 +1224,14 @@ def reshape_nights(data, nights, mask, timesteps):
     reshaped = np.stack(reshaped, axis=-1)
     return reshaped
 
-def reshape_t(data, timesteps):
-    """Reshape into sequences of length 'timesteps', starting at all possible time points in the data."""
 
-    index = np.arange(0, data.shape[-1] - timesteps)
+def reshape_t(data, timesteps, t0=0, step=1):
+    """
+    Reshape into sequences of length 'timesteps', starting at all possible time points in the data (step=1),
+    or at regular intervals of size `step`
+    """
+
+    index = np.arange(t0, data.shape[-1] - timesteps, step)
     reshaped = [data[..., t:t + timesteps] for t in index]
     reshaped = np.stack(reshaped, axis=-1)
     return reshaped
