@@ -30,6 +30,9 @@ trainer:
       #- _target_: pytorch_lightning.callbacks.EarlyStopping
       #monitor: val/loss
       #patience: 10
+    - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: val/loss
+      mode: min
     - _target_: callbacks.GradNormCallback
     - _target_: callbacks.PredictionCallback
   accelerator: ${device.accelerator}
@@ -45,6 +48,6 @@ trainer:
   enable_model_summary: true
 
 dataloader:
-  _target_: torch_geometric.data.DataLoader
+  _target_: torch_geometric.loader.DataLoader
   batch_size: 128
   shuffle: True

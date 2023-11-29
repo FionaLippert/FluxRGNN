@@ -1,3 +1,4 @@
+import fluxrgnn
 from fluxrgnn import dataloader, utils
 from fluxrgnn.models import *
 import torch
@@ -9,6 +10,8 @@ import torch_geometric.transforms as T
 from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra.utils import instantiate
+from hydra.core.hydra_config import HydraConfig
+from hydra.core.override_parser.overrides_parser import OverridesParser
 import wandb
 import pickle
 import os.path as osp
@@ -46,24 +49,30 @@ def run(cfg: DictConfig):
     """
     os.makedirs(cfg.output_dir, exist_ok=True)
 
+    print(f'output_dir = {cfg.output_dir}')
+
     trainer = instantiate(cfg.trainer)
 
-    if isinstance(cfg.trainer.logger, WandbLogger):
+    if isinstance(trainer.logger, WandbLogger):
         # save config to wandb
         cfg_resolved = OmegaConf.to_container(cfg, resolve=True)
         wandb.config = cfg_resolved
         # trainer.logger.experiment.config.update(cfg_resolved)
+        print(trainer.logger.version)
 
     utils.seed_all(cfg.seed + cfg.get('job_id', 0))
 
     model = instantiate(cfg.model)#, n_env=len(cfg.datasource.env_vars))
+    
+    if 'model_checkpoint' in cfg and isinstance(trainer.logger, WandbLogger):
+        # load model checkpoint
+        # model_checkpoint has form 'user/project/model-runID:version' where version is vX, latest or best
+        artifact_dir = trainer.logger.download_artifact(cfg.model_checkpoint, artifact_type='model')
+        model_path = osp.join(artifact_dir, 'model.ckpt')
+        #model.load_state_dict(torch.load(model_path))
 
-    if cfg.verbose:
-        print('------------------ model settings --------------------')
-        print(cfg.model)
-        print('------------------------------------------------------')
-
-
+        model = eval(cfg.model._target_).load_from_checkpoint(model_path)
+    
     if 'train' in cfg.task.name:
         training(trainer, model, cfg)
     if 'eval' in cfg.task.name:
@@ -82,9 +91,12 @@ def run(cfg: DictConfig):
         #     for y in training_years:
         #         cfg.datasource.test_year = y
         #         testing(trainer, model, cfg, output_dir, log, ext=f'_training_year_{y}')
+    if 'predict' in cfg.task.name:
+        prediction(trainer, model, cfg)
 
-    if isinstance(cfg.trainer.logger, WandbLogger):
+    if isinstance(trainer.logger, WandbLogger):
         wandb.finish()
+        # save config to wandb
 
 
 def count_parameters(model):
@@ -111,8 +123,7 @@ def load_training_data(cfg):
     transform = get_transform(cfg)
     data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
                                    transform=transform)[0]
-    print(data[0])
-
+    
     data = torch.utils.data.ConcatDataset(data)
     n_data = len(data)
 
@@ -158,15 +169,16 @@ def training(trainer, model, cfg: DictConfig):
     trainer.fit(model, dl_train, dl_val)
 
     # save model
-    model_path = osp.join(cfg.output_dir, 'models')
-    os.makedirs(model_path, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(model_path, 'model.pt'))
+    #model_path = osp.join(cfg.output_dir, 'models')
+    #os.makedirs(model_path, exist_ok=True)
+    #torch.save(model.state_dict(), os.path.join(model_path, 'model.pt'))
 
-    if isinstance(cfg.trainer.logger, WandbLogger):
-        # save as artifact for version control
-        artifact = wandb.Artifact(f'model', type='models')
-        artifact.add_dir(model_path)
-        wandb.run.log_artifact(artifact)
+    #if isinstance(trainer.logger, WandbLogger):
+    #    # save as artifact for version control
+    #    print('add model artifact')
+    #    artifact = wandb.Artifact(f'model', type='models')
+    #    artifact.add_dir(model_path)
+    #    wandb.run.log_artifact(artifact)
 
 
 def testing(trainer, model, cfg: DictConfig, ext=''):
@@ -194,8 +206,9 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     utils.dump_outputs(model.test_metrics, eval_path)
     utils.dump_outputs(model.test_results, eval_path)
 
-    if isinstance(cfg.trainer.logger, WandbLogger):
-        artifact = wandb.Artifact('evaluation', type='evaluation')
+    if isinstance(trainer.logger, WandbLogger):
+        print('add evaluation artifact')
+        artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
         artifact.add_dir(eval_path)
         wandb.run.log_artifact(artifact)
 
@@ -205,11 +218,39 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
         pred_path = osp.join(cfg.output_dir, 'prediction')
         utils.dump_outputs(results, pred_path)
 
-        if isinstance(cfg.trainer.logger, WandbLogger):
+        if isinstance(trainer.logger, WandbLogger):
+            print('add prediction artifact')
             # save as artifact for version control
-            artifact = wandb.Artifact(f'prediction', type='prediction')
+            artifact = wandb.Artifact(f'prediction-{trainer.logger.version}', type='prediction')
             artifact.add_dir(pred_path)
             wandb.run.log_artifact(artifact)
+
+
+def prediction(trainer, model, cfg: DictConfig, ext=''):
+    """
+    Run neural network model on unseen test data.
+
+    :param cfg: DictConfig specifying model, data and testing details
+    :param output_dir: directory to which test results are written to
+    """
+
+    # load test data
+    transform = get_transform(cfg)
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
+    test_data = test_data[0]
+
+    test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
+
+    model.horizon = cfg.model.test_horizon
+    trainer.predict(model, test_loader)
+
+    pred_path = osp.join(cfg.output_dir, 'prediction')
+    utils.dump_outputs(model.predict_results, pred_path)
+
+    if isinstance(trainer.logger, WandbLogger):
+        artifact = wandb.Artifact(f'prediction-{trainer.logger.version}', type='prediction')
+        artifact.add_dir(pred_path)
+        wandb.run.log_artifact(artifact)
 
 
 if __name__ == "__main__":

@@ -4,3 +4,4 @@ project: default
 group: null
 #ckpt_dir: ${output_dir}/checkpoints
 save_dir: logs
+log_model: all

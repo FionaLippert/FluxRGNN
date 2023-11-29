@@ -9,14 +9,14 @@ years:
 test_year: 2019
 val_train_split: 0.1
 env_vars:
-  #- u
-  #- v
-  #- u10
-  #- v10
-  #- cc
-  #- tp
-  #- sp
-  #- t2m
+  - u
+  - v
+  - u10
+  - v10
+  - cc
+  - tp
+  - sp
+  - t2m
   - sshf
   - night
   - dusk

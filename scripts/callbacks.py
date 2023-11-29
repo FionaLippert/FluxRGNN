@@ -46,8 +46,8 @@ class PredictionCallback(Callback):
         # plot a few example predictions
         seq_idx = 0
         indices = [0, 35, 71, 106, 142]
-        all_predictions = pl_module.test_results['y_hat']
-        all_gt = pl_module.test_resulst['y']
+        all_predictions = pl_module.test_results['test/predictions']
+        all_gt = pl_module.test_results['test/measurements']
 
         for i in indices:
             prediction = all_predictions[seq_idx, i].cpu().numpy()

@@ -15,25 +15,15 @@ context: 24
 horizon: 48
 test_horizon: 72
 
-#epochs: 300
-#batch_size: 4
 lr: 1e-5
 lr_decay: 300
 lr_gamma: 1.0
-#early_stopping: true
-#stopping_criterion: 1e-6
-#avg_window: 50
-dropout_p: 0.0
-teacher_forcing_gamma: 0.95
-increase_horizon: false
+dropout_p: 0.1
+teacher_forcing_gamma: 1.0
+increase_horizon: true
 
 force_zeros: false
-#use_encoder: true
-#use_boundary_model: true
-#use_uv: true
-#root_transformed_loss: false
-compute_fluxes: true
-edge_type: voronoi
+edge_type: hexagons 
 birds_per_km2: true
 
 use_log_transform: false
@@ -107,36 +97,21 @@ source_sink_model:
 #  scale: ${model.scale}
 #  dropout_p: ${model.dropout_p}
 
+
 initial_model:
-  _target_: fluxrgnn.models.ObservationCopy
+  _target_: fluxrgnn.models.RadarToCellInterpolation
   use_log_transform: ${model.use_log_transform}
   log_offset: ${model.log_offset}
   scale: ${model.scale}
-  dropout_p: ${model.dropout_p}
+  #mlp:
+  #  _target_: fluxrgnn.models.MLP
+  #  n_in: ${model.n_hidden} + 1
+  #  n_out: 1
+  #  n_fc_layers: 1
+  #  activation:
+  #    _target_: torch.nn.ReLU
+  #  dropout_p: ${model.dropout_p}
 
-#initial_model:
-#  _target_: fluxrgnn.models.GraphInterpolation
-#  n_graph_layers: 1
-#  use_log_transform: ${model.use_log_transform}
-#  log_offset: ${model.log_offset}
-#  scale: ${model.scale}
-#  dropout_p: ${model.dropout_p}
-
-
-#dynamics:
-#  _target_: fluxrgnn.models.FluxRGNNTransition
-#  n_hidden: ${model.n_hidden}
-#  n_fc_layers: 2
-#  n_lstm_layers: 1
-#  use_encoder: ${model.use_encoder}
-#  use_log_transform: ${model.use_log_transform}
-#  dropout_p: ${model.dropout_p}
-#  node_features:
-#    coords: ${model.coord_dim}
-#  edge_features:
-#    edge_attr: ${model.n_edge_attr}
-#  dynamic_features:
-#    env: ${model.n_env}
 
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
@@ -148,8 +123,8 @@ encoder:
     coords: ${model.coord_dim}
   dynamic_features:
     env: ${model.n_env}
-    bird_uv: 2
-    x: 1
+    #bird_uv: 2
+    #x: 1
 
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation

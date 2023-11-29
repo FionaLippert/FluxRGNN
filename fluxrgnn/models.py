@@ -14,7 +14,7 @@ class ForecastModel(pl.LightningModule):
     Base model class for forecasting bird migration
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, observation_model=None, **kwargs):
         super(ForecastModel, self).__init__()
 
         # save config
@@ -26,6 +26,9 @@ class ForecastModel(pl.LightningModule):
         self.t_context = max(1, kwargs.get('context', 1))
         self.tf_start = min(1.0, kwargs.get('teacher_forcing', 1.0))
 
+        # observation model mapping cell densities to radar observations
+        self.observation_model = observation_model
+
         self.use_log_transform = kwargs.get('use_log_transform', False)
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
@@ -35,7 +38,7 @@ class ForecastModel(pl.LightningModule):
         else:
             self.zero_value = 0
 
-    def forecast(self, data, teacher_forcing=0):
+    def forecast(self, data, horizon, teacher_forcing=0):
         """
         Setup prediction for given data and run model until the max forecasting horizon is reached.
 
@@ -48,19 +51,24 @@ class ForecastModel(pl.LightningModule):
         model_states = self.initialize(data)
         y_hat = []
 
+        # only cell data is needed for forecasting
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        
         # predict until the max forecasting horizon is reached
-        forecast_horizon = range(self.t_context, self.t_context + self.horizon)
+        forecast_horizon = range(self.t_context, self.t_context + horizon)
         for t in forecast_horizon:
 
             # use gt data instead of model output with probability 'teacher_forcing'
-            r = torch.rand(1)
-            if hasattr(data, 'x') and (r < teacher_forcing):
+            #r = torch.rand(1)
+            #if hasattr(data, 'x') and (r < teacher_forcing):
                 # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
                 #  or use smaller horizon instead of teacher forcing?
-                model_states['x'] = data.x[..., t - 1].view(-1, 1)
+                #model_states['x'] = data.x[..., t - 1].view(-1, 1)
 
+            
+            
             # make prediction for next time step
-            model_states = self.forecast_step(model_states, data, t)
+            model_states = self.forecast_step(model_states, cell_data, t, teacher_forcing)
             y_hat.append(model_states['x'])
 
         prediction = torch.cat(y_hat, dim=-1)
@@ -72,61 +80,97 @@ class ForecastModel(pl.LightningModule):
 
         model_states = {}
 
-        if hasattr(data, 'x'):
-            model_states['x'] = data.x[..., self.t_context - 1].view(-1, 1)
-
         return model_states
 
 
-    def forecast_step(self, model_states, data, t):
+    def forecast_step(self, model_states, data, t, teacher_forcing):
 
         raise NotImplementedError
 
 
     def training_step(self, batch, batch_idx):
 
-        print(batch)
-        print(batch.get_node_storage('cell'))
-
-        cell_data = batch.node_type_subgraph(['cell'])
-        print(cell_data)
 
         # get teacher forcing probability for current epoch
         tf = self.tf_start * pow(self.config.get('teacher_forcing_gamma', 1), 
                                  self.current_epoch)
         self.log('teacher_forcing', tf)
+        
+        if self.config.get('increase_horizon', False):
+            horizon = min(self.horizon, self.current_epoch + 1)
+        else:
+            horizon = self.horizon
 
-        # make predictions and compute loss
-        output = self.forecast(batch, teacher_forcing=tf)
-        eval_dict = self._eval_step(batch, output, prefix='train')
-        self.log_dict(eval_dict)
+        # extract relevant data from batch
+        #cell_data = batch.node_type_subgraph(['cell']).to_homogeneous()
+        radar_data = batch['radar']
+        
+        # make predictions for all cells
+        prediction = self.forecast(batch, horizon, teacher_forcing=tf)
+
+        # map cell predictions to radar observations
+        if self.observation_model is not None:
+            cells_to_radars = batch['cell', 'radar']
+            prediction = self.observation_model(prediction, cells_to_radars)
+            prediction = prediction[:radar_data.num_nodes]
+
+        #compute loss
+        eval_dict = self._eval_step(radar_data, prediction, horizon, prefix='train')
+        self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
         return eval_dict['train/loss']
 
 
     def validation_step(self, batch, batch_idx):
+        
+        # extract relevant data from batch
+        radar_data = batch['radar']
+        
+        # make predictions for all cells
+        prediction = self.forecast(batch, self.horizon)
 
-        # make predictions and compute loss
-        prediction = self.forecast(batch)
-        eval_dict = self._eval_step(batch, prediction, prefix='val')
-        self.log_dict(eval_dict)
+        # apply observation model to forecast
+        if self.observation_model is not None:
+            cells_to_radars = batch['cell', 'radar']
+            prediction = self.observation_model(prediction, cells_to_radars)
+            prediction = prediction[:radar_data.num_nodes]
+
+        # evaluate forecast
+        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='val')
+        self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
 
     def on_test_epoch_start(self):
 
-        self.test_results = {}
+        self.test_results = {
+                'test/mask': [], 
+                'test/measurements': [], 
+                'test/predictions': []
+                }
         self.test_metrics = {}
 
 
     def test_step(self, batch, batch_idx):
 
-        # make predictions and compute evaluation metrics
-        prediction = self.forecast(batch)
-        eval_dict = self._eval_step(batch, prediction, prefix='test')
-        self.log_dict(eval_dict)
+        # extract relevant data from batch
+        #cell_data = batch.node_type_subgraph(['cell']).to_homogeneous()
+        radar_data = batch['radar']
+        
+        # make predictions for all cells
+        prediction = self.forecast(batch, self.horizon)
+
+        # apply observation model to forecast
+        if self.observation_model is not None:
+            cells_to_radars = batch['cell', 'radar']
+            prediction = self.observation_model(prediction, cells_to_radars)
+            prediction = prediction[:radar_data.num_nodes]
+
+        # compute evaluation metrics
+        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='test')
+        self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
         # compute evaluation metrics as a function of the forecasting horizon
-        eval_dict_per_t = self._eval_step(batch, prediction, prefix='test', aggregate_time=False)
+        eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False)
 
         for m, values in eval_dict_per_t.items():
             if m in self.test_metrics:
@@ -134,9 +178,9 @@ class ForecastModel(pl.LightningModule):
             else:
                 self.test_metrics[m] = [values]
 
-        self.test_results['test/mask'].append(torch.logical_not(batch.missing)[:, :self.t_context + self.horizon])
-        self.test_results['test/y'].append(self.to_raw(batch.y)[:, :self.t_context + self.horizon])
-        self.test_results['test/y_hat'].append(prediction)
+        self.test_results['test/mask'].append(torch.logical_not(radar_data.missing)[:, :self.t_context + self.horizon])
+        self.test_results['test/measurements'].append(self.to_raw(radar_data.x)[:, :self.t_context + self.horizon])
+        self.test_results['test/predictions'].append(self.to_raw(prediction))
 
 
     def on_test_epoch_end(self):
@@ -150,15 +194,25 @@ class ForecastModel(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx):
 
-        # make predictions
-        output = self.forecast(batch)
+        # extract relevant data from batch
+        cell_data = batch['cell']
+        radar_data = batch['radar']
+        
+        # make predictions for all cells
+        prediction = self.forecast(batch, self.horizon)
+
+        # apply observation model to forecast
+        if self.observation_model is not None:
+            cells_to_radars = batch['cell', 'radar']
+            prediction = self.observation_model(prediction, cells_to_radars)
+            prediction = prediction[:radar_data.num_nodes]
 
         result = {
-            'y_hat': self.to_raw(output),
-            'y': self.to_raw(batch.y) if hasattr(batch, 'y') else None,
-            'local_night': batch.local_night,
-            'missing': batch.missing,
-            'tidx': batch.tidx
+            'predictions': self.to_raw(prediction),
+            'measurements': self.to_raw(radar_data.x),
+            'local_night': cell_data.local_night,
+            'missing': radar_data.missing,
+            'tidx': cell_data.tidx
         }
         return result
 
@@ -186,27 +240,20 @@ class ForecastModel(pl.LightningModule):
 
         return log
 
-    def _get_residuals(self, batch, output):
-        
-        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
-        mask = torch.logical_not(batch.missing)[:, self.t_context: self.t_context + self.horizon]
-
-        residuals = (output - gt) * mask
-
-        return residuals
-
     def _regularizer(self):
         return 0
 
-    def _eval_step(self, batch, output, prefix='', aggregate_time=True):
+    def _eval_step(self, radar_data, output, horizon, prefix='', aggregate_time=True):
+        
 
         if self.config.get('force_zeros', False):
-            mask = torch.logical_and(batch.local_night, torch.logical_not(batch.missing))
+            mask = torch.logical_and(radar_data.local_night, torch.logical_not(radar_data.missing))
         else:
-            mask = torch.logical_not(batch.missing)
+            mask = torch.logical_not(radar_data.missing)
 
-        gt = batch.y[:, self.t_context: self.t_context + self.horizon]
-        mask = mask[:, self.t_context: self.t_context + self.horizon]
+        gt = radar_data.x[:, self.t_context: self.t_context + horizon]
+        mask = mask[:, self.t_context: self.t_context + horizon]
+        output = output[:, :horizon]
         
         if aggregate_time:
             gt = gt.reshape(-1)
@@ -299,74 +346,89 @@ class FluxRGNN(ForecastModel):
         self.initial_model = initial_model
 
 
-    def initialize(self, data):
+    def initialize(self, graph_data):
 
         # TODO: use separate topographical / location embedding model whose output is fed to all other model components?
 
+        cell_data = graph_data['cell']
+        cell_edges = graph_data['cell', 'cell']
+
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            h_t, c_t = self.encoder(data)
+            h_t, c_t = self.encoder(cell_data)
         else:
-            h_t = [torch.zeros(data.num_nodes, self.decoder.n_hidden, device=data.edge_index.device) for
+            h_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device) for
                    _ in range(self.decoder.n_lstm_layers)]
-            c_t = [torch.zeros(data.num_nodes, self.decoder.n_hidden, device=data.edge_index.device) for
+            c_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device) for
                    _ in range(self.decoder.n_lstm_layers)]
 
         self.decoder.initialize(h_t, c_t)
 
-        self.deltas = []
+        self.regularizers = []
 
         # setup model components
         if self.boundary_model is not None:
-            self.boundary_model.initialize(data)
+            self.boundary_model.initialize(cell_edges)
 
         # relevant info for later
-        if not self.training:
-            self.edge_fluxes = torch.zeros((data.edge_index.size(1), 1, self.horizon), device=data.edge_index.device)
-            self.node_flux = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
-            self.node_sink = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
-            self.node_source = torch.zeros((data.num_nodes, 1, self.horizon), device=data.edge_index.device)
+        if not self.training and self.config.get('store_fluxes', False):
+            self.edge_fluxes = torch.zeros((cell_edges.edge_index.size(1), 1, self.horizon), device=cell_data.coords.device)
+            self.node_flux = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
+            self.node_sink = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
+            self.node_source = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
 
         # initial system state
         if self.initial_model is not None:
-            x = self.initial_model(data, self.t_context - 1, h_t[-1])
+            x = self.initial_model(graph_data, self.t_context - 1, h_t[-1])
+        #elif hasattr(cell_data, 'x'):
+        #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
         else:
-            x = data.x[..., self.t_context - 1].view(-1, 1)
+            x = torch.zeros_like(cell_data.coords[:, 0]).unsqueeze(-1)
+        #print(f'initial x size = {x.size()}')
 
         model_states = {'x': x,
                         'hidden': h_t[-1],
-                        'boundary_nodes': data.boundary.view(-1, 1),
-                        'inner_nodes': torch.logical_not(data.boundary).view(-1, 1)}
+                        'boundary_nodes': cell_data.boundary.view(-1, 1),
+                        'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
 
         # if self.ground_model is not None:
         #     model_states['ground_states'] = self.ground_model(h_t)
 
         return model_states
 
-    def forecast_step(self, model_states, graph_data, t):
+    def forecast_step(self, model_states, cell_data, t, teacher_forcing=0):
 
-        x = model_states['x']
+        # use gt data instead of model output with probability 'teacher_forcing'
+        r = torch.rand(1)
+        if cell_data.x is not None and (r < teacher_forcing):
+            # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
+            #  or use smaller horizon instead of teacher forcing?
+            x = cell_data.x[..., t - 1].view(-1, 1)
+        else:
+            x = model_states['x']
+        
         hidden = model_states['hidden']
         tidx = t - self.t_context
 
         if self.boundary_model is not None:
             x_boundary = self.boundary_model(x)
             h_boundary = self.boundary_model(hidden)
+            #print(model_states['inner_nodes'].size(), model_states['boundary_nodes'].size())
             x = x * model_states['inner_nodes'] + x_boundary * model_states['boundary_nodes']
             hidden = hidden * model_states['inner_nodes'] + h_boundary * model_states['boundary_nodes']
-
+        #print(f'x after boundary model: {x.size()}')
 
         # update hidden states
-        hidden = self.decoder(x, hidden, graph_data, t)
+        hidden = self.decoder(x, hidden, cell_data, t)
 
         # predict movements
         if self.flux_model is not None:
 
             # predict fluxes between neighboring cells
-            net_flux = self.flux_model(x, hidden, graph_data, t)
+            net_flux = self.flux_model(x, hidden, cell_data, t)
             x = x + net_flux
 
-            if not self.training:
+            if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
                 self.edge_fluxes[..., tidx] = self.flux_model.edge_fluxes
                 self.node_flux[..., tidx] = self.flux_model.node_flux
@@ -374,20 +436,20 @@ class FluxRGNN(ForecastModel):
         if self.source_sink_model is not None:
 
             # predict local source/sink terms
-            delta = self.source_sink_model(x, hidden, graph_data, t,
+            delta = self.source_sink_model(x, hidden, cell_data, t,
                                            ground_states=model_states.get('ground_states', None))
             x = x + delta
 
-            if not self.training:
+            if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
                 self.node_source[..., tidx] = self.source_sink_model.node_source
                 self.node_sink[..., tidx] = self.source_sink_model.node_sink
             else:
-                self.deltas.append(delta)
-
+                #self.regularizers.append(delta)
+                self.regularizers.append(self.source_sink_model.node_source + self.source_sink_model.node_sink)
         if self.config.get('force_zeros', False):
-            x = x * graph_data.local_night[..., t]
-            x = x + self.zero_value * torch.logical_not(graph_data.local_night[..., t])
+            x = x * cell_data.local_night[..., t]
+            x = x + self.zero_value * torch.logical_not(cell_data.local_night[..., t])
         
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -396,50 +458,97 @@ class FluxRGNN(ForecastModel):
 
     def _regularizer(self):
 
-        if len(self.deltas) > 0:
-            deltas = torch.cat(self.deltas, dim=0)
-            penalty = deltas.pow(2).mean()
+        if len(self.regularizers) > 0:
+            regularizers = torch.cat(self.regularizers, dim=0)
+            penalty = regularizers.pow(2).mean()
         else:
             penalty = 0
 
         return penalty
 
 
+    def on_predict_start(self):
+
+        self.predict_results = {
+                'prediction': [],
+                'node_source': [],
+                'node_sink': [],
+                'node_flux': [],
+                'edge_flux': []
+                }
+
+    def on_predict_end(self):
+
+        for m, value_list in self.predict_results.items():
+            self.predict_results[m] = torch.stack(value_list)
+
+
     def predict_step(self, batch, batch_idx):
 
-        # make predictions
-        output = self.to_raw(self.forecast(batch))
-        gt = self.to_raw(batch.y) if hasattr(batch, 'y') else None
+        # extract relevant data from batch
+        cell_data = batch['cell']
+        radar_data = batch['radar']
+        
+        # make predictions for all cells
+        prediction = self.forecast(batch, self.horizon)
 
-        # get fluxes along edges
-        #adj = to_dense_adj(batch.edge_index, edge_attr=self.edge_fluxes)
-        #edge_fluxes = adj.view(batch.num_nodes, batch.num_nodes, -1)
+        # apply observation model to forecast
+        #if self.observation_model is not None:
+        #    cells_to_radars = batch['cell', 'radar']
+        #    prediction = self.observation_model(prediction, cells_to_radars)
+        #    prediction = prediction[:radar_data.num_nodes]
 
-        # get net fluxes per node
-        #influxes = edge_fluxes.sum(1)
-        #outfluxes = edge_fluxes.permute(1, 0, 2).sum(1)
+        self.predict_results['prediction'].append(self.to_raw(prediction))
+        self.predict_results['node_source'].append(self.node_source)
+        self.predict_results['node_sink'].append(self.node_sink)
+        self.predict_results['node_flux'].append(self.node_flux)
+        self.predict_results['edge_flux'].append(self.edge_fluxes)
 
-        #if hasattr(batch, 'fluxes'):
-        #    # compute approximate fluxes from radar data
-        #    radar_fluxes = to_dense_adj(batch.edge_index, edge_attr=batch.fluxes).view(
-        #        batch.num_nodes, batch.num_nodes, -1)
-        #else:
-        #    radar_fluxes = None
+        #result = {
+        #    'predictions': self.to_raw(prediction),
+        #    'measurements': self.to_raw(radar_data.x),
+        #    'local_night': cell_data.local_night,
+        #    'missing': radar_data.missing,
+        #    'tidx': cell_data.tidx
+        #}
+        
+        return prediction
 
-        result = {
-            'y_hat': output,
-            'y': gt,
-            #'influx': influxes,
-            #'outflux': outfluxes,
-            #'source': self.node_source,
-            #'sink': self.node_sink,
-            #'edge_fluxes': edge_fluxes,
-            #'radar_fluxes': radar_fluxes,
-            'local_night': batch.local_night,
-            'missing': batch.missing,
-            'tidx': batch.tidx
-        }
-        return result
+    #def predict_step(self, batch, batch_idx):
+
+    #    # make predictions
+    #    output = self.to_raw(self.forecast(batch))
+    #    gt = self.to_raw(batch.y) if hasattr(batch, 'y') else None
+
+    #    # get fluxes along edges
+    #    #adj = to_dense_adj(batch.edge_index, edge_attr=self.edge_fluxes)
+    #    #edge_fluxes = adj.view(batch.num_nodes, batch.num_nodes, -1)
+
+    #    # get net fluxes per node
+    #    #influxes = edge_fluxes.sum(1)
+    #    #outfluxes = edge_fluxes.permute(1, 0, 2).sum(1)
+
+    #    #if hasattr(batch, 'fluxes'):
+    #    #    # compute approximate fluxes from radar data
+    #    #    radar_fluxes = to_dense_adj(batch.edge_index, edge_attr=batch.fluxes).view(
+    #    #        batch.num_nodes, batch.num_nodes, -1)
+    #    #else:
+    #    #    radar_fluxes = None
+
+    #    result = {
+    #        'y_hat': output,
+    #        'y': gt,
+    #        #'influx': influxes,
+    #        #'outflux': outfluxes,
+    #        #'source': self.node_source,
+    #        #'sink': self.node_sink,
+    #        #'edge_fluxes': edge_fluxes,
+    #        #'radar_fluxes': radar_fluxes,
+    #        'local_night': batch.local_night,
+    #        'missing': batch.missing,
+    #        'tidx': batch.tidx
+    #    }
+    #    return result
 
 
 class LocalMLPForecast(ForecastModel):
@@ -462,7 +571,7 @@ class LocalMLPForecast(ForecastModel):
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
 
-    def forecast_step(self, model_states, data, t):
+    def forecast_step(self, model_states, data, t, *args, **kwargs):
 
         if self.use_acc:
             inputs = torch.cat([data.coords, data.env[..., t], data.acc[..., t]], dim=1)
@@ -882,8 +991,30 @@ class SourceSink(torch.nn.Module):
         if not self.training:
             self.node_source = raw_source  # birds/km2 taking-off in cell i
             self.node_sink = raw_sink  # birds/km2 landing in cell i
-
+        else:
+            self.node_source = source
+            self.node_sink = frac_sink if self.use_log_transform else sink
+    
         return delta
+
+
+class ObservationModel(MessagePassing):
+
+    def __init__(self):
+        
+        super(ObservationModel, self).__init__(aggr='add', node_dim=0)
+        
+    def forward(self, cell_states, cells_to_radars):
+        
+        predictions = self.propagate(cells_to_radars.edge_index, x=cell_states, edge_weight=cells_to_radars.edge_weight)
+
+        return predictions
+
+    def message(self, x_j, edge_weight):
+        
+        return x_j * edge_weight.view(-1, 1)
+
+
 
 
 class InitialState(MessagePassing):
@@ -930,6 +1061,38 @@ class InitialState(MessagePassing):
         raise NotImplementedError
 
 
+class RadarToCellInterpolation(InitialState):
+
+    def __init__(self, mlp=None, **kwargs):
+        
+        super(RadarToCellInterpolation, self).__init__(**kwargs)
+
+        self.mlp = mlp
+        
+    def initial_state(self, graph_data, t, hidden):
+        
+        measurements = graph_data['radar'].x[:, t]
+        radars_to_cells = graph_data['radar', 'cell']
+
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+        embedded_measurements = torch.cat([measurements.view(n_radars, 1), torch.zeros((n_cells-n_radars, 1), device=measurements.device)], dim=0)
+
+        cell_states = self.propagate(radars_to_cells.edge_index, x=embedded_measurements, edge_weight=radars_to_cells.edge_weight)
+
+        if self.mlp is not None:
+            inputs = torch.cat([cell_states, hidden], dim=1)
+            cell_states = cell_states + self.mlp(inputs)
+
+        return cell_states
+
+    def message(self, x_j, edge_weight):
+        
+        return x_j * edge_weight.view(-1, 1)
+
+
+
+
 class InitialStateMLP(InitialState):
     """
     Predict initial bird densities for all cells based on encoder hidden states.
@@ -943,7 +1106,7 @@ class InitialStateMLP(InitialState):
         :param dynamic_features: tensor containing all dynamic node features
         """
 
-        super(InitialStateMLP, self).__init__()
+        super(InitialStateMLP, self).__init__(**kwargs)
 
         self.node_features = node_features
         self.dynamic_features = dynamic_features
@@ -965,12 +1128,15 @@ class InitialStateMLP(InitialState):
         :return x0: initial state estimate
         """
 
+        cell_data = graph_data['cell']
+        num_nodes = cell_data.num_nodes
+
         # static graph features
-        node_features = torch.cat([graph_data.get(feature).reshape(graph_data.num_nodes, -1) for
+        node_features = torch.cat([cell_data.get(feature).reshape(num_nodes, -1) for
                                           feature in self.node_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(graph_data.num_nodes, -1) for
+        dynamic_features_t0 = torch.cat([cell_data.get(feature)[..., t].reshape(num_nodes, -1) for
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([node_features, dynamic_features_t0, hidden], dim=1)
@@ -978,6 +1144,27 @@ class InitialStateMLP(InitialState):
         x0 = self.mlp(inputs)
 
         return x0
+
+
+class ObservationCopy(InitialState):
+    """
+    Copies observations to cells.
+    """
+
+    def __init__(self, **kwargs):
+        """
+        Initialize ObservationCopy.
+        """
+
+        super(ObservationCopy, self).__init__(**kwargs)
+
+
+    def initial_state(self, graph_data, t, *args, **kwargs):
+
+        cell_data = graph_data['cell']
+        assert hasattr(cell_data, 'x')
+
+        return cell_data.x[:, t].view(-1, 1)
 
 
 class GraphInterpolation(InitialState):
@@ -992,7 +1179,7 @@ class GraphInterpolation(InitialState):
         :param n_graph_layers: number of message passing rounds to use
         """
 
-        super(GraphInterpolation, self).__init__(aggr='add', node_dim=0)
+        super(GraphInterpolation, self).__init__(**kwargs)
 
         self.n_graph_layers = kwargs.get('n_graph_layers', 1)
 
@@ -1005,15 +1192,17 @@ class GraphInterpolation(InitialState):
         :return x0: initial state estimate
         """
 
-        assert hasattr(graph_data, 'x')
+        cell_data = graph_data['cell']
 
-        observation_mask = graph_data.missing[:, t]
-        validity = graph_data.missing[:, t]
+        assert hasattr(cell_data, 'x')
+
+        observation_mask = cell_data.missing[:, t]
+        validity = cell_data.missing[:, t]
 
         # propagate data through graph
         for _ in range(self.n_graph_layers):
             # message passing through graph
-            x, validity = self.propagate(graph_data.edge_index, x=graph_data.x, mask=observation_mask,
+            x, validity = self.propagate(graph_data['cell', 'cell'].edge_index, x=cell_data.x[:, t], mask=observation_mask,
                                          validity=validity)#, edge_weight=graph_data.edge_weight)
 
         return x
@@ -1090,6 +1279,7 @@ class RecurrentDecoder(torch.nn.Module):
         dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
+        #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
 
         hidden = self.node_lstm(inputs)
@@ -1633,9 +1823,8 @@ class Extrapolation(MessagePassing):
 
         self.edge_index = edge_index
 
-    def initialize(self, graph_data):
-
-        self.edge_index = graph_data.edge_index[:, torch.logical_not(graph_data.boundary2boundary_edges)]
+    def initialize(self, cell_edges):
+        self.edge_index = cell_edges.edge_index[:, torch.logical_not(cell_edges.boundary2boundary_edges)]
 
     def forward(self, var):
         var = self.propagate(self.edge_index, var=var)
@@ -1676,16 +1865,16 @@ class RecurrentEncoder(torch.nn.Module):
         """Run encoder until the given number of context time steps has been reached."""
 
         # initialize lstm variables
-        h_t = [torch.zeros(data.x.size(0), self.n_hidden, device=data.x.device) for _ in range(self.n_lstm_layers)]
-        c_t = [torch.zeros(data.x.size(0), self.n_hidden, device=data.x.device) for _ in range(self.n_lstm_layers)]
+        h_t = [torch.zeros(data.num_nodes, self.n_hidden, device=data.coords.device) for _ in range(self.n_lstm_layers)]
+        c_t = [torch.zeros(data.num_nodes, self.n_hidden, device=data.coords.device) for _ in range(self.n_lstm_layers)]
 
-        node_features = torch.cat([data.get(feature).reshape(data.x.size(0), -1) for
+        node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
                                    feature in self.node_features], dim=1)
 
         for t in range(self.t_context):
 
             # dynamic features for current time step
-            dynamic_features = torch.cat([data.get(feature)[..., t].reshape(data.x.size(0), -1) for
+            dynamic_features = torch.cat([data.get(feature)[..., t].reshape(data.num_nodes, -1) for
                                           feature in self.dynamic_features], dim=1)
             inputs = torch.cat([node_features, dynamic_features], dim=1)
 

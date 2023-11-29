@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
 #SBATCH --job-name=fluxrgnn_training
-#SBATCH --time=08:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
