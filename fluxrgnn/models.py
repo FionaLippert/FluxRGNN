@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj
 import pytorch_lightning as pl
@@ -24,7 +24,7 @@ class ForecastModel(pl.LightningModule):
         # forecasting settings
         self.horizon = max(1, kwargs.get('horizon', 1))
         self.t_context = max(1, kwargs.get('context', 1))
-        self.tf_start = min(1.0, kwargs.get('teacher_forcing', 1.0))
+        self.tf_start = min(1.0, kwargs.get('teacher_forcing', 0.0))
 
         # observation model mapping cell densities to radar observations
         self.observation_model = observation_model
@@ -38,7 +38,7 @@ class ForecastModel(pl.LightningModule):
         else:
             self.zero_value = 0
 
-    def forecast(self, data, horizon, teacher_forcing=0):
+    def forecast(self, data, horizon, teacher_forcing=0, t0=0):
         """
         Setup prediction for given data and run model until the max forecasting horizon is reached.
 
@@ -47,24 +47,40 @@ class ForecastModel(pl.LightningModule):
         :return: predicted migration intensities for all cells and time points
         """
 
+        # make sure t0 is tensor of dimension 2
+        if not isinstance(t0, torch.Tensor):
+            t0 = torch.tensor(t0, device=self.device)
+        t0 = t0.view(-1, 1)
+
         # initialize forecast
-        model_states = self.initialize(data)
+        model_states = self.initialize(data, t0)
         y_hat = []
+        
+        # TODO: include initial model state in forecast and training as well (but how to do this for MLP?)
 
         # only cell data is needed for forecasting
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         
+
         # predict until the max forecasting horizon is reached
         forecast_horizon = range(self.t_context, self.t_context + horizon)
-        for t in forecast_horizon:
+        for tidx in forecast_horizon:
+
+            t = t0 + tidx
 
             # use gt data instead of model output with probability 'teacher_forcing'
-            #r = torch.rand(1)
+            r = torch.rand(1)
             #if hasattr(data, 'x') and (r < teacher_forcing):
+            if r < teacher_forcing:
+                #print('use teacher forcing')
                 # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
                 #  or use smaller horizon instead of teacher forcing?
                 #model_states['x'] = data.x[..., t - 1].view(-1, 1)
-
+                radars_to_cells = data['radar', 'cell']
+                interpolated = self.observation_model(data['radar'].x, radars_to_cells)
+                model_states['x'] = tidx_select(interpolated, t - 1).view(-1, 1)
+            #else:
+            #    print('no ground truth data available to use for teacher forcing')
             
             
             # make prediction for next time step
@@ -76,7 +92,7 @@ class ForecastModel(pl.LightningModule):
         return prediction
 
 
-    def initialize(self, data):
+    def initialize(self, data, t0=0):
 
         model_states = {}
 
@@ -96,17 +112,23 @@ class ForecastModel(pl.LightningModule):
                                  self.current_epoch)
         self.log('teacher_forcing', tf)
         
-        if self.config.get('increase_horizon', False):
-            horizon = min(self.horizon, self.current_epoch + 1)
+        h_rate = self.config.get('increase_horizon_rate', 0)
+        if h_rate > 0:
+            epoch = max(0, self.current_epoch - self.config.get('increase_horizon_start', 0))
+            horizon = min(self.horizon, int(epoch * h_rate) + 1)
         else:
             horizon = self.horizon
 
+        self.log('horizon', horizon)
+        
+        t0 = torch.randint(0, self.config.get('max_t0', 1), (batch.num_graphs,), device=self.device)
+        
         # extract relevant data from batch
         #cell_data = batch.node_type_subgraph(['cell']).to_homogeneous()
         radar_data = batch['radar']
         
         # make predictions for all cells
-        prediction = self.forecast(batch, horizon, teacher_forcing=tf)
+        prediction = self.forecast(batch, horizon, teacher_forcing=tf, t0=t0)
 
         # map cell predictions to radar observations
         if self.observation_model is not None:
@@ -115,19 +137,21 @@ class ForecastModel(pl.LightningModule):
             prediction = prediction[:radar_data.num_nodes]
 
         #compute loss
-        eval_dict = self._eval_step(radar_data, prediction, horizon, prefix='train')
+        eval_dict = self._eval_step(radar_data, prediction, horizon, prefix='train', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
         return eval_dict['train/loss']
 
 
     def validation_step(self, batch, batch_idx):
-        
+
+        t0 = torch.randint(0, self.config.get('max_t0', 1), (batch.num_graphs,), device=self.device)
+
         # extract relevant data from batch
         radar_data = batch['radar']
         
         # make predictions for all cells
-        prediction = self.forecast(batch, self.horizon)
+        prediction = self.forecast(batch, self.horizon, t0=t0)
 
         # apply observation model to forecast
         if self.observation_model is not None:
@@ -136,7 +160,7 @@ class ForecastModel(pl.LightningModule):
             prediction = prediction[:radar_data.num_nodes]
 
         # evaluate forecast
-        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='val')
+        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='val', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
 
@@ -155,32 +179,34 @@ class ForecastModel(pl.LightningModule):
         # extract relevant data from batch
         #cell_data = batch.node_type_subgraph(['cell']).to_homogeneous()
         radar_data = batch['radar']
-        
-        # make predictions for all cells
-        prediction = self.forecast(batch, self.horizon)
 
-        # apply observation model to forecast
-        if self.observation_model is not None:
-            cells_to_radars = batch['cell', 'radar']
-            prediction = self.observation_model(prediction, cells_to_radars)
-            prediction = prediction[:radar_data.num_nodes]
+        for t0 in range(self.config.get('max_t0', 1)):
+            #print(t0)
+            # make predictions for all cells
+            prediction = self.forecast(batch, self.horizon, t0=t0)
 
-        # compute evaluation metrics
-        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='test')
-        self.log_dict(eval_dict, batch_size=batch.num_graphs)
+            # apply observation model to forecast
+            if self.observation_model is not None:
+                cells_to_radars = batch['cell', 'radar']
+                prediction = self.observation_model(prediction, cells_to_radars)
+                prediction = prediction[:radar_data.num_nodes]
 
-        # compute evaluation metrics as a function of the forecasting horizon
-        eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False)
+            # compute evaluation metrics
+            eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='test', t0=t0)
+            self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
-        for m, values in eval_dict_per_t.items():
-            if m in self.test_metrics:
-                self.test_metrics[m].append(values)
-            else:
-                self.test_metrics[m] = [values]
+            # compute evaluation metrics as a function of the forecasting horizon
+            eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False, t0=t0)
 
-        self.test_results['test/mask'].append(torch.logical_not(radar_data.missing)[:, :self.t_context + self.horizon])
-        self.test_results['test/measurements'].append(self.to_raw(radar_data.x)[:, :self.t_context + self.horizon])
-        self.test_results['test/predictions'].append(self.to_raw(prediction))
+            for m, values in eval_dict_per_t.items():
+                if m in self.test_metrics:
+                    self.test_metrics[m].append(values)
+                else:
+                    self.test_metrics[m] = [values]
+
+            self.test_results['test/mask'].append(torch.logical_not(radar_data.missing)[:, t0:t0 +self.t_context + self.horizon])
+            self.test_results['test/measurements'].append(self.to_raw(radar_data.x)[:, t0:t0 + self.t_context + self.horizon])
+            self.test_results['test/predictions'].append(self.to_raw(prediction))
 
 
     def on_test_epoch_end(self):
@@ -197,9 +223,12 @@ class ForecastModel(pl.LightningModule):
         # extract relevant data from batch
         cell_data = batch['cell']
         radar_data = batch['radar']
+
+
+        #for t0 in range(self.config.get('max_t0', 1)):
         
         # make predictions for all cells
-        prediction = self.forecast(batch, self.horizon)
+        prediction = self.forecast(batch, self.horizon, t0=0)
 
         # apply observation model to forecast
         if self.observation_model is not None:
@@ -243,7 +272,11 @@ class ForecastModel(pl.LightningModule):
     def _regularizer(self):
         return 0
 
-    def _eval_step(self, radar_data, output, horizon, prefix='', aggregate_time=True):
+    def _eval_step(self, radar_data, output, horizon, prefix='', aggregate_time=True, t0=0):
+
+        if not isinstance(t0, torch.Tensor):
+            t0 = torch.tensor(t0, device=self.device)
+        t0 = t0.view(-1, 1)
         
 
         if self.config.get('force_zeros', False):
@@ -251,8 +284,9 @@ class ForecastModel(pl.LightningModule):
         else:
             mask = torch.logical_not(radar_data.missing)
 
-        gt = radar_data.x[:, self.t_context: self.t_context + horizon]
-        mask = mask[:, self.t_context: self.t_context + horizon]
+        gt = tidx_select(radar_data.x, t0, steps=(self.t_context + horizon))
+        gt = gt.view(radar_data.x.size(0), -1)[:, self.t_context: self.t_context + horizon]
+        mask = tidx_select(mask, t0, steps=(self.t_context + horizon)).view(mask.size(0), -1)[:, self.t_context: self.t_context + horizon]
         output = output[:, :horizon]
         
         if aggregate_time:
@@ -260,22 +294,28 @@ class ForecastModel(pl.LightningModule):
             mask = mask.reshape(-1)
             output = output.reshape(-1)
 
-        loss = utils.MSE(output, gt, mask)
+        if self.config.get('root_tranformed_loss', False):
+            loss = utils.MSE(torch.pow(output, 1/3), torch.pow(gt, 1/3), mask)
+        else:
+            loss = utils.MSE(output, gt, mask)
         
         if self.training:
             regularizer = self._regularizer()
             loss = loss + self.config.get('regularizer_weight', 1.0) * regularizer
             eval_dict = {f'{prefix}/loss': loss,
+                         f'{prefix}/log-loss': torch.log(loss),
                          f'{prefix}/regularizer': regularizer}
         else:
-            eval_dict = {f'{prefix}/loss': loss}
+            eval_dict = {f'{prefix}/loss': loss,
+                         f'{prefix}/log-loss': torch.log(loss)}
 
         if not self.training:
             self._add_eval_metrics(eval_dict, self.to_raw(gt), self.to_raw(output),
                                    mask, prefix=f'{prefix}/raw')
             self._add_eval_metrics(eval_dict, self.to_log(gt), self.to_log(output),
                                    mask, prefix=f'{prefix}/log')
-            # print(f'negative predictions = {(output < 0).sum()}')
+            self._add_eval_metrics(eval_dict, self.to_raw(gt)**(1/3), self.to_raw(output)**(1/3),
+                                   mask, prefix=f'{prefix}/cube-root')
             # print(f'val mask entries = {mask.sum()}')
 
         return eval_dict
@@ -307,11 +347,18 @@ class ForecastModel(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.get('lr', 0.01))
+        #optimizer = torch.optim.Adam(self.parameters(), lr=self.config.get('lr', 0.01))
+        optimizer = self.config.get('optimizer')(self.parameters())
+        #scheduler = StepLR(optimizer,
+        #                   step_size=self.config.get('lr_decay', 1000),
+        #                   gamma=self.config.get('lr_gamma', 1))
 
-        scheduler = StepLR(optimizer,
-                           step_size=self.config.get('lr_decay', 1000),
-                           gamma=self.config.get('lr_gamma', 1))
+        scheduler_list = self.config.get('lr_schedulers', None)
+        milestone_list = self.config.get('lr_milestones', None)
+        if scheduler_list is not None and milestone_list is not None:
+            scheduler = SequentialLR(optimizer, [s_partial(optimizer) for s_partial in scheduler_list], milestones=milestone_list)
+        else:
+            scheduler = ConstantLR(optimizer, factor=1.0, total_iters=1e8)
 
         return {"optimizer": optimizer,
                 "lr_scheduler": scheduler}
@@ -346,7 +393,7 @@ class FluxRGNN(ForecastModel):
         self.initial_model = initial_model
 
 
-    def initialize(self, graph_data):
+    def initialize(self, graph_data, t0=0):
 
         # TODO: use separate topographical / location embedding model whose output is fed to all other model components?
 
@@ -355,7 +402,7 @@ class FluxRGNN(ForecastModel):
 
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            h_t, c_t = self.encoder(cell_data)
+            h_t, c_t = self.encoder(cell_data, t0)
         else:
             h_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device) for
                    _ in range(self.decoder.n_lstm_layers)]
@@ -372,14 +419,14 @@ class FluxRGNN(ForecastModel):
 
         # relevant info for later
         if not self.training and self.config.get('store_fluxes', False):
-            self.edge_fluxes = torch.zeros((cell_edges.edge_index.size(1), 1, self.horizon), device=cell_data.coords.device)
-            self.node_flux = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
-            self.node_sink = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
-            self.node_source = torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
+            self.edge_fluxes = []#torch.zeros((cell_edges.edge_index.size(1), 1, self.horizon), device=cell_data.coords.device)
+            self.node_flux = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
+            self.node_sink = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
+            self.node_source = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
 
         # initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, self.t_context - 1, h_t[-1])
+            x = self.initial_model(graph_data, max(0, self.t_context - 1) + t0, h_t[-1])
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
         else:
@@ -399,21 +446,20 @@ class FluxRGNN(ForecastModel):
     def forecast_step(self, model_states, cell_data, t, teacher_forcing=0):
 
         # use gt data instead of model output with probability 'teacher_forcing'
-        r = torch.rand(1)
-        if cell_data.x is not None and (r < teacher_forcing):
+        #r = torch.rand(1)
+        #if cell_data.x is not None and (r < teacher_forcing):
             # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
             #  or use smaller horizon instead of teacher forcing?
-            x = cell_data.x[..., t - 1].view(-1, 1)
-        else:
-            x = model_states['x']
+            #x = cell_data.x[torch.arange(cell_data.num_nodes, device=cell_data.x.device), t - 1].view(-1, 1)
+        #else:
+        x = model_states['x']
         
         hidden = model_states['hidden']
-        tidx = t - self.t_context
+        #tidx = t - self.t_context
 
         if self.boundary_model is not None:
             x_boundary = self.boundary_model(x)
             h_boundary = self.boundary_model(hidden)
-            #print(model_states['inner_nodes'].size(), model_states['boundary_nodes'].size())
             x = x * model_states['inner_nodes'] + x_boundary * model_states['boundary_nodes']
             hidden = hidden * model_states['inner_nodes'] + h_boundary * model_states['boundary_nodes']
         #print(f'x after boundary model: {x.size()}')
@@ -430,8 +476,8 @@ class FluxRGNN(ForecastModel):
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
-                self.edge_fluxes[..., tidx] = self.flux_model.edge_fluxes
-                self.node_flux[..., tidx] = self.flux_model.node_flux
+                self.edge_fluxes.append(self.flux_model.edge_fluxes)
+                self.node_flux.append(self.flux_model.node_flux)
 
         if self.source_sink_model is not None:
 
@@ -442,14 +488,14 @@ class FluxRGNN(ForecastModel):
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
-                self.node_source[..., tidx] = self.source_sink_model.node_source
-                self.node_sink[..., tidx] = self.source_sink_model.node_sink
+                self.node_source.append(self.source_sink_model.node_source)
+                self.node_sink.append(self.source_sink_model.node_sink)
             else:
                 #self.regularizers.append(delta)
                 self.regularizers.append(self.source_sink_model.node_source + self.source_sink_model.node_sink)
         if self.config.get('force_zeros', False):
-            x = x * cell_data.local_night[..., t]
-            x = x + self.zero_value * torch.logical_not(cell_data.local_night[..., t])
+            x = x * cell_data.local_night[torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t]
+            x = x + self.zero_value * torch.logical_not(cell_data.local_night[torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t])
         
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -574,9 +620,9 @@ class LocalMLPForecast(ForecastModel):
     def forecast_step(self, model_states, data, t, *args, **kwargs):
 
         if self.use_acc:
-            inputs = torch.cat([data.coords, data.env[..., t], data.acc[..., t]], dim=1)
+            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1), tidx_select(data.env, t).reshape(data.num_nodes, -1), tidx_select(data.acc, t)], dim=1)
         else:
-            inputs = torch.cat([data.coords, data.env[..., t]], dim=1)
+            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1), tidx_select(data.env, t).reshape(data.num_nodes, -1)], dim=1)
 
         x = self.mlp(inputs)
 
@@ -584,8 +630,8 @@ class LocalMLPForecast(ForecastModel):
             x = torch.pow(x, 2)
 
         if self.config.get('force_zeros', False):
-            x = x * data.local_night[..., t]
-            x = x + self.zero_value * torch.logical_not(data.local_night[..., t])
+            x = x * tidx_select(data.local_night, t)
+            x = x + self.zero_value * torch.logical_not(tidx_select(data.local_night, t))
 
         model_states['x'] = x
 
@@ -662,7 +708,7 @@ class SeasonalityForecast(ForecastModel):
 
         self.automatic_optimization = False
 
-    def forecast_step(self, model_states, data, t):
+    def forecast_step(self, model_states, data, t, *args, **kwargs):
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
         model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]].view(-1, 1)
@@ -794,9 +840,9 @@ class Fluxes(MessagePassing):
                                    feature in self.edge_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
-        dynamic_features_t1 = torch.cat([graph_data.get(feature)[..., t - 1].reshape(x.size(0), -1) for
+        dynamic_features_t1 = torch.cat([tidx_select(graph_data.get(feature), t-1).reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
         # message passing through graph
@@ -946,7 +992,7 @@ class SourceSink(torch.nn.Module):
                                           feature in self.node_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
@@ -1059,6 +1105,7 @@ class InitialState(MessagePassing):
     def initial_state(self, graph_data, t, *args, **kwargs):
 
         raise NotImplementedError
+    
 
 
 class RadarToCellInterpolation(InitialState):
@@ -1071,7 +1118,7 @@ class RadarToCellInterpolation(InitialState):
         
     def initial_state(self, graph_data, t, hidden):
         
-        measurements = graph_data['radar'].x[:, t]
+        measurements = tidx_select(graph_data['radar'].x, t)
         radars_to_cells = graph_data['radar', 'cell']
 
         n_radars = graph_data['radar'].num_nodes
@@ -1136,7 +1183,7 @@ class InitialStateMLP(InitialState):
                                           feature in self.node_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([cell_data.get(feature)[..., t].reshape(num_nodes, -1) for
+        dynamic_features_t0 = torch.cat([tidx_select(cell_data.get(feature), t).reshape(num_nodes, -1) for
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([node_features, dynamic_features_t0, hidden], dim=1)
@@ -1164,7 +1211,7 @@ class ObservationCopy(InitialState):
         cell_data = graph_data['cell']
         assert hasattr(cell_data, 'x')
 
-        return cell_data.x[:, t].view(-1, 1)
+        return tidx_select(cell_data.x, t).view(-1, 1)
 
 
 class GraphInterpolation(InitialState):
@@ -1196,13 +1243,13 @@ class GraphInterpolation(InitialState):
 
         assert hasattr(cell_data, 'x')
 
-        observation_mask = cell_data.missing[:, t]
-        validity = cell_data.missing[:, t]
+        observation_mask = tidx_select(cell_data.missing, t)
+        validity = tidx_select(cell_data.missing, t)
 
         # propagate data through graph
         for _ in range(self.n_graph_layers):
             # message passing through graph
-            x, validity = self.propagate(graph_data['cell', 'cell'].edge_index, x=cell_data.x[:, t], mask=observation_mask,
+            x, validity = self.propagate(graph_data['cell', 'cell'].edge_index, x=tidx_select(cell_data.x, t), mask=observation_mask,
                                          validity=validity)#, edge_weight=graph_data.edge_weight)
 
         return x
@@ -1276,7 +1323,7 @@ class RecurrentDecoder(torch.nn.Module):
                                           feature in self.node_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([graph_data.get(feature)[..., t].reshape(x.size(0), -1) for
+        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
@@ -1285,9 +1332,6 @@ class RecurrentDecoder(torch.nn.Module):
         hidden = self.node_lstm(inputs)
 
         return hidden
-
-
-
 
 
 
@@ -1861,7 +1905,7 @@ class RecurrentEncoder(torch.nn.Module):
         self.lstm_layers.apply(init_weights)
         init_weights(self.input2hidden)
 
-    def forward(self, data):
+    def forward(self, data, t0=0):
         """Run encoder until the given number of context time steps has been reached."""
 
         # initialize lstm variables
@@ -1870,11 +1914,14 @@ class RecurrentEncoder(torch.nn.Module):
 
         node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
                                    feature in self.node_features], dim=1)
-
-        for t in range(self.t_context):
-
+        # TODO: push node_features through GNN or MLP to extract spatial representations?
+        
+        for tidx in range(self.t_context):
+            
+            t = tidx + t0
+            
             # dynamic features for current time step
-            dynamic_features = torch.cat([data.get(feature)[..., t].reshape(data.num_nodes, -1) for
+            dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.num_nodes, -1) for
                                           feature in self.dynamic_features], dim=1)
             inputs = torch.cat([node_features, dynamic_features], dim=1)
 
@@ -2146,6 +2193,46 @@ def init_weights(m):
     """Initialize model weights with Kaiming method for relu activations"""
     if type(m) == nn.Linear:
         nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+
+
+def encode_position(pos):
+
+    return torch.cat([torch.sin(pos), torch.cos(pos)])
+
+
+def tidx_select(features, indices, steps=0):
+        
+    shape = torch.tensor(features.size()) # [graphs * nodes, ..., time steps]
+    
+    if indices.size(0) == 1:
+        full_indices = indices.repeat(shape[0], 1) # [graphs * nodes, 1)
+    else:
+        full_indices = indices.repeat(1, int(shape[0] / indices.size(0))).view(-1, 1) # [graphs * nodes, 1]
+    #if len(shape) > 2:
+    #    full_indices = full_indices.repeat(1, torch.prod(shape[1:-1])).view(-1, 1)
+
+    #full_indices = full_indices.view(-1)
+
+    tidx = torch.arange(shape[-1], device=features.device).view(1, -1).repeat(shape[0], 1)
+   
+    #print(tidx.device, features.device, full_indices.device)
+    mask = torch.logical_and(tidx >= full_indices, tidx <= full_indices + steps)
+
+    if len(shape) > 2:
+        dim1 = torch.prod(shape[1:-1])
+        f = features.view(shape[0], -1, shape[-1])[mask.view(shape[0], 1, shape[-1]).repeat(1, dim1, 1)]
+        #f = f.view(*shape[:-1], -1)
+    else:
+        f = features[mask]
+
+
+    #f = features.view(-1, shape[-1])[torch.arange(torch.prod(shape[:-1]), device=features.device), full_indices]
+    
+    f = f.view(*shape[:-1], -1)
+    
+    #print(f'original shape = {shape}, after selection = {f.size()}')
+
+    return f
 
 
 def angle(x1, y1, x2, y2):

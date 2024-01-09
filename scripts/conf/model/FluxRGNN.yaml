@@ -11,28 +11,69 @@ n_hidden: 128
 #n_fc_layers: 2
 #n_lstm_layers: 1
 
+max_t0: ${datasource.tidx_step}
 context: 24
 horizon: 48
 test_horizon: 72
 
 #epochs: 300
 #batch_size: 4
-lr: 1e-5
-lr_decay: 300
-lr_gamma: 1.0
+lr: 1e-3
+lr_schedulers:
+        #- _target_: torch.optim.lr_scheduler.LinearLR
+        #  _partial_: true
+        #  start_factor: 1e-5
+        #  end_factor: 1.0
+        #  total_iters: 10
+        #- _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+        #  _partial_: true
+        #  T_max: 40
+        #  eta_min: 1e-5
+        #- _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+        #  _partial_: true
+        #  T_0: 10
+        #  T_mult: 2
+        #  eta_min: 1e-5
+        #- _target_: torch.optim.lr_scheduler.CyclicLR
+        #  _partial_: true
+        #  base_lr: 1e-5
+        #  max_lr: 1e-4
+        #  step_size_up: 10
+        #  step_size_down: 10
+        #  mode: triangular2
+        #  #gamma: 0.95
+        #  cycle_momentum: false
+        - _target_: torch.optim.lr_scheduler.ConstantLR
+          _partial_: true
+          factor: 1e-2
+          total_iters: ${trainer.max_epochs}
+lr_milestones: []
+#        - 10
+#        - 50
+#        - 90
+          #- 100 #50
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: ${model.lr}
+
+  #lr_decay: 300
+#lr_gamma: 1.0
 #early_stopping: true
 #stopping_criterion: 1e-6
 #avg_window: 50
 dropout_p: 0.0
+teacher_forcing: 0.0
 teacher_forcing_gamma: 0.95
-increase_horizon: false
+increase_horizon_rate: 0.2
+increase_horizon_start: 50
 
 force_zeros: false
 #use_encoder: true
 #use_boundary_model: true
 #use_uv: true
 #root_transformed_loss: false
-compute_fluxes: true
+#compute_fluxes: true
 edge_type: voronoi
 birds_per_km2: true
 

@@ -7,13 +7,30 @@ n_hidden: 256
 n_fc_layers: 3
 n_env: ${len:${datasource.env_vars}}
 dropout_p: 0.0
-lr: 0.0001
-lr_decay: 300
-lr_gamma: 1.0
+lr: 1e-3
+lr_schedulers:
+        - _target_: torch.optim.lr_scheduler.ConstantLR
+          _partial_: true
+          factor: 1e-2
+          total_iters: ${trainer.max_epochs}
+lr_milestones: []
+
+optimizer:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${model.lr}
+
+increase_horizon_rate: 0.0
+increase_horizon_start: 0
+#lr_decay: 300
+#lr_gamma: 1.0
+
+max_t0: ${datasource.tidx_step}
 horizon: 48
 context: 24
 test_horizon: 72
 test_context: 24
+
 force_zeros: false
 use_acc_vars: false
 root_transformed_loss: false

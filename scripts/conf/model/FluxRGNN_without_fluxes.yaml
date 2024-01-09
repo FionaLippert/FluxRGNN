@@ -18,8 +18,10 @@ lr: 1e-4
 lr_decay: 300
 lr_gamma: 1.0
 dropout_p: 0.0
-teacher_forcing: 1.0
-teacher_forcing_gamma: 1.0
+teacher_forcing: 0.0
+teacher_forcing_gamma: 0.95
+increase_horizon_rate: 0.2
+regularizer_weight: 0.0
 
 force_zeros: false
 use_encoder: true

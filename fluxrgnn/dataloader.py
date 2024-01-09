@@ -855,7 +855,12 @@ class RadarHeteroData(InMemoryDataset):
         coord_cols = ['x', 'y']
         xy_scale = cells[coord_cols].abs().max().max()
         cells[coord_cols] = cells[coord_cols] / xy_scale
-        coords = cells[coord_cols].to_numpy()
+        local_pos = cells[coord_cols].to_numpy()
+
+        lonlat_encoding = np.stack([np.sin(cells['lon'].to_numpy()), 
+                                    np.cos(cells['lon'].to_numpy()),
+                                    np.sin(cells['lat'].to_numpy()),
+                                    np.cos(cells['lat'].to_numpy())], dim=1)
 
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         if self.edge_type == 'none':
@@ -902,6 +907,7 @@ class RadarHeteroData(InMemoryDataset):
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
+            print(k, data[k].shape)
 
         # find timesteps where it's night for all cells
         check_all = data['nighttime'].all(axis=0)
@@ -964,7 +970,8 @@ class RadarHeteroData(InMemoryDataset):
 
             cell_data = {
                 # static cell features
-                'coords': torch.tensor(coords, dtype=torch.float),
+                'pos': torch.tensor(local_pos, dtype=torch.float),
+                'coords': torch.tensor(lonlat_embedding, dtype=torch.float),
                 'areas': torch.tensor(areas, dtype=torch.float),
                 'boundary': torch.tensor(boundary, dtype=torch.bool),
                 'cidx': torch.arange(len(cells), dtype=torch.long),
@@ -1144,11 +1151,13 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     #         for year in years]
 
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
-                      **cfg, **cfg.model, **cfg.datasource,
+                      **cfg, **cfg.model,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,
-                      # env_vars=cfg.datasource.env_vars,
+                      env_vars=cfg.datasource.env_vars,
+                      tidx_start=cfg.datasource.get('tidx_start', 0),
+                      tidx_step=cfg.datasource.get('tidx_step', 1),
                       transform=transform
                       )
             for year in years]

@@ -11,6 +11,8 @@ n_hidden: 128
 #n_fc_layers: 2
 #n_lstm_layers: 1
 
+
+max_t0: ${datasource.tidx_step}
 context: 24
 horizon: 48
 test_horizon: 72
@@ -19,8 +21,9 @@ lr: 1e-5
 lr_decay: 300
 lr_gamma: 1.0
 dropout_p: 0.1
-teacher_forcing_gamma: 1.0
-increase_horizon: true
+teacher_forcing: 0.0
+teacher_forcing_gamma: 0.95
+increase_horizon_rate: 0.2
 
 force_zeros: false
 edge_type: hexagons 
