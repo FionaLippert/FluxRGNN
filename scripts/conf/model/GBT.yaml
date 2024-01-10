@@ -1,13 +1,46 @@
 # @package model
-name: GBT
-n_estimators: 200
-lr: 0.05
-max_depth: 10
-horizon: 1
+_target_: fluxrgnn.models.XGBoostForecast
+
+#name: XGBoost
+
+coord_dim: 2
+n_env: ${len:${datasource.env_vars}}
+
+xgboost:
+  _target_: sklearn.ensemble.GradientBoostingRegressor
+  n_estimators: 200
+  learning_rate: 0.05
+  max_depth: 10
+  tol: 1e-8
+  n_iter_no_change: 10
+  random_state: ${seed}
+
+max_t0: ${datasource.tidx_step}
 test_horizon: 72
 test_context: 24
-tolerance: 1e-8
+
 use_acc_vars: false
 edge_type: none
 birds_per_km2: true
-n_dummy_radars: 0
+#n_dummy_radars: 0
+
+node_features:
+#  coords: ${model.coord_dim}
+  pos: ${model.coord_dim}
+dynamic_features:
+  env: ${model.n_env}
+
+use_log_transform: false
+log_offset: 0.1
+pow_exponent: 0.3333
+scale: 1.0 #0.1 #0.001
+
+
+transforms:
+  - _target_: transforms.PowerTransform
+    feature: x
+    exponent: ${model.pow_exponent}
+#  - _target_: transforms.Rescaling
+#    feature: x
+#    factor: ${model.scale}
+

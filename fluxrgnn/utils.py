@@ -73,6 +73,15 @@ def MSE(output, gt, mask):
     mse = torch.sum(diff2 * mask, dim=0) / torch.sum(mask, dim=0)
     return mse
 
+def R2(output, gt, mask):
+
+    mse = MSE(output, gt, mask)
+    var = MSE(gt, torch.mean(gt, dim=0).unsqueeze(0), mask)
+
+    r2 = 1 - (mse/var)
+
+    return r2
+
 def MSE_weighted(output, gt, mask, p=0.75):
 
     diff = torch.abs(output - gt)

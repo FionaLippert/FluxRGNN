@@ -57,6 +57,17 @@ optimizer:
   _partial_: true
   lr: ${model.lr}
 
+use_log_transform: false
+log_offset: 0.1
+scale: 0.001
+transforms:
+#  - _target_: transforms.LogTransform
+#    feature: x
+#    offset: ${model.log_offset}
+  - _target_: transforms.Rescaling
+    feature: x
+    factor: ${model.scale}
+
   #lr_decay: 300
 #lr_gamma: 1.0
 #early_stopping: true
@@ -76,10 +87,6 @@ force_zeros: false
 #compute_fluxes: true
 edge_type: voronoi
 birds_per_km2: true
-
-use_log_transform: false
-log_offset: 0.1
-scale: 0.001
 
 regularizer_weight: 0.0
 
@@ -115,6 +122,7 @@ flux_model:
   log_offset: ${model.log_offset}
   scale: ${model.scale}
   dropout_p: ${model.dropout_p}
+  transforms: ${model.transforms}
 
 
 source_sink_model:
@@ -131,6 +139,7 @@ source_sink_model:
   log_offset: ${model.log_offset}
   scale: ${model.scale}
   dropout_p: ${model.dropout_p}
+  transforms: ${model.transforms}
 
 
 #initial_model:
@@ -154,6 +163,7 @@ initial_model:
   log_offset: ${model.log_offset}
   scale: ${model.scale}
   dropout_p: ${model.dropout_p}
+  transforms: ${model.transforms}
 
 #initial_model:
 #  _target_: fluxrgnn.models.GraphInterpolation

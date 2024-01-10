@@ -860,7 +860,7 @@ class RadarHeteroData(InMemoryDataset):
         lonlat_encoding = np.stack([np.sin(cells['lon'].to_numpy()), 
                                     np.cos(cells['lon'].to_numpy()),
                                     np.sin(cells['lat'].to_numpy()),
-                                    np.cos(cells['lat'].to_numpy())], dim=1)
+                                    np.cos(cells['lat'].to_numpy())], axis=1)
 
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         if self.edge_type == 'none':
@@ -872,8 +872,8 @@ class RadarHeteroData(InMemoryDataset):
             # get distances, angles and face lengths between radars
             distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
             angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
-            delta_x = np.array([coords[j, 0] - coords[i, 0] for i, j in G.edges()])
-            delta_y = np.array([coords[j, 1] - coords[i, 1] for i, j in G.edges()])
+            delta_x = np.array([local_pos[j, 0] - local_pos[i, 0] for i, j in G.edges()])
+            delta_y = np.array([local_pos[j, 1] - local_pos[i, 1] for i, j in G.edges()])
 
             face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]), min=0)
             edge_attr = torch.stack([
@@ -909,21 +909,28 @@ class RadarHeteroData(InMemoryDataset):
             data[k] = np.stack(v, axis=0).astype(float)
             print(k, data[k].shape)
 
-        # find timesteps where it's night for all cells
-        check_all = data['nighttime'].all(axis=0)
 
-        # group into nights
-        groups = [list(g) for k, g in it.groupby(enumerate(check_all), key=lambda x: x[-1])]
-        nights = [[item[0] for item in g] for g in groups if g[0][1]]
+        if self.timesteps == 'all':
+            # use a single sequence for the entire year
+            for k, v in data.items():
+                print(f'{k}: {v.shape}')
+                data[k] = np.expand_dims(v, axis=-1)
+            tidx = np.expand_dims(tidx, axis=-1)
+        else:
+            # find timesteps where it's night for all cells
+            check_all = data['nighttime'].all(axis=0)
 
+            # group into nights
+            groups = [list(g) for k, g in it.groupby(enumerate(check_all), key=lambda x: x[-1])]
+            nights = [[item[0] for item in g] for g in groups if g[0][1]]
 
-        # reshape data into sequences
-        for k, v in data.items():
-            data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
-                              self.tidx_start, self.tidx_step)
+            # reshape data into sequences
+            for k, v in data.items():
+                data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
+                                  self.tidx_start, self.tidx_step)
 
-        tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
-                       self.tidx_start, self.tidx_step)
+            tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
+                           self.tidx_start, self.tidx_step)
 
 
         # remove sequences with too much missing data
@@ -971,7 +978,7 @@ class RadarHeteroData(InMemoryDataset):
             cell_data = {
                 # static cell features
                 'pos': torch.tensor(local_pos, dtype=torch.float),
-                'coords': torch.tensor(lonlat_embedding, dtype=torch.float),
+                'coords': torch.tensor(lonlat_encoding, dtype=torch.float),
                 'areas': torch.tensor(areas, dtype=torch.float),
                 'boundary': torch.tensor(boundary, dtype=torch.bool),
                 'cidx': torch.arange(len(cells), dtype=torch.long),
@@ -1018,7 +1025,6 @@ class RadarHeteroData(InMemoryDataset):
                 'env_vars': self.env_vars,
                 'timepoints': time,
                 'tidx': tidx,
-                'nights': nights,
                 'n_seq_discarded': n_seq_discarded
         }
 
@@ -1101,12 +1107,12 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
         context = cfg.model.get('test_context', 0)
 
     # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
-    seq_len = context + max(cfg.model.horizon, cfg.model.test_horizon) + cfg.datasource.get('tidx_step', 1) - 1
+    seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) + cfg.datasource.get('tidx_step', 1) - 1
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_root={cfg.root_transform}_' \
-                        f'fixedT0={cfg.fixed_t0}_timepoints={seq_len}_' \
+    processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
+                        f'pow={cfg.model.pow_exponent}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}_dataperc={cfg.data_perc}'
     data_dir = osp.join(cfg.device.root, 'data')
 
@@ -1164,6 +1170,49 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     # return data, input_col, context, seq_len
     return data, context, seq_len
+
+
+def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
+    """
+    Load training data for XGBoost model, for which no time sequences are needed.
+
+    :param cfg: DictConfig specifying model, data and training details
+    :param output_dir: directory to which config is written to
+    :return: pytorch Dataset
+    """
+
+    seq_len = 'all'
+    seed = cfg.seed + cfg.get('job_id', 0)
+
+    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
+    processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
+                        f'pow={cfg.model.pow_exponent}_scale={cfg.model.scale}_timepoints={seq_len}_' \
+                        f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}_dataperc={cfg.data_perc}'
+    data_dir = osp.join(cfg.device.root, 'data')
+
+    # initialize normalizer
+    years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+
+    # complete config and write it together with normalizer to disk
+    cfg.model_seed = seed
+    with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+        OmegaConf.save(config=cfg, f=f)
+    with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+        pickle.dump(normalization, f)
+
+
+    data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
+                      **cfg, **cfg.model,
+                      data_root=data_dir,
+                      data_source=cfg.datasource.name,
+                      normalization=normalization,
+                      env_vars=cfg.datasource.env_vars,
+                      transform=transform
+                      )
+            for year in years]
+
+    return data
 
 
 def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):

@@ -6,6 +6,8 @@ from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj
 import pytorch_lightning as pl
 import numpy as np
+from sklearn.ensemble import GradientBoostingRegressor
+
 from fluxrgnn import utils
 
 
@@ -23,7 +25,7 @@ class ForecastModel(pl.LightningModule):
 
         # forecasting settings
         self.horizon = max(1, kwargs.get('horizon', 1))
-        self.t_context = max(1, kwargs.get('context', 1))
+        self.t_context = max(1, kwargs.get('context', kwargs.get('test_context', 1)))
         self.tf_start = min(1.0, kwargs.get('teacher_forcing', 0.0))
 
         # observation model mapping cell densities to radar observations
@@ -32,11 +34,19 @@ class ForecastModel(pl.LightningModule):
         self.use_log_transform = kwargs.get('use_log_transform', False)
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
+        self.pow_exponent = kwargs.get('pow_exponent', 0.3333)
         
-        if self.use_log_transform:
-            self.zero_value = np.log(self.log_offset) * self.scale
-        else:
-            self.zero_value = 0
+        # if self.use_log_transform:
+        #     self.zero_value = np.log(self.log_offset) * self.scale
+        # else:
+        #     self.zero_value = 0
+
+        print(f'during initialization, the model is on {self.device}')
+
+        self.transforms = kwargs.get('transforms', [])
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0, device=self.device))
+        print(f'zero value = {self.zero_value}')
+
 
     def forecast(self, data, horizon, teacher_forcing=0, t0=0):
         """
@@ -204,9 +214,15 @@ class ForecastModel(pl.LightningModule):
                 else:
                     self.test_metrics[m] = [values]
 
-            self.test_results['test/mask'].append(torch.logical_not(radar_data.missing)[:, t0:t0 +self.t_context + self.horizon])
-            self.test_results['test/measurements'].append(self.to_raw(radar_data.x)[:, t0:t0 + self.t_context + self.horizon])
-            self.test_results['test/predictions'].append(self.to_raw(prediction))
+            self.test_results['test/mask'].append(
+                torch.logical_not(radar_data.missing)[:, t0:t0 +self.t_context + self.horizon]
+            )
+            self.test_results['test/measurements'].append(
+                self.transformed2raw(radar_data.x)[:, t0:t0 + self.t_context + self.horizon]
+            )
+            self.test_results['test/predictions'].append(
+                self.transformed2raw(prediction)
+            )
 
 
     def on_test_epoch_end(self):
@@ -237,37 +253,60 @@ class ForecastModel(pl.LightningModule):
             prediction = prediction[:radar_data.num_nodes]
 
         result = {
-            'predictions': self.to_raw(prediction),
-            'measurements': self.to_raw(radar_data.x),
+            'predictions': self.transformed2raw(prediction),
+            'measurements': self.transformed2raw(radar_data.x),
             'local_night': cell_data.local_night,
             'missing': radar_data.missing,
             'tidx': cell_data.tidx
         }
         return result
 
-    def to_raw(self, values):
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
+
+        return out
+
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in reversed(self.transforms):
+            out = t.tensor_backward(out)
+
+        return out
+
+    # def to_raw(self, values):
+    def transformed2raw(self, values):
 
         values = torch.clamp(values, min=self.zero_value)
+        raw = self.apply_backward_transforms(values)
 
-        if self.use_log_transform:
-            log = values / self.scale
-            raw = torch.exp(log) - self.log_offset
-        else:
-            raw = values / self.scale
+        # assert torch.allclose(self.apply_forward_transforms(raw), values)
 
         return raw
 
-    def to_log(self, values):
+    # def to_log(self, values):
+    def raw2log(self, values):
 
-        values = torch.clamp(values, min=self.zero_value)
+        values = torch.clamp(values, min=0)
+        log = torch.log(values + self.log_offset)
 
-        if self.use_log_transform:
-            log = values / self.scale
-        else:
-            raw = values / self.scale
-            log = torch.log(raw + self.log_offset)
+        # if self.use_log_transform:
+        #     log = values / self.scale
+        # else:
+        #     raw = values / self.scale
+        #     log = torch.log(raw + self.log_offset)
 
         return log
+
+    def raw2pow(self, values):
+
+        pow = torch.pow(values, 1/3)
+        # pow = torch.pow(values, self.pow_exponent)
+
+        return pow
 
     def _regularizer(self):
         return 0
@@ -294,10 +333,7 @@ class ForecastModel(pl.LightningModule):
             mask = mask.reshape(-1)
             output = output.reshape(-1)
 
-        if self.config.get('root_tranformed_loss', False):
-            loss = utils.MSE(torch.pow(output, 1/3), torch.pow(gt, 1/3), mask)
-        else:
-            loss = utils.MSE(output, gt, mask)
+        loss = utils.MSE(output, gt, mask)
         
         if self.training:
             regularizer = self._regularizer()
@@ -310,13 +346,23 @@ class ForecastModel(pl.LightningModule):
                          f'{prefix}/log-loss': torch.log(loss)}
 
         if not self.training:
-            self._add_eval_metrics(eval_dict, self.to_raw(gt), self.to_raw(output),
-                                   mask, prefix=f'{prefix}/raw')
-            self._add_eval_metrics(eval_dict, self.to_log(gt), self.to_log(output),
-                                   mask, prefix=f'{prefix}/log')
-            self._add_eval_metrics(eval_dict, self.to_raw(gt)**(1/3), self.to_raw(output)**(1/3),
-                                   mask, prefix=f'{prefix}/cube-root')
-            # print(f'val mask entries = {mask.sum()}')
+            raw_gt = self.transformed2raw(gt)
+            raw_output = self.transformed2raw(output)
+            self._add_eval_metrics(eval_dict, raw_gt, raw_output, mask, prefix=f'{prefix}/raw')
+
+            log_gt = self.raw2log(raw_gt)
+            log_output = self.raw2log(raw_output)
+            self._add_eval_metrics(eval_dict, log_gt, log_output, mask, prefix=f'{prefix}/log')
+
+            pow_gt = self.raw2pow(raw_gt)
+            pow_output = self.raw2pow(raw_output)
+            self._add_eval_metrics(eval_dict, pow_gt, pow_output, mask, prefix=f'{prefix}/pow')
+
+            # print(f'min output = {output.min()}')
+            # print(f'min output (raw) = {raw_output.min()}')
+            #
+            # print(f'min gt = {gt.min()}')
+            # print(f'min gt (raw) = {raw_gt.min()}')
 
         return eval_dict
 
@@ -341,7 +387,10 @@ class ForecastModel(pl.LightningModule):
         # avg residuals
         mean_res = ((output - gt) * mask).sum(0) / mask.sum(0)
         eval_dict.update({f'{prefix}/mean_residual': mean_res})
-        #return eval_dict
+
+        # pseudo R squared (a.k.a "variance explained")
+        r2 = utils.R2(output, gt, mask)
+        eval_dict.update({f'{prefix}/R2': r2})
 
 
 
@@ -493,9 +542,11 @@ class FluxRGNN(ForecastModel):
             else:
                 #self.regularizers.append(delta)
                 self.regularizers.append(self.source_sink_model.node_source + self.source_sink_model.node_sink)
+
         if self.config.get('force_zeros', False):
             x = x * cell_data.local_night[torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t]
-            x = x + self.zero_value * torch.logical_not(cell_data.local_night[torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t])
+            x = x + self.zero_value * torch.logical_not(cell_data.local_night[
+                    torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t])
         
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -544,7 +595,7 @@ class FluxRGNN(ForecastModel):
         #    prediction = self.observation_model(prediction, cells_to_radars)
         #    prediction = prediction[:radar_data.num_nodes]
 
-        self.predict_results['prediction'].append(self.to_raw(prediction))
+        self.predict_results['prediction'].append(self.transformed2raw(prediction))
         self.predict_results['node_source'].append(self.node_source)
         self.predict_results['node_sink'].append(self.node_sink)
         self.predict_results['node_flux'].append(self.node_flux)
@@ -614,19 +665,20 @@ class LocalMLPForecast(ForecastModel):
         n_in = kwargs.get('n_env', 0) + kwargs.get('coord_dim', 2) + self.use_acc * 2
         self.mlp = NodeMLP(n_in, **kwargs)
 
-        self.use_log_transform = kwargs.get('use_log_transform', False)
-
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
 
         if self.use_acc:
-            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1), tidx_select(data.env, t).reshape(data.num_nodes, -1), tidx_select(data.acc, t)], dim=1)
+            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1),
+                                tidx_select(data.env, t).reshape(data.num_nodes, -1),
+                                tidx_select(data.acc, t)], dim=1)
         else:
-            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1), tidx_select(data.env, t).reshape(data.num_nodes, -1)], dim=1)
+            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1),
+                                tidx_select(data.env, t).reshape(data.num_nodes, -1)], dim=1)
 
         x = self.mlp(inputs)
 
-        if not self.use_log_transform:
+        if self.config.get('square_output', False):
             x = torch.pow(x, 2)
 
         if self.config.get('force_zeros', False):
@@ -725,6 +777,57 @@ class SeasonalityForecast(ForecastModel):
         return None
 
 
+class XGBoostForecast(ForecastModel):
+    """
+    Forecast model using XGBoost to predict local animal densities.
+    """
+
+    def __init__(self, xgboost, node_features, dynamic_features, **kwargs):
+        """
+        Initialize XGBoostForecast model.
+        """
+
+        super(XGBoostForecast, self).__init__(**kwargs)
+
+        self.automatic_optimization = False
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        self.xgboost = xgboost
+
+    def fit_xgboost(self, X, y):
+
+        self.xgboost.fit(X, y)
+
+    def forecast_step(self, model_states, data, t, *args, **kwargs):
+
+        # static graph features
+        node_features = torch.cat([data.get(feature).reshape(data.coords.size(0), -1) for
+                                   feature in self.node_features], dim=1)
+
+        # dynamic features for current and previous time step
+        dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.coords.size(0), -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+        # combined features
+        inputs = torch.cat([node_features, dynamic_features], dim=1).detach().numpy()
+
+        # apply XGBoost
+        model_states['x'] = torch.tensor(self.xgboost.predict(inputs)).view(-1, 1)
+
+        return model_states
+
+    def training_step(self, batch, batch_idx):
+        pass
+
+    def validation_step(self, batch, batch_idx):
+        pass
+
+    def configure_optimizers(self):
+        return None
+
+
 # class Dynamics(MessagePassing):
 #
 #     def __init__(self, **kwargs):
@@ -794,28 +897,26 @@ class Fluxes(MessagePassing):
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
-        self.scale = kwargs.get('scale', 1.0)
-        self.log_offset = kwargs.get('log_offset', 1e-8)
+        # self.scale = kwargs.get('scale', 1.0)
+        # self.log_offset = kwargs.get('log_offset', 1e-8)
 
-    def to_raw(self, values):
+        self.transforms = kwargs.get('transforms', [])
 
-        if self.use_log_transform:
-            log = values / self.scale
-            raw = torch.exp(log) - self.log_offset
-        else:
-            raw = values / self.scale
+
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_backward(out)
+
+        return out
+
+    def transformed2raw(self, values):
+
+        #values = torch.clamp(values, min=self.zero_value)
+        raw = self.apply_backward_transforms(values)
 
         return raw
-
-    def to_log(self, values):
-
-        if self.use_log_transform:
-            log = values / self.scale
-        else:
-            raw = values / self.scale
-            log = torch.log(raw + self.log_offset)
-
-        return log
 
 
     def forward(self, x, hidden, graph_data, t):
@@ -857,12 +958,11 @@ class Fluxes(MessagePassing):
                                           dynamic_features_t1=dynamic_features_t1,
                                           areas=graph_data.areas)
 
-        if self.use_log_transform:
-            raw_net_flux = self.to_raw(x) * net_flux
-        else:
-            raw_net_flux = self.to_raw(net_flux)
-
         if not self.training:
+            if self.use_log_transform:
+                raw_net_flux = self.transformed2raw(x) * net_flux
+            else:
+                raw_net_flux = self.transformed2raw(net_flux)
             self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
 
         return net_flux
@@ -908,16 +1008,18 @@ class Fluxes(MessagePassing):
             in_flux = flux * total_j / total_i
             out_flux = flux[reverse_edges]
             net_flux = in_flux - out_flux
-            raw_out_flux = out_flux * self.to_raw(x_i) * areas_i.view(-1, 1)
-            raw_net_flux = raw_out_flux[reverse_edges] - raw_out_flux
         else:
             in_flux = flux * x_j * areas_j.view(-1, 1)
             out_flux = in_flux[reverse_edges]
             net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
-            raw_net_flux = self.to_raw(in_flux - out_flux)
 
         if not self.training:
-            self.edge_fluxes = raw_net_flux
+            # convert to raw quantities
+            if self.use_log_transform:
+                raw_out_flux = out_flux * self.transformed2raw(x_i) * areas_i.view(-1, 1)
+                self.edge_fluxes = raw_out_flux[reverse_edges] - raw_out_flux
+            else:
+                self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
 
         return net_flux.view(-1, 1)
 
@@ -952,28 +1054,25 @@ class SourceSink(torch.nn.Module):
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
-        self.scale = kwargs.get('scale', 1.0)
-        self.log_offset = kwargs.get('log_offset', 1e-8)
+        # self.scale = kwargs.get('scale', 1.0)
+        # self.log_offset = kwargs.get('log_offset', 1e-8)
 
-    def to_raw(self, values):
+        self.transforms = kwargs.get('transforms', [])
 
-        if self.use_log_transform:
-            log = values / self.scale
-            raw = torch.exp(log) - self.log_offset
-        else:
-            raw = values / self.scale
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_backward(out)
+
+        return out
+
+    def transformed2raw(self, values):
+
+        # values = torch.clamp(values, min=self.zero_value)
+        raw = self.apply_backward_transforms(values)
 
         return raw
-
-    def to_log(self, values):
-
-        if self.use_log_transform:
-            log = values / self.scale
-        else:
-            raw = values / self.scale
-            log = torch.log(raw + self.log_offset)
-
-        return log
 
 
     def forward(self, x, hidden, graph_data, t, ground_states=None):
@@ -1020,10 +1119,7 @@ class SourceSink(torch.nn.Module):
                 ground_states = ground_states - frac_source + frac_sink * torch.exp(x) / torch.exp(ground_states)
 
             delta = source - frac_sink
-            raw_x = self.to_raw(x)
-            # TODO: make sure this conversion is correct
-            raw_source = raw_x * source
-            raw_sink = raw_x * frac_sink
+
         else:
             # source is the total density while sink is a fraction
             sink = frac_sink * x
@@ -1031,12 +1127,18 @@ class SourceSink(torch.nn.Module):
                 source = frac_source * ground_states
                 ground_states = ground_states - source + sink
             delta = source - sink
-            raw_source = self.to_raw(source)
-            raw_sink = self.to_raw(sink)
+
 
         if not self.training:
-            self.node_source = raw_source  # birds/km2 taking-off in cell i
-            self.node_sink = raw_sink  # birds/km2 landing in cell i
+            # convert to raw quantities
+            if self.use_log_transform:
+                raw_x = self.transformed2raw(x)
+                # TODO: make sure this conversion is correct
+                self.node_source = raw_x * source # birds/km2 taking-off in cell i
+                self.node_sink = raw_x * frac_sink # birds/km2 landing in cell i
+            else:
+                self.node_source = self.transformed2raw(source) # birds/km2 taking-off in cell i
+                self.node_sink = self.transformed2raw(sink) # birds/km2 landing in cell i
         else:
             self.node_source = source
             self.node_sink = frac_sink if self.use_log_transform else sink
@@ -1076,13 +1178,35 @@ class InitialState(MessagePassing):
         super(InitialState, self).__init__(aggr='add', node_dim=0)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
-        self.scale = kwargs.get('scale', 1.0)
-        self.log_offset = kwargs.get('log_offset', 1e-8)
 
-        if self.use_log_transform:
-            self.zero_value = np.log(self.log_offset) * self.scale
-        else:
-            self.zero_value = 0
+        # self.scale = kwargs.get('scale', 1.0)
+        # self.log_offset = kwargs.get('log_offset', 1e-8)
+
+        self.transforms = kwargs.get('transforms', [])
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0, device=self.device))
+
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
+
+        return out
+
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_backward(out)
+
+        return out
+
+    def transformed2raw(self, values):
+
+        # values = torch.clamp(values, min=self.zero_value)
+        raw = self.apply_backward_transforms(values)
+
+        return raw
 
     def forward(self, graph_data, t, *args, **kwargs):
         """
@@ -1123,9 +1247,12 @@ class RadarToCellInterpolation(InitialState):
 
         n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
-        embedded_measurements = torch.cat([measurements.view(n_radars, 1), torch.zeros((n_cells-n_radars, 1), device=measurements.device)], dim=0)
+        embedded_measurements = torch.cat([measurements.view(n_radars, 1),
+                                           torch.zeros((n_cells-n_radars, 1), device=measurements.device)], dim=0)
 
-        cell_states = self.propagate(radars_to_cells.edge_index, x=embedded_measurements, edge_weight=radars_to_cells.edge_weight)
+        cell_states = self.propagate(radars_to_cells.edge_index,
+                                     x=embedded_measurements,
+                                     edge_weight=radars_to_cells.edge_weight)
 
         if self.mlp is not None:
             inputs = torch.cat([cell_states, hidden], dim=1)

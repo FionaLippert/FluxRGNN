@@ -5,8 +5,11 @@ name: LocalMLP
 
 n_hidden: 256
 n_fc_layers: 3
+square_output: true
+
 n_env: ${len:${datasource.env_vars}}
 dropout_p: 0.0
+
 lr: 1e-3
 lr_schedulers:
         - _target_: torch.optim.lr_scheduler.ConstantLR
@@ -19,6 +22,18 @@ optimizer:
         _target_: torch.optim.Adam
         _partial_: true
         lr: ${model.lr}
+
+
+use_log_transform: true
+log_offset: 0.1
+scale: 0.1
+transforms:
+  - _target_: transforms.LogTransform
+    feature: x
+    offset: ${model.log_offset}
+  - _target_: transforms.Rescaling
+    feature: x
+    factor: ${model.scale}
 
 increase_horizon_rate: 0.0
 increase_horizon_start: 0
@@ -44,9 +59,6 @@ avg_window: 10
 coord_dim: 2
 #n_edge_attr: 4
 
-use_log_transform: true
-log_offset: 0.1
-scale: 0.1
 
 observation_model:
     _target_: fluxrgnn.models.ObservationModel
