@@ -888,14 +888,14 @@ class RadarHeteroData(InMemoryDataset):
         time = dynamic_feature_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
-        data = {'env': [], 'nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
+        data = {'env': [], 'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
 
         # process dynamic cell features
         groups = dynamic_feature_df.groupby('ID')
         for cid, group_df in dynamic_feature_df.groupby('ID'):
             df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data['env'].append(df[self.env_vars].to_numpy().T)
-            data['nighttime'].append(df.night.to_numpy())
+            data['cell_nighttime'].append(df.night.to_numpy())
 
         # process radar measurements
         radar_ids = measurement_df.ID.unique()
@@ -904,6 +904,7 @@ class RadarHeteroData(InMemoryDataset):
             data[target_col].append(group_df[target_col].to_numpy())
             data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
             data['missing'].append(group_df['missing'].to_numpy())
+            data['radar_nighttime'].append(group_df.night.to_numpy())
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
@@ -918,7 +919,7 @@ class RadarHeteroData(InMemoryDataset):
             tidx = np.expand_dims(tidx, axis=-1)
         else:
             # find timesteps where it's night for all cells
-            check_all = data['nighttime'].all(axis=0)
+            check_all = data['cell_nighttime'].all(axis=0)
 
             # group into nights
             groups = [list(g) for k, g in it.groupby(enumerate(check_all), key=lambda x: x[-1])]
@@ -985,7 +986,7 @@ class RadarHeteroData(InMemoryDataset):
 
                 # dynamic cell features
                 'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
-                'local_night': torch.tensor(data['nighttime'][..., idx], dtype=torch.bool),
+                'local_night': torch.tensor(data['cell_nighttime'][..., idx], dtype=torch.bool),
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
             }
 
@@ -1000,6 +1001,7 @@ class RadarHeteroData(InMemoryDataset):
                 # dynamic radar features
                 'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
                 'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
+                'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': torch.tensor(data['bird_uv'][..., idx], dtype=torch.float),
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
             }
