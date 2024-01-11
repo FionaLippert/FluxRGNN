@@ -653,28 +653,33 @@ class LocalMLPForecast(ForecastModel):
     Forecast model using a local MLP with parameters shared across time and space.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, node_features, dynamic_features, **kwargs):
         """
         Initialize LocalMLPForecast and all its components.
         """
 
         super(LocalMLPForecast, self).__init__(**kwargs)
 
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
         # setup model
-        self.use_acc = kwargs.get('use_acc_vars', False)
-        n_in = kwargs.get('n_env', 0) + kwargs.get('coord_dim', 2) + self.use_acc * 2
+        n_in = sum(node_features.values()) + sum(dynamic_features.values())
         self.mlp = NodeMLP(n_in, **kwargs)
 
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
 
-        if self.use_acc:
-            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1),
-                                tidx_select(data.env, t).reshape(data.num_nodes, -1),
-                                tidx_select(data.acc, t)], dim=1)
-        else:
-            inputs = torch.cat([data.coords.reshape(data.num_nodes, -1),
-                                tidx_select(data.env, t).reshape(data.num_nodes, -1)], dim=1)
+        # static features
+        node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
+                                   feature in self.node_features], dim=1)
+
+        # dynamic features for current time step t
+        dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.num_nodes, -1) for
+                                      feature in self.dynamic_features], dim=1)
+
+        # combined features
+        inputs = torch.cat([node_features, dynamic_features], dim=1).detach().numpy()
 
         x = self.mlp(inputs)
 
@@ -1090,7 +1095,7 @@ class SourceSink(torch.nn.Module):
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
                                           feature in self.node_features], dim=1)
 
-        # dynamic features for current and previous time step
+        # dynamic features for current time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
