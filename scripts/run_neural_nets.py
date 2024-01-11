@@ -60,6 +60,11 @@ def run(cfg: DictConfig):
         # trainer.logger.experiment.config.update(cfg_resolved)
         print(trainer.logger.version)
 
+    #if cfg.device.accelerator == 'gpu' and torch.cuda.is_available():
+    #    print('Use GPU')
+    #    # all newly created tensors go to GPU
+    #    torch.set_default_tensor_type(torch.cuda.FloatTensor)
+
     utils.seed_all(cfg.seed + cfg.get('job_id', 0))
 
     model = instantiate(cfg.model)#, n_env=len(cfg.datasource.env_vars))

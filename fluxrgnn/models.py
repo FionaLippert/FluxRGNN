@@ -41,10 +41,8 @@ class ForecastModel(pl.LightningModule):
         # else:
         #     self.zero_value = 0
 
-        print(f'during initialization, the model is on {self.device}')
-
         self.transforms = kwargs.get('transforms', [])
-        self.zero_value = self.apply_forward_transforms(torch.tensor(0, device=self.device))
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
         print(f'zero value = {self.zero_value}')
 
 
@@ -95,7 +93,15 @@ class ForecastModel(pl.LightningModule):
             
             # make prediction for next time step
             model_states = self.forecast_step(model_states, cell_data, t, teacher_forcing)
-            y_hat.append(model_states['x'])
+            
+            x = model_states['x']
+
+            if self.config.get('force_zeros', False):
+                local_night = tidx_select(cell_data.local_night, t)
+                x = x * local_night
+                x = x + self.zero_value.to(x.device) * torch.logical_not(local_night)
+
+            y_hat.append(x)
 
         prediction = torch.cat(y_hat, dim=-1)
 
@@ -280,7 +286,7 @@ class ForecastModel(pl.LightningModule):
     # def to_raw(self, values):
     def transformed2raw(self, values):
 
-        values = torch.clamp(values, min=self.zero_value)
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
         raw = self.apply_backward_transforms(values)
 
         # assert torch.allclose(self.apply_forward_transforms(raw), values)
@@ -543,10 +549,10 @@ class FluxRGNN(ForecastModel):
                 #self.regularizers.append(delta)
                 self.regularizers.append(self.source_sink_model.node_source + self.source_sink_model.node_sink)
 
-        if self.config.get('force_zeros', False):
-            x = x * cell_data.local_night[torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t]
-            x = x + self.zero_value * torch.logical_not(cell_data.local_night[
-                    torch.arange(cell_data.num_nodes, device=cell_data.local_night.device), t])
+        #if self.config.get('force_zeros', False):
+        #    local_night = tidx_select(cell_data.local_night, t)
+        #    x = x * local_night
+        #    x = x + self.zero_value.to(x.device) * torch.logical_not(local_night)
         
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -679,7 +685,7 @@ class LocalMLPForecast(ForecastModel):
                                       feature in self.dynamic_features], dim=1)
 
         # combined features
-        inputs = torch.cat([node_features, dynamic_features], dim=1).detach().numpy()
+        inputs = torch.cat([node_features, dynamic_features], dim=1)
 
         x = self.mlp(inputs)
 
@@ -688,7 +694,7 @@ class LocalMLPForecast(ForecastModel):
 
         if self.config.get('force_zeros', False):
             x = x * tidx_select(data.local_night, t)
-            x = x + self.zero_value * torch.logical_not(tidx_select(data.local_night, t))
+            x = x + self.zero_value.to(x.device) * torch.logical_not(tidx_select(data.local_night, t))
 
         model_states['x'] = x
 
@@ -906,19 +912,27 @@ class Fluxes(MessagePassing):
         # self.log_offset = kwargs.get('log_offset', 1e-8)
 
         self.transforms = kwargs.get('transforms', [])
-
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
 
     def apply_backward_transforms(self, values: torch.Tensor):
 
         out = values
-        for t in self.transforms:
+        for t in reversed(self.transforms):
             out = t.tensor_backward(out)
+
+        return out
+
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
 
         return out
 
     def transformed2raw(self, values):
 
-        #values = torch.clamp(values, min=self.zero_value)
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
         raw = self.apply_backward_transforms(values)
 
         return raw
@@ -1063,18 +1077,27 @@ class SourceSink(torch.nn.Module):
         # self.log_offset = kwargs.get('log_offset', 1e-8)
 
         self.transforms = kwargs.get('transforms', [])
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
 
     def apply_backward_transforms(self, values: torch.Tensor):
 
         out = values
-        for t in self.transforms:
+        for t in reversed(self.transforms):
             out = t.tensor_backward(out)
+
+        return out
+
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
 
         return out
 
     def transformed2raw(self, values):
 
-        # values = torch.clamp(values, min=self.zero_value)
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
         raw = self.apply_backward_transforms(values)
 
         return raw
@@ -1188,7 +1211,7 @@ class InitialState(MessagePassing):
         # self.log_offset = kwargs.get('log_offset', 1e-8)
 
         self.transforms = kwargs.get('transforms', [])
-        self.zero_value = self.apply_forward_transforms(torch.tensor(0, device=self.device))
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
 
     def apply_forward_transforms(self, values: torch.Tensor):
 
@@ -1201,14 +1224,14 @@ class InitialState(MessagePassing):
     def apply_backward_transforms(self, values: torch.Tensor):
 
         out = values
-        for t in self.transforms:
+        for t in reversed(self.transforms):
             out = t.tensor_backward(out)
 
         return out
 
     def transformed2raw(self, values):
 
-        # values = torch.clamp(values, min=self.zero_value)
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
         raw = self.apply_backward_transforms(values)
 
         return raw
@@ -1225,7 +1248,7 @@ class InitialState(MessagePassing):
         x0 = self.initial_state(graph_data, t, *args, **kwargs)
 
         if self.use_log_transform:
-            x0 = torch.clamp(x0, min=self.zero_value)
+            x0 = torch.clamp(x0, min=self.zero_value.to(x0.device))
         else:
             x0 = x0.pow(2)
 

@@ -10,11 +10,11 @@ square_output: true
 n_env: ${len:${datasource.env_vars}}
 dropout_p: 0.0
 
-lr: 1e-3
+lr: 1e-5
 lr_schedulers:
         - _target_: torch.optim.lr_scheduler.ConstantLR
           _partial_: true
-          factor: 1e-2
+          factor: 1.0
           total_iters: ${trainer.max_epochs}
 lr_milestones: []
 
@@ -31,13 +31,17 @@ dynamic_features:
   env: ${model.n_env}
 
 
-use_log_transform: true
+use_log_transform: false
 log_offset: 0.1
-scale: 0.1
+pow_exponent: 0.33333
+scale: 0.1 #0.001 #0.1
 transforms:
-  - _target_: transforms.LogTransform
+  #- _target_: transforms.LogTransform
+  #  feature: x
+  #  offset: ${model.log_offset}
+  - _target_: transforms.PowerTransform
     feature: x
-    offset: ${model.log_offset}
+    exponent: ${model.pow_exponent} 
   - _target_: transforms.Rescaling
     feature: x
     factor: ${model.scale}

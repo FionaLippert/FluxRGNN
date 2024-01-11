@@ -4,7 +4,7 @@ _target_: fluxrgnn.models.FluxRGNN
 name: FluxRGNN
 
 coord_dim: 4
-#n_edge_attr: 5
+n_edge_attr: 5
 n_env: ${len:${datasource.env_vars}}
 
 n_hidden: 128
@@ -18,7 +18,7 @@ test_horizon: 72
 
 #epochs: 300
 #batch_size: 4
-lr: 1e-3
+lr: 1e-5
 lr_schedulers:
         #- _target_: torch.optim.lr_scheduler.LinearLR
         #  _partial_: true
@@ -45,7 +45,7 @@ lr_schedulers:
         #  cycle_momentum: false
         - _target_: torch.optim.lr_scheduler.ConstantLR
           _partial_: true
-          factor: 1e-2
+          factor: 1.0
           total_iters: ${trainer.max_epochs}
 lr_milestones: []
 #        - 10
@@ -77,7 +77,7 @@ dropout_p: 0.0
 teacher_forcing: 0.0
 teacher_forcing_gamma: 0.95
 increase_horizon_rate: 0.2
-increase_horizon_start: 50
+increase_horizon_start: 0
 
 force_zeros: false
 #use_encoder: true

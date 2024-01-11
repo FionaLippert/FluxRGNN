@@ -1114,7 +1114,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}'
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
-                        f'pow={cfg.model.pow_exponent}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
+                        f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_ndummy={cfg.datasource.n_dummy_radars}_dataperc={cfg.data_perc}'
     data_dir = osp.join(cfg.device.root, 'data')
 
