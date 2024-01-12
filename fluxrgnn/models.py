@@ -106,7 +106,7 @@ class ForecastModel(pl.LightningModule):
 
         # make prediction for first time step
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
-        model_states = self.forecast_step(model_states, cell_data, t0)
+        model_states = self.forecast_step(model_states, cell_data, t0 + self.t_context)
 
         return model_states
 
@@ -1297,11 +1297,7 @@ class InitialState(MessagePassing):
         """
 
         x0 = self.initial_state(graph_data, t, *args, **kwargs)
-
-        if self.use_log_transform:
-            x0 = torch.clamp(x0, min=self.zero_value.to(x0.device))
-        else:
-            x0 = x0.pow(2)
+        x0 = torch.clamp(x0, min=self.zero_value.to(x0.device))
 
         return x0
 
@@ -1395,6 +1391,9 @@ class InitialStateMLP(InitialState):
         inputs = torch.cat([node_features, dynamic_features_t0, hidden], dim=1)
 
         x0 = self.mlp(inputs)
+
+        if not self.use_log_transform:
+            x0 = torch.pow(x0, 2)
 
         return x0
 
@@ -1944,6 +1943,7 @@ class MLP(torch.nn.Module):
 
         hidden = self.input2hidden(inputs)
         #hidden = self.layer_norm(hidden)
+        # TODO: test effect of doing dropout after activation
         hidden = F.dropout(hidden, p=self.dropout_p, training=self.training, inplace=False) 
         hidden = self.activation(hidden)
 
@@ -2092,7 +2092,7 @@ class RecurrentEncoder(torch.nn.Module):
 
         self.t_context = kwargs.get('context', 24)
         self.n_hidden = kwargs.get('n_hidden', 64)
-        self.n_lstm_layers = kwargs.get('n_lstm_layers', 1)
+        self.n_lstm_layers = kwargs.get('n_rnn_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         self.node_features = node_features
@@ -2148,6 +2148,69 @@ class RecurrentEncoder(torch.nn.Module):
             h_t[l], c_t[l] = self.lstm_layers[l](h_t[l - 1], (h_t[l], c_t[l]))
 
         return h_t, c_t
+
+
+class GRUEncoder(torch.nn.Module):
+    """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
+
+    def __init__(self, node_features, dynamic_features, **kwargs):
+        super(GRUEncoder, self).__init__()
+
+        self.t_context = kwargs.get('context', 24)
+        self.n_hidden = kwargs.get('n_hidden', 64)
+        self.n_layers = kwargs.get('n_rnn_layers', 1)
+        self.dropout_p = kwargs.get('dropout_p', 0)
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(node_features.values()) + sum(dynamic_features.values())
+
+        self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
+        self.gru_layers = nn.ModuleList([nn.GRUCell(self.n_hidden, self.n_hidden)
+                                          for _ in range(self.n_gru_layers)])
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+
+        self.lstm_layers.apply(init_weights)
+        init_weights(self.input2hidden)
+
+    def forward(self, data, t0=0):
+        """Run encoder until the given number of context time steps has been reached."""
+
+        # initialize lstm variables
+        h_t = [torch.zeros(data.num_nodes, self.n_hidden, device=data.coords.device) for _ in range(self.n_layers)]
+
+        node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
+                                   feature in self.node_features], dim=1)
+        # TODO: push node_features through GNN or MLP to extract spatial representations?
+
+        # process all context time steps and the first forecasting time step
+        for tidx in range(self.t_context + 1):
+            t = tidx + t0
+
+            # dynamic features for current time step
+            dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.num_nodes, -1) for
+                                          feature in self.dynamic_features], dim=1)
+            inputs = torch.cat([node_features, dynamic_features], dim=1)
+
+            h_t = self.update(inputs, h_t)
+
+        return h_t
+
+    def update(self, inputs, h_t):
+        """Include information on the current time step into the hidden state."""
+
+        inputs = self.input2hidden(inputs)
+
+        h_t[0] = self.gru_layers[0](inputs, h_t[0])
+        for l in range(1, self.n_layers):
+            h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
+            h_t[l] = self.gru_layers[l](h_t[l - 1], h_t[l])
+
+        return h_t
 
 
 class LocalLSTM(torch.nn.Module):
