@@ -1,0 +1,6 @@
+wandb_version: 1
+
+model.lr:
+  value: 1.0e-05
+seed:
+  value: 1

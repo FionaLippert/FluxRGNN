@@ -105,6 +105,8 @@ def load_training_data(cfg):
         radar_data = d['radar']
         T = cell_data.tidx.size(-1)
 
+        print(radar_data['local_night'].size())
+
         print(f'coord size = {cell_data.coords.size()}')
         print(f'num nodes = {cell_data.num_nodes}')
 
