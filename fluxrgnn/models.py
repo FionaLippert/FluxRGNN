@@ -25,7 +25,8 @@ class ForecastModel(pl.LightningModule):
 
         # forecasting settings
         self.horizon = max(1, kwargs.get('horizon', 1))
-        self.t_context = max(1, kwargs.get('context', kwargs.get('test_context', 1)))
+        self.min_horizon = max(1, kwargs.get('min_horizon', 1))
+        self.t_context = max(1, kwargs.get('context', kwargs.get('test_context', 0)))
         self.tf_start = min(1.0, kwargs.get('teacher_forcing', 0.0))
 
         # observation model mapping cell densities to radar observations
@@ -35,18 +36,12 @@ class ForecastModel(pl.LightningModule):
         self.scale = kwargs.get('scale', 1.0)
         self.log_offset = kwargs.get('log_offset', 1e-8)
         self.pow_exponent = kwargs.get('pow_exponent', 0.3333)
-        
-        # if self.use_log_transform:
-        #     self.zero_value = np.log(self.log_offset) * self.scale
-        # else:
-        #     self.zero_value = 0
-
         self.transforms = kwargs.get('transforms', [])
         self.zero_value = self.apply_forward_transforms(torch.tensor(0))
         print(f'zero value = {self.zero_value}')
 
 
-    def forecast(self, data, horizon, teacher_forcing=0, t0=0):
+    def forecast(self, data, horizon, t0=0, teacher_forcing=0):
         """
         Setup prediction for given data and run model until the max forecasting horizon is reached.
 
@@ -60,9 +55,9 @@ class ForecastModel(pl.LightningModule):
             t0 = torch.tensor(t0, device=self.device)
         t0 = t0.view(-1, 1)
 
-        # initialize forecast
+        # initialize forecast (including prediction for first time step)
         model_states = self.initialize(data, t0)
-        y_hat = []
+        forecast = [model_states['x']]
         
         # TODO: include initial model state in forecast and training as well (but how to do this for MLP?)
 
@@ -71,7 +66,7 @@ class ForecastModel(pl.LightningModule):
         
 
         # predict until the max forecasting horizon is reached
-        forecast_horizon = range(self.t_context, self.t_context + horizon)
+        forecast_horizon = range(self.t_context + 1, self.t_context + horizon)
         for tidx in forecast_horizon:
 
             t = t0 + tidx
@@ -101,21 +96,24 @@ class ForecastModel(pl.LightningModule):
                 x = x * local_night
                 x = x + self.zero_value.to(x.device) * torch.logical_not(local_night)
 
-            y_hat.append(x)
+            forecast.append(x)
 
-        prediction = torch.cat(y_hat, dim=-1)
+        forecast = torch.cat(forecast, dim=-1)
 
-        return prediction
+        return forecast
 
 
     def initialize(self, data, t0=0):
 
         model_states = {}
 
+        # make prediction for first time step
+        model_states = self.forecast_step(model_states, data, t0)
+
         return model_states
 
 
-    def forecast_step(self, model_states, data, t, teacher_forcing):
+    def forecast_step(self, model_states, data, t, teacher_forcing=0):
 
         raise NotImplementedError
 
@@ -131,7 +129,7 @@ class ForecastModel(pl.LightningModule):
         h_rate = self.config.get('increase_horizon_rate', 0)
         if h_rate > 0:
             epoch = max(0, self.current_epoch - self.config.get('increase_horizon_start', 0))
-            horizon = min(self.horizon, int(epoch * h_rate) + 1)
+            horizon = min(self.horizon, int(epoch * h_rate) + self.min_horizon)
         else:
             horizon = self.horizon
 
@@ -144,7 +142,7 @@ class ForecastModel(pl.LightningModule):
         radar_data = batch['radar']
         
         # make predictions for all cells
-        prediction = self.forecast(batch, horizon, teacher_forcing=tf, t0=t0)
+        prediction = self.forecast(batch, horizon, t0=t0, teacher_forcing=tf)
 
         # map cell predictions to radar observations
         if self.observation_model is not None:
@@ -299,18 +297,11 @@ class ForecastModel(pl.LightningModule):
         values = torch.clamp(values, min=0)
         log = torch.log(values + self.log_offset)
 
-        # if self.use_log_transform:
-        #     log = values / self.scale
-        # else:
-        #     raw = values / self.scale
-        #     log = torch.log(raw + self.log_offset)
-
         return log
 
     def raw2pow(self, values):
 
         pow = torch.pow(values, 1/3)
-        # pow = torch.pow(values, self.pow_exponent)
 
         return pow
 
@@ -479,9 +470,9 @@ class FluxRGNN(ForecastModel):
             self.node_sink = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
             self.node_source = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
 
-        # initial system state
+        # predict initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, max(0, self.t_context - 1) + t0, h_t[-1])
+            x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
         else:
@@ -2070,8 +2061,9 @@ class RecurrentEncoder(torch.nn.Module):
         node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
                                    feature in self.node_features], dim=1)
         # TODO: push node_features through GNN or MLP to extract spatial representations?
-        
-        for tidx in range(self.t_context):
+
+        # process all context time steps and the first forecasting time step
+        for tidx in range(self.t_context + 1):
             
             t = tidx + t0
             

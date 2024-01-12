@@ -14,6 +14,7 @@ n_hidden: 128
 max_t0: ${datasource.tidx_step}
 context: 24
 horizon: 48
+min_horizon: 2
 test_horizon: 72
 
 #epochs: 300
