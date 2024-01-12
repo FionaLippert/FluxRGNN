@@ -58,12 +58,9 @@ class ForecastModel(pl.LightningModule):
         # initialize forecast (including prediction for first time step)
         model_states = self.initialize(data, t0)
         forecast = [model_states['x']]
-        
-        # TODO: include initial model state in forecast and training as well (but how to do this for MLP?)
 
         # only cell data is needed for forecasting
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
-        
 
         # predict until the max forecasting horizon is reached
         forecast_horizon = range(self.t_context + 1, self.t_context + horizon)
@@ -108,7 +105,8 @@ class ForecastModel(pl.LightningModule):
         model_states = {}
 
         # make prediction for first time step
-        model_states = self.forecast_step(model_states, data, t0)
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        model_states = self.forecast_step(model_states, cell_data, t0)
 
         return model_states
 
@@ -476,7 +474,8 @@ class FluxRGNN(ForecastModel):
 
         # predict initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
+            # x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
+            x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
         else:
