@@ -1883,32 +1883,32 @@ class SourceSinkMLP(torch.nn.Module):
 
         return source, sink
 
-
-class DeltaMLP(torch.nn.Module):
-    """MLP predicting local delta terms"""
-
-    def __init__(self, n_in, **kwargs):
-        super(DeltaMLP, self).__init__()
-
-        self.n_hidden = kwargs.get('n_hidden', 64)
-        self.dropout_p = kwargs.get('dropout_p', 0)
-
-        self.hidden2delta = torch.nn.Sequential(torch.nn.Linear(self.n_hidden + n_in, self.n_hidden),
-                                                     torch.nn.Dropout(p=self.dropout_p),
-                                                     torch.nn.LeakyReLU(),
-                                                     torch.nn.Linear(self.n_hidden, 1))
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        self.hidden2delta.apply(init_weights)
-
-    def forward(self, hidden, inputs):
-        inputs = torch.cat([hidden, inputs], dim=1)
-
-        delta = self.hidden2delta(inputs).view(-1, 1)
-
-        return delta
+#
+# class DeltaMLP(torch.nn.Module):
+#     """MLP predicting local delta terms"""
+#
+#     def __init__(self, n_in, **kwargs):
+#         super(DeltaMLP, self).__init__()
+#
+#         self.n_hidden = kwargs.get('n_hidden', 64)
+#         self.dropout_p = kwargs.get('dropout_p', 0)
+#
+#         self.hidden2delta = torch.nn.Sequential(torch.nn.Linear(self.n_hidden + n_in, self.n_hidden),
+#                                                      torch.nn.Dropout(p=self.dropout_p),
+#                                                      torch.nn.LeakyReLU(),
+#                                                      torch.nn.Linear(self.n_hidden, 1))
+#
+#         self.reset_parameters()
+#
+#     def reset_parameters(self):
+#         self.hidden2delta.apply(init_weights)
+#
+#     def forward(self, hidden, inputs):
+#         inputs = torch.cat([hidden, inputs], dim=1)
+#
+#         delta = self.hidden2delta(inputs).view(-1, 1)
+#
+#         return delta
 
 
 class MLP(torch.nn.Module):
