@@ -331,9 +331,8 @@ class ForecastModel(pl.LightningModule):
             output = output.reshape(-1)
 
         if self.config.get('root_transformed_loss', False):
-            loss = utils.MSE(self.raw2pow(self.transformed2raw(output)),
-                             self.raw2pow(self.transformed2raw(gt)),
-                             mask)
+            weights = 1 + torch.pow(gt, 0.75)
+            loss = utils.MSE(output, gt, mask, weights)
         else:
             loss = utils.MSE(output, gt, mask)
         
