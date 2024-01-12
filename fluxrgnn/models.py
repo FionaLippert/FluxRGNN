@@ -330,7 +330,12 @@ class ForecastModel(pl.LightningModule):
             mask = mask.reshape(-1)
             output = output.reshape(-1)
 
-        loss = utils.MSE(output, gt, mask)
+        if self.config.get('root_transformed_loss', False):
+            loss = utils.MSE(self.raw2pow(self.transformed2raw(output)),
+                             self.raw2pow(self.transformed2raw(gt)),
+                             mask)
+        else:
+            loss = utils.MSE(output, gt, mask)
         
         if self.training:
             regularizer = self._regularizer()
