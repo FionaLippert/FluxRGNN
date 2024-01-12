@@ -1170,6 +1170,60 @@ class SourceSink(torch.nn.Module):
         return delta
 
 
+class DeltaMLP(torch.nn.Module):
+    """
+    Predict delta for time step t -> t+1, given previous predictions and hidden states.
+    """
+
+    def __init__(self, node_features, dynamic_features, **kwargs):
+        """
+        Initialize DeltaMLP module.
+
+        :param node_features: tensor containing all static node features
+        :param dynamic_features: tensor containing all dynamic node features
+        """
+
+        super(DeltaMLP, self).__init__()
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(self.node_features.values()) + \
+                    sum(self.dynamic_features.values()) + \
+                    1 + kwargs.get('n_hidden')
+
+        # setup model components
+        self.delta_mlp = MLP(n_node_in, 1, **kwargs)
+
+
+    def forward(self, x, hidden, graph_data, t, ground_states=None):
+        """
+        Predict delta for one time step.
+
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index
+        :param ground_states: estimates of birds on the ground
+        """
+
+        # static graph features
+        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
+                                   feature in self.node_features], dim=1)
+
+        # dynamic features for current time step
+        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
+        inputs = torch.cat([hidden, inputs], dim=1)
+
+        # inputs = self.input_embedding(inputs)
+        delta = self.delta_mlp(inputs)
+
+        return delta
+
+
 class ObservationModel(MessagePassing):
 
     def __init__(self):
