@@ -538,16 +538,19 @@ class FluxRGNN(ForecastModel):
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
-                self.node_source.append(self.source_sink_model.node_source)
-                self.node_sink.append(self.source_sink_model.node_sink)
+                if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+                    self.node_source.append(self.source_sink_model.node_source)
+                    self.node_sink.append(self.source_sink_model.node_sink)
+                else:
+                    self.node_source.append(delta)
+                    self.node_sink.append(-delta)
             else:
                 #self.regularizers.append(delta)
-                self.regularizers.append(self.source_sink_model.node_source + self.source_sink_model.node_sink)
-
-        #if self.config.get('force_zeros', False):
-        #    local_night = tidx_select(cell_data.local_night, t)
-        #    x = x * local_night
-        #    x = x + self.zero_value.to(x.device) * torch.logical_not(local_night)
+                if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+                    self.regularizers.append(self.source_sink_model.node_source +
+                                             self.source_sink_model.node_sink)
+                else:
+                    self.regularizers.append(delta)
         
         model_states['x'] = x
         model_states['hidden'] = hidden
