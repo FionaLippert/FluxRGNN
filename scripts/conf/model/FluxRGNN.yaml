@@ -84,7 +84,7 @@ force_zeros: false
 #use_encoder: true
 #use_boundary_model: true
 #use_uv: true
-#root_transformed_loss: false
+root_transformed_loss: false
 #compute_fluxes: true
 edge_type: voronoi
 birds_per_km2: true
