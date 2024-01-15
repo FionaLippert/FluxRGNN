@@ -1142,7 +1142,7 @@ class NumericalFluxes(MessagePassing):
                                           dynamic_features_t0=dynamic_features_t0,
                                           velocities=velocities,
                                           areas=graph_data.areas,
-                                          face_length=graph_data.edge_face_lenghts,
+                                          face_length=graph_data.edge_face_lengths,
                                           edge_normals=graph_data.edge_normals)
 
         if not self.training:
@@ -1158,12 +1158,11 @@ class NumericalFluxes(MessagePassing):
         """
 
         # compute upwind fluxes from cell j to cell i
-        flow = (edge_normals.T @ velocities_j) * x_j # flow from j to i
+        flow = (edge_normals * velocities_j).sum(1) # velocity in direction of edge (j, i)
         flow = torch.clamp(flow, min=0) # only consider upwind flow
-        in_flux = flow * x_j * face_length.view(-1, 1) # total influx from cell j to cell i
+        in_flux = flow.view(-1, 1) * x_j.view(-1, 1) * face_length.view(-1, 1) # total influx from cell j to cell i
         out_flux = in_flux[reverse_edges] # total outflux from cell i to cell j
         net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net flux from cell j to cell i per km2
-
         if not self.training:
             # convert to raw quantities
             self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
