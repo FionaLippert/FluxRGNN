@@ -521,19 +521,19 @@ class FluxRGNN(ForecastModel):
 
             # predict fluxes between neighboring cells
             net_flux = self.flux_model(x, hidden, cell_data, t)
-            x = x + net_flux
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes)
                 self.node_flux.append(self.flux_model.node_flux)
+        else:
+            net_flux = 0
 
         if self.source_sink_model is not None:
 
             # predict local source/sink terms
             delta = self.source_sink_model(x, hidden, cell_data, t,
                                            ground_states=model_states.get('ground_states', None))
-            x = x + delta
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
@@ -550,6 +550,10 @@ class FluxRGNN(ForecastModel):
                                              self.source_sink_model.node_sink)
                 else:
                     self.regularizers.append(delta)
+        else:
+            delta = 0
+
+        x = x + net_flux + delta
         
         model_states['x'] = x
         model_states['hidden'] = hidden
@@ -1036,6 +1040,133 @@ class Fluxes(MessagePassing):
                 self.edge_fluxes = raw_out_flux[reverse_edges] - raw_out_flux
             else:
                 self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
+
+        return net_flux.view(-1, 1)
+
+
+class NumericalFluxes(MessagePassing):
+    """
+    Predicts velocities given previous predictions and hidden states,
+    and computes corresponding numerical fluxes for time step t -> t+1.
+    """
+
+    def __init__(self, node_features, dynamic_features, **kwargs):
+        """
+        Initialize NumericalFluxes.
+
+        :param node_features: tensor containing all static node features
+        :param edge_features: tensor containing all static edge features
+        :param dynamic_features: tensor containing all dynamic node features
+        :param n_graph_layers: number of graph NN layers to use for hidden representations
+        """
+
+        super(NumericalFluxes, self).__init__(aggr='add', node_dim=0)
+
+        self.node_features = node_features
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + kwargs.get('n_hidden')
+
+        # setup model components
+        self.velocity_mlp = MLP(n_node_in, 2, **kwargs)
+
+        n_graph_layers = kwargs.get('n_graph_layers', 0)
+        self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
+
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+
+        self.transforms = kwargs.get('transforms', [])
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
+
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in reversed(self.transforms):
+            out = t.tensor_backward(out)
+
+        return out
+
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
+
+        return out
+
+    def transformed2raw(self, values):
+
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
+        raw = self.apply_backward_transforms(values)
+
+        return raw
+
+
+    def forward(self, x, hidden, graph_data, t):
+        """
+        Predict velocities and compute fluxes for one time step.
+
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index
+        """
+
+        assert not self.use_log_transform
+
+        # propagate hidden states through graph to combine spatial information
+        hidden_sp = hidden
+        for layer in self.graph_layers:
+            hidden_sp = layer([graph_data.edge_index, hidden_sp])
+
+        # static graph features
+        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
+                                   feature in self.node_features], dim=1)
+
+        # dynamic features for current and previous time step
+        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+        inputs = [node_features, dynamic_features_t0, hidden_sp]
+        inputs = torch.cat(inputs, dim=1)
+
+        velocities = self.velocity_mlp(inputs)
+
+        # message passing through graph
+        net_flux = self.propagate(graph_data.edge_index,
+                                          reverse_edges=graph_data.reverse_edges,
+                                          x=x,
+                                          hidden=hidden,
+                                          hidden_sp=hidden_sp,
+                                          node_features=node_features,
+                                          dynamic_features_t0=dynamic_features_t0,
+                                          velocities=velocities,
+                                          areas=graph_data.areas,
+                                          face_length=graph_data.edge_face_lenghts,
+                                          edge_normals=graph_data.edge_normals)
+
+        if not self.training:
+            raw_net_flux = self.transformed2raw(net_flux)
+            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+
+        return net_flux
+
+
+    def message(self, x_j, velocities_j, edge_normals, reverse_edges, face_length, areas_i):
+        """
+        Construct message from node j to node i (for all edges in parallel)
+        """
+
+        # compute upwind fluxes from cell j to cell i
+        flow = (edge_normals.T @ velocities_j) * x_j # flow from j to i
+        flow = torch.clamp(flow, min=0) # only consider upwind flow
+        in_flux = flow * x_j * face_length.view(-1, 1) # total influx from cell j to cell i
+        out_flux = in_flux[reverse_edges] # total outflux from cell i to cell j
+        net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net flux from cell j to cell i per km2
+
+        if not self.training:
+            # convert to raw quantities
+            self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
 
         return net_flux.view(-1, 1)
 
