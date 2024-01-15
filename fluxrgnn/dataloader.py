@@ -867,6 +867,10 @@ class RadarHeteroData(InMemoryDataset):
         length_scale = np.sqrt(area_scale) # [km]
         print(length_scale, area_scale)
 
+        face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)])
+        print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
+        print(f'max area: {cells.area_km2.max()}, min area: {cells.area_km2.min()}')
+
 
         if self.edge_type == 'none':
             print('No graph structure used')
@@ -876,17 +880,17 @@ class RadarHeteroData(InMemoryDataset):
             print('Use tessellation')
             # get distances, angles and face lengths between radars
             # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
-            distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / length_scale
+            distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
             angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
             delta_x = np.array([local_pos[j, 0] - local_pos[i, 0] for i, j in G.edges()])
             delta_y = np.array([local_pos[j, 1] - local_pos[i, 1] for i, j in G.edges()])
             n_ij = np.stack([delta_x, delta_y], axis=1)
             n_ij = n_ij / np.linalg.norm(n_ij, ord=2, axis=1).reshape(-1, 1) # normalize to unit vectors
 
-            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / length_scale
+            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
             print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
             print(f'max distance: {distances.max()}, min distance: {distances.min()}')
-            print(f'max area: {areas.max()}, min distance: {areas.min()}')
+            print(f'max area: {areas.max()}, min area: {areas.min()}')
 
             edge_attr = torch.stack([
                 torch.tensor(rescale(distances, min=0), dtype=torch.float),
