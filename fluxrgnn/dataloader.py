@@ -889,11 +889,11 @@ class RadarHeteroData(InMemoryDataset):
             print(f'max area: {areas.max()}, min distance: {areas.min()}')
 
             edge_attr = torch.stack([
-                torch.tensor(distances, dtype=torch.float),
+                torch.tensor(rescale(distances, min=0), dtype=torch.float),
                 torch.tensor(angles, dtype=torch.float),
                 torch.tensor(delta_x, dtype=torch.float),
                 torch.tensor(delta_y, dtype=torch.float),
-                torch.tensor(face_lengths, dtype=torch.float)
+                torch.tensor(rescale(face_lengths, min=0), dtype=torch.float)
             ], dim=1)
 
 
