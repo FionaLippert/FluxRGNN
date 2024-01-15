@@ -1196,7 +1196,9 @@ class SourceSink(torch.nn.Module):
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
-        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
+        # self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
@@ -1250,6 +1252,8 @@ class SourceSink(torch.nn.Module):
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
+        inputs = self.input_embedding(inputs)
+
         inputs = torch.cat([hidden, inputs], dim=1)
 
         # hidden = self.node_lstm(inputs)
