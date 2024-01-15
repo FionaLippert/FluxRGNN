@@ -1152,17 +1152,20 @@ class NumericalFluxes(MessagePassing):
         return net_flux
 
 
-    def message(self, x_j, velocities_j, edge_normals, reverse_edges, face_length, areas_i):
+    def message(self, x_j, velocities_i, velocities_j, edge_normals, reverse_edges, face_length, areas_i):
         """
         Construct message from node j to node i (for all edges in parallel)
         """
 
         # compute upwind fluxes from cell j to cell i
-        flow = (edge_normals * velocities_j).sum(1) # velocity in direction of edge (j, i)
+        print(f'min velocity: {velocities_j.min()}, max velocity: {velocities_j.max()}')
+        edge_velocities = (velocities_i + velocities_j) / 2
+        flow = (edge_normals * edge_velocities).sum(1) # velocity in direction of edge (j, i)
         flow = torch.clamp(flow, min=0) # only consider upwind flow
-        in_flux = flow.view(-1, 1) * x_j.view(-1, 1) * face_length.view(-1, 1) # total influx from cell j to cell i
-        out_flux = in_flux[reverse_edges] # total outflux from cell i to cell j
-        net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net flux from cell j to cell i per km2
+        in_flux = flow.view(-1, 1) * x_j.view(-1, 1) # influx from cell j to cell i [per km]
+        out_flux = in_flux[reverse_edges] # outflux from cell i to cell j [per km]
+        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / areas_i.view(-1, 1)) # net flux from j to i
+        print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
         if not self.training:
             # convert to raw quantities
             self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
