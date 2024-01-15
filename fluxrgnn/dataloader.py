@@ -863,6 +863,11 @@ class RadarHeteroData(InMemoryDataset):
                                     np.cos(cells['lat'].to_numpy())], axis=1)
 
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
+        area_scale = cells['area_km2'].max() # [km^2]
+        length_scale = np.sqrt(area_scale) # [km]
+        print(length_scale, area_scale)
+
+
         if self.edge_type == 'none':
             print('No graph structure used')
             areas = np.ones(areas.shape)
@@ -870,12 +875,19 @@ class RadarHeteroData(InMemoryDataset):
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars
-            distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
+            # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
+            distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / length_scale
             angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
             delta_x = np.array([local_pos[j, 0] - local_pos[i, 0] for i, j in G.edges()])
             delta_y = np.array([local_pos[j, 1] - local_pos[i, 1] for i, j in G.edges()])
+            n_ij = np.stack([delta_x, delta_y], axis=1)
+            n_ij = n_ij / np.linalg.norm(n_ij, ord=2, axis=1).reshape(-1, 1) # normalize to unit vectors
 
-            face_lengths = rescale(np.array([data['face_length'] for i, j, data in G.edges(data=True)]), min=0)
+            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / length_scale
+            print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
+            print(f'max distance: {distances.max()}, min distance: {distances.min()}')
+            print(f'max area: {areas.max()}, min distance: {areas.min()}')
+
             edge_attr = torch.stack([
                 torch.tensor(distances, dtype=torch.float),
                 torch.tensor(angles, dtype=torch.float),
@@ -891,7 +903,6 @@ class RadarHeteroData(InMemoryDataset):
         data = {'env': [], 'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
 
         # process dynamic cell features
-        groups = dynamic_feature_df.groupby('ID')
         for cid, group_df in dynamic_feature_df.groupby('ID'):
             df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data['env'].append(df[self.env_vars].to_numpy().T)
@@ -957,7 +968,9 @@ class RadarHeteroData(InMemoryDataset):
             'inner2boundary_edges': inner2boundary_edges.bool(),
             'boundary2boundary_edges': boundary2boundary_edges.bool(),
             'inner_edges': inner_edges.bool(),
-            'edge_attr': edge_attr
+            'edge_attr': edge_attr,
+            'edge_normals': torch.tensor(n_ij, dtype=torch.float),
+            'edge_face_lengths': torch.tensor(face_lengths, dtype=torch.float)
         }
 
         # observation model structure

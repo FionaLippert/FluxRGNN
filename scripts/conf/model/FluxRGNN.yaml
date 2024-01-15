@@ -108,6 +108,7 @@ decoder:
 
 flux_model:
   _target_: fluxrgnn.models.Fluxes
+  #_target_: fluxrgnn.models.NumericalFluxes
   node_features:
     coords: ${model.coord_dim}
   edge_features:
