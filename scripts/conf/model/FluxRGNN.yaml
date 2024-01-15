@@ -127,8 +127,8 @@ flux_model:
 
 
 source_sink_model:
-#  _target_: fluxrgnn.models.SourceSink
-  _target_: fluxrgnn.models.DeltaMLP
+  _target_: fluxrgnn.models.SourceSink
+  #_target_: fluxrgnn.models.DeltaMLP
   node_features:
     coords: ${model.coord_dim}
   dynamic_features:
