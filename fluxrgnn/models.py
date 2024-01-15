@@ -1194,7 +1194,7 @@ class SourceSink(torch.nn.Module):
 
         n_node_in = sum(self.node_features.values()) + \
                     sum(self.dynamic_features.values()) + \
-                    1 + kwargs.get('n_hidden')
+                    1 #+ kwargs.get('n_hidden')
 
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
