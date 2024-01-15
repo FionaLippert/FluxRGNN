@@ -66,10 +66,12 @@ def MSE_numpy(output, gt, mask):
     mse = np.sum(diff2 * mask) / np.sum(mask)
     return mse
 
-def MSE(output, gt, mask):
+def MSE(output, gt, mask, weights=None):
 
     diff = torch.abs(output - gt)
     diff2 = torch.square(diff)
+    if weights is not None:
+        diff2 = weights * diff2
     mse = torch.sum(diff2 * mask, dim=0) / torch.sum(mask, dim=0)
     return mse
 
