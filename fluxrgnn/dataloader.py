@@ -870,6 +870,8 @@ class RadarHeteroData(InMemoryDataset):
             print('No graph structure used')
             areas = np.ones(areas.shape)
             edge_attr = torch.zeros(0)
+            n_ij = torch.zeros(0)
+            face_lengths = torch.zeros(0)
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars
