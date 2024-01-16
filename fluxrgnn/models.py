@@ -1201,8 +1201,10 @@ class SourceSink(torch.nn.Module):
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
         #self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
-        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
-        #self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
+        # self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
+        #self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        # self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
+        self.source_sink_mlp = MLP(kwargs.get('n_hidden'), 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
@@ -1256,9 +1258,10 @@ class SourceSink(torch.nn.Module):
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
-        #inputs = self.input_embedding(inputs)
+        # inputs = self.input_embedding(inputs)
 
-        inputs = torch.cat([hidden, inputs], dim=1)
+        # inputs = torch.cat([hidden, inputs], dim=1)
+        inputs = hidden
 
         # hidden = self.node_lstm(inputs)
         #source, frac_sink = self.source_sink_mlp(hidden, inputs)
@@ -2112,10 +2115,10 @@ class NodeLSTM(torch.nn.Module):
         # node embedding
         self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
 
-        # if self.use_encoder:
-        #     self.lstm_in = torch.nn.LSTMCell(self.n_hidden * 2, self.n_hidden)
-        # else:
-        self.lstm_in = torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
+        if self.use_encoder:
+            self.lstm_in = torch.nn.LSTMCell(self.n_hidden * 2, self.n_hidden)
+        else:
+            self.lstm_in = torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
                                           for _ in range(self.n_lstm_layers - 1)])
 
@@ -2144,8 +2147,8 @@ class NodeLSTM(torch.nn.Module):
 
         inputs = self.input2hidden(inputs)
 
-        # if self.use_encoder:
-        #     inputs = torch.cat([inputs, self.enc_state], dim=1)
+        if self.use_encoder:
+            inputs = torch.cat([inputs, self.enc_state], dim=1)
 
         # lstm layers
         self.h[0], self.c[0] = self.lstm_in(inputs, (self.h[0], self.c[0]))
