@@ -1032,7 +1032,8 @@ class Fluxes(MessagePassing):
             in_flux = flux * x_j * areas_j.view(-1, 1)
             out_flux = in_flux[reverse_edges]
             net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
-
+            print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
+            print(f'min x: {x_j.min()}, max x: {x_j.max()}')
         if not self.training:
             # convert to raw quantities
             if self.use_log_transform:
@@ -1194,14 +1195,14 @@ class SourceSink(torch.nn.Module):
 
         n_node_in = sum(self.node_features.values()) + \
                     sum(self.dynamic_features.values()) + \
-                    1 #+ kwargs.get('n_hidden')
+                    1 + kwargs.get('n_hidden')
 
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
-        self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
-        # self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
-        self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
+        #self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
+        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        #self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
@@ -1255,7 +1256,7 @@ class SourceSink(torch.nn.Module):
                                          feature in self.dynamic_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
-        inputs = self.input_embedding(inputs)
+        #inputs = self.input_embedding(inputs)
 
         inputs = torch.cat([hidden, inputs], dim=1)
 
@@ -1272,7 +1273,7 @@ class SourceSink(torch.nn.Module):
 
         # fraction of birds landing (between 0 and 1, with initial random outputs close to 0)
         frac_sink = torch.tanh(source_sink[:, 1].view(-1, 1)).pow(2)
-
+        #frac_sink = torch.sigmoid(source_sink[:, 1].view(-1, 1))
 
         if self.use_log_transform:
             # both source and sink are fractions (total source/sink divided by current density x)

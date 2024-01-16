@@ -865,12 +865,6 @@ class RadarHeteroData(InMemoryDataset):
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         area_scale = cells['area_km2'].max() # [km^2]
         length_scale = np.sqrt(area_scale) # [km]
-        print(length_scale, area_scale)
-
-        face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)])
-        print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
-        print(f'max area: {cells.area_km2.max()}, min area: {cells.area_km2.min()}')
-
 
         if self.edge_type == 'none':
             print('No graph structure used')
