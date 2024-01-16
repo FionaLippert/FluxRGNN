@@ -2111,10 +2111,10 @@ class NodeLSTM(torch.nn.Module):
         # node embedding
         self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
 
-        if self.use_encoder:
-            self.lstm_in = torch.nn.LSTMCell(self.n_hidden * 2, self.n_hidden)
-        else:
-            self.lstm_in = torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
+        # if self.use_encoder:
+        #     self.lstm_in = torch.nn.LSTMCell(self.n_hidden * 2, self.n_hidden)
+        # else:
+        self.lstm_in = torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
                                           for _ in range(self.n_lstm_layers - 1)])
 
@@ -2143,8 +2143,8 @@ class NodeLSTM(torch.nn.Module):
 
         inputs = self.input2hidden(inputs)
 
-        if self.use_encoder:
-            inputs = torch.cat([inputs, self.enc_state], dim=1)
+        # if self.use_encoder:
+        #     inputs = torch.cat([inputs, self.enc_state], dim=1)
 
         # lstm layers
         self.h[0], self.c[0] = self.lstm_in(inputs, (self.h[0], self.c[0]))
