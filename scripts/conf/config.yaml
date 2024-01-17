@@ -34,7 +34,7 @@ trainer:
       monitor: val/loss
       mode: min
     - _target_: callbacks.GradNormCallback
-    - _target_: callbacks.PredictionCallback
+#    - _target_: callbacks.PredictionCallback
   accelerator: ${device.accelerator}
   devices: ${device.devices}
   deterministic: True

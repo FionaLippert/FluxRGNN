@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
-from torch_geometric.utils import to_dense_adj
+from torch_geometric.utils import to_dense_adj, degree, scatter
 import pytorch_lightning as pl
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
@@ -775,7 +775,7 @@ class SeasonalityForecast(ForecastModel):
     def forecast_step(self, model_states, data, t, *args, **kwargs):
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
-        model_states['x'] = self.seasonal_patterns[data.ridx, data.tidx[t]].view(-1, 1)
+        model_states['x'] = self.seasonal_patterns[data.cidx, data.tidx[t]].view(-1, 1)
 
         return model_states
 
@@ -1383,6 +1383,48 @@ class ObservationModel(MessagePassing):
         return x_j * edge_weight.view(-1, 1)
 
 
+class RadarToCellGNN(MessagePassing):
+
+    def __init__(self, dynamic_features, **kwargs):
+        super(RadarToCellGNN, self).__init__(**kwargs)
+
+        self.dynamic_features = dynamic_features
+
+        n_node_in = sum(self.dynamic_features.values()) + 1
+
+        self.mlp = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
+
+    def forward(self, graph_data, t, *args, **kwargs):
+
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+
+        radars_to_cells = graph_data['radar', 'cell']
+
+        dynamic_features = torch.cat([tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1) for
+                                         feature in self.dynamic_features], dim=1)
+
+
+        embedded_features = torch.cat([dynamic_features,
+                                           torch.zeros((n_cells - n_radars, dynamic_features.size(1)),
+                                                       device=dynamic_features.device)], dim=0)
+
+        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1], n_cells)
+
+        cell_states = self.propagate(radars_to_cells.edge_index,
+                                     x=embedded_features,
+                                     edge_weight=radars_to_cells.edge_weight)
+
+        return cell_states
+
+    def message(self, x_j, edge_weight):
+        # from radar j to cell i
+
+        inputs = torch.cat([x_j, edge_weight.view(-1, 1)], dim=1)
+
+        m_ij = self.mlp(inputs)
+
+        return m_ij
 
 
 class InitialState(MessagePassing):
@@ -1454,7 +1496,11 @@ class RadarToCellInterpolation(InitialState):
         
         super(RadarToCellInterpolation, self).__init__(**kwargs)
 
-        self.mlp = mlp
+        # n_node_in = sum(self.node_features.values()) + \
+        #             sum(self.dynamic_features.values()) + \
+        #             kwargs.get('n_hidden')
+        #
+        # self.mlp = MLP(n_node_in, 1, **kwargs)
         
     def initial_state(self, graph_data, t, hidden):
         
@@ -1466,19 +1512,24 @@ class RadarToCellInterpolation(InitialState):
         embedded_measurements = torch.cat([measurements.view(n_radars, 1),
                                            torch.zeros((n_cells-n_radars, 1), device=measurements.device)], dim=0)
 
+        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1], n_cells)
+
         cell_states = self.propagate(radars_to_cells.edge_index,
                                      x=embedded_measurements,
+                                     weighted_degree=weighted_degree,
                                      edge_weight=radars_to_cells.edge_weight)
 
-        if self.mlp is not None:
-            inputs = torch.cat([cell_states, hidden], dim=1)
-            cell_states = cell_states + self.mlp(inputs)
+        # TODO: possibly learn error term with MLP?
+        # if self.mlp is not None:
+        #     inputs = torch.cat([cell_states, hidden], dim=1)
+        #     cell_states = cell_states + self.mlp(inputs)
 
         return cell_states
 
-    def message(self, x_j, edge_weight):
+    def message(self, x_j, weighted_degree_i, edge_weight):
+        # from radar j to cell i
         
-        return x_j * edge_weight.view(-1, 1)
+        return x_j * edge_weight.view(-1, 1) / weighted_degree_i
 
 
 
