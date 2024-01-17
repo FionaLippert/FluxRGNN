@@ -162,8 +162,9 @@ class SeasonalData(InMemoryDataset):
             print('Preprocessed data not available. Please run preprocessing script first.')
 
         # load features
-        dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
-        voronoi = pd.read_csv(osp.join(self.preprocessed_dir, 'static_features.csv'))
+        # dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
+        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'measurements.csv'))
+        cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_features.csv'))
 
         if not self.birds_per_km2:
             target_col = 'birds'
@@ -172,13 +173,13 @@ class SeasonalData(InMemoryDataset):
         if self.use_buffers:
             target_col += '_from_buffer'
 
-        time = dynamic_feature_df.datetime.sort_values().unique()
+        time = measurement_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
         data = dict(targets=[], missing=[])
 
-        groups = dynamic_feature_df.groupby('radar')
-        for name in voronoi.radar:
+        groups = measurement_df.groupby('ID')
+        for name in cells.ID:
             df = groups.get_group(name).sort_values(by='datetime').reset_index(drop=True)
             data['targets'].append(df[target_col].to_numpy())
             data['missing'].append(df.missing.to_numpy())
@@ -203,8 +204,7 @@ class SeasonalData(InMemoryDataset):
         # write data to disk
         os.makedirs(self.processed_dir, exist_ok=True)
 
-        info = {'radars': voronoi.radar.values,
-                'timepoints': time,
+        info = {'timepoints': time,
                 'tidx': tidx}
 
         with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:

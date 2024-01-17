@@ -84,16 +84,9 @@ def count_parameters(model):
 
 def get_transform(cfg):
 
-    transform_list = []
-
-    if cfg.model.use_log_transform:
-        transform_list.extend([transforms.LogTransform('x', offset=cfg.model.log_offset),
-                               transforms.LogTransform('y', offset=cfg.model.log_offset)])
-
-    transform_list.extend([transforms.Rescaling('x', factor=cfg.model.scale),
-                           transforms.Rescaling('y', factor=cfg.model.scale)])
-
+    transform_list = [instantiate(t) for t in cfg.model.transforms]
     transform = T.Compose(transform_list)
+
     return transform
     
 
@@ -127,7 +120,7 @@ def training(trainer, model, cfg: DictConfig):
     for nidx, data in enumerate(dl_train):
         data = data.to(model.device)
 
-        seasonal_patterns.append(data.y)
+        seasonal_patterns.append(data.x)
         missing_patterns.append(data.missing)
 
     seasonal_patterns = torch.stack(seasonal_patterns, dim=0)  # shape [years, radars, timepoints]
@@ -161,8 +154,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, input_col, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir,
-                                                                     training=False, transform=transform)
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)[0]
     test_data = test_data[0]
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
@@ -173,24 +165,15 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     model.seasonal_patterns.to(model.device)
     trainer.test(model, test_loader)
 
-    #has_results = False
-    #result_path = osp.join(cfg.output_dir, 'results')
+    eval_path = osp.join(cfg.output_dir, 'evaluation')
+    utils.dump_outputs(model.test_metrics, eval_path)
+    utils.dump_outputs(model.test_results, eval_path)
 
-    if hasattr(model, 'test_results'):
-        eval_path = osp.join(cfg.output_dir, 'evaluation')
-        #os.makedirs(eval_path, exist_ok=True)
-        #with open(osp.join(eval_path, 'test_results.pickle'), 'wb') as f:
-        #    pickle.dump(model.test_results, f, protocol=pickle.HIGHEST_PROTOCOL)
-        utils.dump_outputs(model.test_results, eval_path)
-        utils.dump_outputs({'test/gt': model.test_gt,
-                            'test/predictions': model.test_predictions,
-                            'test/masks': model.test_masks},
-                            eval_path)
-
-        if isinstance(cfg.trainer.logger, WandbLogger):
-            artifact = wandb.Artifact('evaluation', type='evaluation')
-            artifact.add_dir(eval_path)
-            wandb.run.log_artifact(artifact)
+    if isinstance(trainer.logger, WandbLogger):
+        print('add evaluation artifact')
+        artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
+        artifact.add_dir(eval_path)
+        wandb.run.log_artifact(artifact)
 
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
