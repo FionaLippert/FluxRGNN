@@ -474,8 +474,8 @@ class FluxRGNN(ForecastModel):
 
         # predict initial system state
         if self.initial_model is not None:
-            # x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
-            x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
+            x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
+            #x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
         else:
@@ -1053,8 +1053,8 @@ class Fluxes(MessagePassing):
             in_flux = flux * x_j * areas_j.view(-1, 1)
             out_flux = in_flux[reverse_edges]
             net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
-            print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
-            print(f'min x: {x_j.min()}, max x: {x_j.max()}')
+            #print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
+            #print(f'min x: {x_j.min()}, max x: {x_j.max()}')
         if not self.training:
             # convert to raw quantities
             if self.use_log_transform:
@@ -1223,9 +1223,9 @@ class SourceSink(torch.nn.Module):
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
         #self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
         # self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
-        #self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
         # self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
-        self.source_sink_mlp = MLP(kwargs.get('n_hidden'), 2, **kwargs)
+        # self.source_sink_mlp = MLP(kwargs.get('n_hidden'), 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
 
@@ -1281,8 +1281,8 @@ class SourceSink(torch.nn.Module):
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
         # inputs = self.input_embedding(inputs)
 
-        # inputs = torch.cat([hidden, inputs], dim=1)
-        inputs = hidden
+        inputs = torch.cat([hidden, inputs], dim=1)
+        #inputs = hidden
 
         # hidden = self.node_lstm(inputs)
         #source, frac_sink = self.source_sink_mlp(hidden, inputs)
