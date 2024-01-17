@@ -702,6 +702,26 @@ class LocalMLPForecast(ForecastModel):
         return model_states
 
 
+class RadarToCellForecast(ForecastModel):
+
+
+    def __init__(self, **kwargs):
+
+        super(RadarToCellForecast, self).__init__(**kwargs)
+
+        self.radar2cell = RadarToCellInterpolation(**kwargs)
+
+
+    def forecast_step(self, model_states, data, t, *args, **kwargs):
+
+        x = self.radar2cell(data, t)
+
+        model_states['x'] = x
+
+        return model_states
+
+
+
 
 class NodeMLP(torch.nn.Module):
     """Standard MLP mapping concatenated features of a single nodes at time t to migration intensities at time t."""
@@ -775,6 +795,7 @@ class SeasonalityForecast(ForecastModel):
     def forecast_step(self, model_states, data, t, *args, **kwargs):
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
+        # print(data.tidx.min(), data.tidx.max(), self.seasonal_patterns.size())
         model_states['x'] = self.seasonal_patterns[data.cidx, data.tidx[t]].view(-1, 1)
 
         return model_states
@@ -1492,7 +1513,7 @@ class InitialState(MessagePassing):
 
 class RadarToCellInterpolation(InitialState):
 
-    def __init__(self, mlp=None, **kwargs):
+    def __init__(self, **kwargs):
         
         super(RadarToCellInterpolation, self).__init__(**kwargs)
 
@@ -1502,7 +1523,7 @@ class RadarToCellInterpolation(InitialState):
         #
         # self.mlp = MLP(n_node_in, 1, **kwargs)
         
-    def initial_state(self, graph_data, t, hidden):
+    def initial_state(self, graph_data, t, *args, **kwargs):
         
         measurements = tidx_select(graph_data['radar'].x, t)
         radars_to_cells = graph_data['radar', 'cell']

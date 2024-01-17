@@ -176,6 +176,8 @@ class SeasonalData(InMemoryDataset):
         time = measurement_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
+        print(tidx.min(), tidx.max())
+
         data = dict(targets=[], missing=[])
 
         groups = measurement_df.groupby('ID')
@@ -954,11 +956,16 @@ class RadarHeteroData(InMemoryDataset):
         for k, v in data.items():
             data[k] = data[k][..., valid_idx]
         tidx = tidx[..., valid_idx]
+        print(tidx.min(), tidx.max())
 
 
         # sample sequences uniformly
-        n_seq = int(self.data_perc * valid_idx.sum())
-        seq_index = self.rng.permutation(valid_idx.sum())[:n_seq]
+        if self.data_perc < 1.0:
+            n_seq = int(self.data_perc * valid_idx.sum())
+            seq_index = self.rng.permutation(valid_idx.sum())[:n_seq]
+        else:
+            seq_index = np.arange(tidx.shape[-1])
+            print(seq_index)
 
         # Delaunay triangulation features
         cell2cell_edges = {
