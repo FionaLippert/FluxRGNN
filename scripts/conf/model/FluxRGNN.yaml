@@ -107,8 +107,8 @@ decoder:
     env: ${model.n_env}
 
 flux_model:
-  #_target_: fluxrgnn.models.Fluxes
-  _target_: fluxrgnn.models.NumericalFluxes
+  _target_: fluxrgnn.models.Fluxes
+  #_target_: fluxrgnn.models.NumericalFluxes
   node_features:
     coords: ${model.coord_dim}
   edge_features:
@@ -137,7 +137,7 @@ source_sink_model:
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1
   activation:
-    _target_: torch.nn.LeakyReLU
+    _target_: torch.nn.ReLU # LeakyReLU
   use_log_transform: ${model.use_log_transform}
   log_offset: ${model.log_offset}
   scale: ${model.scale}
@@ -159,6 +159,7 @@ source_sink_model:
 #  log_offset: ${model.log_offset}
 #  scale: ${model.scale}
 #  dropout_p: ${model.dropout_p}
+#  transforms: ${model.transforms}
 
 initial_model:
   _target_: fluxrgnn.models.ObservationCopy
