@@ -24,10 +24,10 @@ edge_type: none
 birds_per_km2: true
 #n_dummy_radars: 0
 
-node_features:
+static_cell_features:
   coords: ${model.coord_dim}
 #  pos: ${model.coord_dim}
-dynamic_features:
+dynamic_cell_features:
   env: ${model.n_env}
 
 force_zeros: true

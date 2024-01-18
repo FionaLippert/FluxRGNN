@@ -656,18 +656,18 @@ class LocalMLPForecast(ForecastModel):
     Forecast model using a local MLP with parameters shared across time and space.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize LocalMLPForecast and all its components.
         """
 
         super(LocalMLPForecast, self).__init__(**kwargs)
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
         # setup model
-        n_in = sum(node_features.values()) + sum(dynamic_features.values())
+        n_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values())
         self.mlp = NodeMLP(n_in, **kwargs)
 
 
@@ -677,11 +677,11 @@ class LocalMLPForecast(ForecastModel):
 
         # static features
         node_features = torch.cat([cell_data.get(feature).reshape(data.num_nodes, -1) for
-                                   feature in self.node_features], dim=1)
+                                   feature in self.static_cell_features], dim=1)
 
         # dynamic features for current time step t
         dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1) for
-                                      feature in self.dynamic_features], dim=1)
+                                      feature in self.dynamic_cell_features], dim=1)
 
         # combined features
         inputs = torch.cat([node_features, dynamic_features], dim=1)
@@ -814,7 +814,7 @@ class XGBoostForecast(ForecastModel):
     Forecast model using XGBoost to predict local animal densities.
     """
 
-    def __init__(self, xgboost, node_features, dynamic_features, **kwargs):
+    def __init__(self, xgboost, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize XGBoostForecast model.
         """
@@ -823,8 +823,8 @@ class XGBoostForecast(ForecastModel):
 
         self.automatic_optimization = False
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
         self.xgboost = xgboost
 
@@ -838,11 +838,11 @@ class XGBoostForecast(ForecastModel):
 
         # static graph features
         node_features = torch.cat([cell_data.get(feature).reshape(cell_data.coords.size(0), -1) for
-                                   feature in self.node_features], dim=1)
+                                   feature in self.static_cell_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.coords.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         # combined features
         inputs = torch.cat([node_features, dynamic_features], dim=1).detach().numpy()
@@ -904,7 +904,7 @@ class Fluxes(MessagePassing):
     Predicts fluxes for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, node_features, edge_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, edge_features, dynamic_cell_features, **kwargs):
         """
         Initialize Fluxes.
 
@@ -916,11 +916,11 @@ class Fluxes(MessagePassing):
 
         super(Fluxes, self).__init__(aggr='add', node_dim=0)
 
-        self.node_features = node_features
+        self.static_cell_features = static_cell_features
         self.edge_features = edge_features
-        self.dynamic_features = dynamic_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_features.values())
+        n_edge_in = sum(edge_features.values()) + 2 * sum(dynamic_cell_features.values())
 
         # setup model components
         self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
@@ -978,15 +978,15 @@ class Fluxes(MessagePassing):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                   feature in self.node_features], dim=1)
+                                   feature in self.static_cell_features], dim=1)
         edge_features = torch.cat([graph_data.get(feature).reshape(graph_data.edge_index.size(1), -1) for
                                    feature in self.edge_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
         dynamic_features_t1 = torch.cat([tidx_select(graph_data.get(feature), t-1).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         # message passing through graph
         net_flux = self.propagate(graph_data.edge_index,
@@ -1073,22 +1073,22 @@ class NumericalFluxes(MessagePassing):
     and computes corresponding numerical fluxes for time step t -> t+1.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize NumericalFluxes.
 
-        :param node_features: tensor containing all static node features
+        :param static_cell_features: tensor containing all static node features
         :param edge_features: tensor containing all static edge features
-        :param dynamic_features: tensor containing all dynamic node features
+        :param dynamic_cell_features: tensor containing all dynamic node features
         :param n_graph_layers: number of graph NN layers to use for hidden representations
         """
 
         super(NumericalFluxes, self).__init__(aggr='add', node_dim=0)
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + kwargs.get('n_hidden')
+        n_node_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values()) + kwargs.get('n_hidden')
 
         # setup model components
         self.velocity_mlp = MLP(n_node_in, 2, **kwargs)
@@ -1144,11 +1144,11 @@ class NumericalFluxes(MessagePassing):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                   feature in self.node_features], dim=1)
+                                   feature in self.static_cell_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         inputs = [node_features, dynamic_features_t0, hidden_sp]
         inputs = torch.cat(inputs, dim=1)
@@ -1202,7 +1202,7 @@ class SourceSink(torch.nn.Module):
     Predict source and sink terms for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -1212,11 +1212,11 @@ class SourceSink(torch.nn.Module):
 
         super(SourceSink, self).__init__()
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(self.node_features.values()) + \
-                    sum(self.dynamic_features.values()) + \
+        n_node_in = sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
                     1 + kwargs.get('n_hidden')
 
         # setup model components
@@ -1273,11 +1273,11 @@ class SourceSink(torch.nn.Module):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                          feature in self.node_features], dim=1)
+                                          feature in self.static_cell_features], dim=1)
 
         # dynamic features for current time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
         # inputs = self.input_embedding(inputs)
@@ -1339,7 +1339,7 @@ class DeltaMLP(torch.nn.Module):
     Predict delta for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize DeltaMLP module.
 
@@ -1349,11 +1349,11 @@ class DeltaMLP(torch.nn.Module):
 
         super(DeltaMLP, self).__init__()
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(self.node_features.values()) + \
-                    sum(self.dynamic_features.values()) + \
+        n_node_in = sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
                     1 + kwargs.get('n_hidden')
 
         # setup model components
@@ -1373,11 +1373,11 @@ class DeltaMLP(torch.nn.Module):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                   feature in self.node_features], dim=1)
+                                   feature in self.static_cell_features], dim=1)
 
         # dynamic features for current time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
         inputs = torch.cat([hidden, inputs], dim=1)
@@ -1413,10 +1413,11 @@ class ObservationModel(MessagePassing):
 
 class RadarToCellGNN(MessagePassing):
 
-    def __init__(self, dynamic_features, **kwargs):
+    def __init__(self, static_radar_features=None, dynamic_radar_features=None, **kwargs):
         super(RadarToCellGNN, self).__init__(**kwargs)
 
-        self.dynamic_features = dynamic_features
+        self.static_radar_features = {} if static_radar_features is None else static_radar_features
+        self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
 
         # n_node_in = sum(self.dynamic_features.values()) + 1
         #
@@ -1429,13 +1430,15 @@ class RadarToCellGNN(MessagePassing):
 
         radars_to_cells = graph_data['radar', 'cell']
 
-        dynamic_features = torch.cat([tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1) for
-                                         feature in self.dynamic_features], dim=1)
+        static_features = [graph_data['radar'].get(feature).reshape(n_radars, -1) for
+                           feature in self.static_radar_features]
 
+        dynamic_features = [tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1) for
+                            feature in self.dynamic_radar_features]
 
-        embedded_features = torch.cat([dynamic_features,
-                                           torch.zeros((n_cells - n_radars, dynamic_features.size(1)),
-                                                       device=dynamic_features.device)], dim=0)
+        all_features = torch.cat(static_features + dynamic_features, dim=1)
+        dummy_features = torch.zeros((n_cells - n_radars, all_features.size(1)), device=all_features.device)
+        embedded_features = torch.cat([all_features, dummy_features], dim=0)
 
         weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1])
 
@@ -1588,7 +1591,7 @@ class InitialStateMLP(InitialState):
     Predict initial bird densities for all cells based on encoder hidden states.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize InitialState module.
 
@@ -1598,11 +1601,11 @@ class InitialStateMLP(InitialState):
 
         super(InitialStateMLP, self).__init__(**kwargs)
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(self.node_features.values()) + \
-                    sum(self.dynamic_features.values()) + \
+        n_node_in = sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
                     kwargs.get('n_hidden')
 
         self.mlp = MLP(n_node_in, 1, **kwargs)
@@ -1623,11 +1626,11 @@ class InitialStateMLP(InitialState):
 
         # static graph features
         node_features = torch.cat([cell_data.get(feature).reshape(num_nodes, -1) for
-                                          feature in self.node_features], dim=1)
+                                          feature in self.static_cell_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features_t0 = torch.cat([tidx_select(cell_data.get(feature), t).reshape(num_nodes, -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         inputs = torch.cat([node_features, dynamic_features_t0, hidden], dim=1)
 
@@ -1732,7 +1735,7 @@ class RecurrentDecoder(torch.nn.Module):
     Recurrent neural network predicting the hidden states during forecasting.
     """
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -1742,10 +1745,10 @@ class RecurrentDecoder(torch.nn.Module):
 
         super(RecurrentDecoder, self).__init__()
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(node_features.values()) + sum(dynamic_features.values()) + 1
+        n_node_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values()) + 1
 
         self.node_lstm = NodeLSTM(n_node_in, **kwargs)
 
@@ -1766,11 +1769,11 @@ class RecurrentDecoder(torch.nn.Module):
 
         # static graph features
         node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                          feature in self.node_features], dim=1)
+                                          feature in self.static_cell_features], dim=1)
 
         # dynamic features for current and previous time step
         dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_features], dim=1)
+                                         feature in self.dynamic_cell_features], dim=1)
 
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
