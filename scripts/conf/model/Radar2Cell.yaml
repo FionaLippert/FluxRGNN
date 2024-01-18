@@ -13,6 +13,9 @@ force_zeros: true
 edge_type: hexagons
 birds_per_km2: true
 
+dynamic_radar_features:
+  x: 1
+
 use_log_transform: false
 log_offset: 0.1
 pow_exponent: 0.33333

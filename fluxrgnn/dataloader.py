@@ -1018,6 +1018,8 @@ class RadarHeteroData(InMemoryDataset):
                 # static radar features
                 'ridx': torch.arange(len(radar_ids), dtype=torch.long),
 
+                # TODO: add radar lonlat_encoding (and possibly sun elevation?)
+
                 # dynamic radar features
                 'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
                 'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),

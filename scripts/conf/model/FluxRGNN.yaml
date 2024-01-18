@@ -199,10 +199,18 @@ encoder:
   n_hidden: ${model.n_hidden}
   n_lstm_layers: 1
   dropout_p: ${model.dropout_p}
-  node_features:
+  radar2cell_model:
+    _target_: fluxrgnn.models.ObservationCopy
+    use_log_transform: ${model.use_log_transform}
+    log_offset: ${model.log_offset}
+    scale: ${model.scale}
+    dropout_p: ${model.dropout_p}
+    transforms: ${model.transforms}
+  static_cell_features:
     coords: ${model.coord_dim}
-  dynamic_features:
+  dynamic_cell_features:
     env: ${model.n_env}
+  dynamic_radar_features:
     bird_uv: 2
     x: 1
 
