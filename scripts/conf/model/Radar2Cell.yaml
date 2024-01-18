@@ -25,4 +25,7 @@ transforms:
     feature: x
     factor: ${model.scale}
 
+observation_model:
+  _target_: fluxrgnn.models.ObservationModel
+
 load_states_from: none

@@ -59,8 +59,8 @@ class ForecastModel(pl.LightningModule):
         model_states = self.initialize(data, t0)
         forecast = [model_states['x']]
 
-        # only cell data is needed for forecasting
-        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        # radar_data = data['radar']
 
         # predict until the max forecasting horizon is reached
         forecast_horizon = range(self.t_context + 1, self.t_context + horizon)
@@ -84,12 +84,12 @@ class ForecastModel(pl.LightningModule):
             
             
             # make prediction for next time step
-            model_states = self.forecast_step(model_states, cell_data, t, teacher_forcing)
+            model_states = self.forecast_step(model_states, data, t, teacher_forcing)
             
             x = model_states['x']
 
             if self.config.get('force_zeros', False):
-                local_night = tidx_select(cell_data.local_night, t)
+                local_night = tidx_select(data['cell'].local_night, t)
                 x = x * local_night
                 x = x + self.zero_value.to(x.device) * torch.logical_not(local_night)
 
@@ -105,8 +105,8 @@ class ForecastModel(pl.LightningModule):
         model_states = {}
 
         # make prediction for first time step
-        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
-        model_states = self.forecast_step(model_states, cell_data, t0 + self.t_context)
+        # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        model_states = self.forecast_step(model_states, data, t0 + self.t_context)
 
         return model_states
 
@@ -357,12 +357,6 @@ class ForecastModel(pl.LightningModule):
             pow_output = self.raw2pow(raw_output)
             self._add_eval_metrics(eval_dict, pow_gt, pow_output, mask, prefix=f'{prefix}/pow')
 
-            # print(f'min output = {output.min()}')
-            # print(f'min output (raw) = {raw_output.min()}')
-            #
-            # print(f'min gt = {gt.min()}')
-            # print(f'min gt (raw) = {raw_gt.min()}')
-
         return eval_dict
 
     def _add_eval_metrics(self, eval_dict, gt, output, mask, prefix=''):
@@ -492,7 +486,9 @@ class FluxRGNN(ForecastModel):
 
         return model_states
 
-    def forecast_step(self, model_states, cell_data, t, teacher_forcing=0):
+    def forecast_step(self, model_states, data, t, teacher_forcing=0):
+
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
         # use gt data instead of model output with probability 'teacher_forcing'
         #r = torch.rand(1)
@@ -677,12 +673,14 @@ class LocalMLPForecast(ForecastModel):
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
 
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+
         # static features
-        node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
+        node_features = torch.cat([cell_data.get(feature).reshape(data.num_nodes, -1) for
                                    feature in self.node_features], dim=1)
 
         # dynamic features for current time step t
-        dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.num_nodes, -1) for
+        dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1) for
                                       feature in self.dynamic_features], dim=1)
 
         # combined features
@@ -694,8 +692,8 @@ class LocalMLPForecast(ForecastModel):
             x = torch.pow(x, 2)
 
         if self.config.get('force_zeros', False):
-            x = x * tidx_select(data.local_night, t)
-            x = x + self.zero_value.to(x.device) * torch.logical_not(tidx_select(data.local_night, t))
+            x = x * tidx_select(cell_data.local_night, t)
+            x = x + self.zero_value.to(x.device) * torch.logical_not(tidx_select(cell_data.local_night, t))
 
         model_states['x'] = x
 
@@ -793,10 +791,11 @@ class SeasonalityForecast(ForecastModel):
         self.automatic_optimization = False
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
         # print(data.tidx.min(), data.tidx.max(), self.seasonal_patterns.size())
-        model_states['x'] = self.seasonal_patterns[data.cidx, data.tidx[t]].view(-1, 1)
+        model_states['x'] = self.seasonal_patterns[cell_data.cidx, cell_data.tidx[t]].view(-1, 1)
 
         return model_states
 
@@ -835,12 +834,14 @@ class XGBoostForecast(ForecastModel):
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
 
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+
         # static graph features
-        node_features = torch.cat([data.get(feature).reshape(data.coords.size(0), -1) for
+        node_features = torch.cat([cell_data.get(feature).reshape(cell_data.coords.size(0), -1) for
                                    feature in self.node_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.coords.size(0), -1) for
+        dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.coords.size(0), -1) for
                                          feature in self.dynamic_features], dim=1)
 
         # combined features
@@ -1394,14 +1395,20 @@ class ObservationModel(MessagePassing):
         super(ObservationModel, self).__init__(aggr='add', node_dim=0)
         
     def forward(self, cell_states, cells_to_radars):
+
+        weighted_degree = scatter(cells_to_radars.edge_weight, cells_to_radars.edge_index[1],
+                                  dim_size=cell_states.size(0), reduce='sum')
         
-        predictions = self.propagate(cells_to_radars.edge_index, x=cell_states, edge_weight=cells_to_radars.edge_weight)
+        predictions = self.propagate(cells_to_radars.edge_index, x=cell_states,
+                                     weighted_degree=weighted_degree,
+                                     edge_weight=cells_to_radars.edge_weight)
 
         return predictions
 
-    def message(self, x_j, edge_weight):
+    def message(self, x_j, weighted_degree_i, edge_weight):
+        # from cell j to radar i
         
-        return x_j * edge_weight.view(-1, 1)
+        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
 class RadarToCellGNN(MessagePassing):
@@ -1411,9 +1418,9 @@ class RadarToCellGNN(MessagePassing):
 
         self.dynamic_features = dynamic_features
 
-        n_node_in = sum(self.dynamic_features.values()) + 1
-
-        self.mlp = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
+        # n_node_in = sum(self.dynamic_features.values()) + 1
+        #
+        # self.mlp = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
 
     def forward(self, graph_data, t, *args, **kwargs):
 
@@ -1430,22 +1437,30 @@ class RadarToCellGNN(MessagePassing):
                                            torch.zeros((n_cells - n_radars, dynamic_features.size(1)),
                                                        device=dynamic_features.device)], dim=0)
 
-        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1], n_cells)
+        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1])
 
         cell_states = self.propagate(radars_to_cells.edge_index,
                                      x=embedded_features,
+                                     weighted_degree=weighted_degree,
                                      edge_weight=radars_to_cells.edge_weight)
 
         return cell_states
 
-    def message(self, x_j, edge_weight):
+    # def message(self, x_j, edge_weight):
+    #     # from radar j to cell i
+
+    #     # TODO: use info about environment (sun elevation, etc) at cell i AND radar j to compute message
+    #
+    #     inputs = torch.cat([x_j, edge_weight.view(-1, 1)], dim=1)
+    #
+    #     m_ij = self.mlp(inputs)
+    #
+    #     return m_ij
+
+    def message(self, x_j, weighted_degree_i, edge_weight):
         # from radar j to cell i
-
-        inputs = torch.cat([x_j, edge_weight.view(-1, 1)], dim=1)
-
-        m_ij = self.mlp(inputs)
-
-        return m_ij
+        # compute weighted average of closeby radars
+        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
 class InitialState(MessagePassing):
@@ -1511,11 +1526,12 @@ class InitialState(MessagePassing):
     
 
 
-class RadarToCellInterpolation(InitialState):
+class RadarToCellInterpolation(MessagePassing):
 
     def __init__(self, **kwargs):
         
-        super(RadarToCellInterpolation, self).__init__(**kwargs)
+        # super(RadarToCellInterpolation, self).__init__(**kwargs)
+        super(RadarToCellInterpolation, self).__init__(aggr='sum', node_dim=0)
 
         # n_node_in = sum(self.node_features.values()) + \
         #             sum(self.dynamic_features.values()) + \
@@ -1523,7 +1539,7 @@ class RadarToCellInterpolation(InitialState):
         #
         # self.mlp = MLP(n_node_in, 1, **kwargs)
         
-    def initial_state(self, graph_data, t, *args, **kwargs):
+    def forward(self, graph_data, t, *args, **kwargs):
         
         measurements = tidx_select(graph_data['radar'].x, t)
         radars_to_cells = graph_data['radar', 'cell']
@@ -1533,12 +1549,16 @@ class RadarToCellInterpolation(InitialState):
         embedded_measurements = torch.cat([measurements.view(n_radars, 1),
                                            torch.zeros((n_cells-n_radars, 1), device=measurements.device)], dim=0)
 
-        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1], n_cells)
+
+        weighted_degree = scatter(radars_to_cells.edge_weight, radars_to_cells.edge_index[1],
+                                  dim_size=n_cells, reduce='sum')
+        # in_degree = degree(radars_to_cells.edge_index[1], dim_size=n_cells)
 
         cell_states = self.propagate(radars_to_cells.edge_index,
                                      x=embedded_measurements,
                                      weighted_degree=weighted_degree,
                                      edge_weight=radars_to_cells.edge_weight)
+
 
         # TODO: possibly learn error term with MLP?
         # if self.mlp is not None:
@@ -1549,8 +1569,10 @@ class RadarToCellInterpolation(InitialState):
 
     def message(self, x_j, weighted_degree_i, edge_weight):
         # from radar j to cell i
+
+        # assert torch.all(x_j >= 0)
         
-        return x_j * edge_weight.view(-1, 1) / weighted_degree_i
+        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
 

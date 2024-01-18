@@ -93,7 +93,6 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     model.horizon = cfg.model.test_horizon
 
-    model.seasonal_patterns.to(model.device)
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
