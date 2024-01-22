@@ -1,7 +1,7 @@
 # @package model
 _target_: fluxrgnn.models.FluxRGNN
 
-name: FluxRGNN
+name: FluxRGNN_hexagons
 
 coord_dim: 4
 n_edge_attr: 5

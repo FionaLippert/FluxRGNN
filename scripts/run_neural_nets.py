@@ -227,10 +227,10 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
         wandb.run.log_artifact(artifact)
 
     if cfg.get('save_prediction', False):
-        results = trainer.predict(model, test_loader, return_predictions=True)
+        trainer.predict(model, test_loader, return_predictions=True)
 
         pred_path = osp.join(cfg.output_dir, 'prediction')
-        utils.dump_outputs(results, pred_path)
+        utils.dump_outputs(model.predict_results, pred_path)
 
         if isinstance(trainer.logger, WandbLogger):
             print('add prediction artifact')
