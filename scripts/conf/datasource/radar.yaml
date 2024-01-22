@@ -27,6 +27,7 @@ env_vars:
 use_buffers: True
 buffer: 150000
 n_dummy_radars: 15
+test_radars: []
 
 # will be filled at runtime
 bird_scale: ???
