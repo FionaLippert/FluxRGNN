@@ -27,6 +27,7 @@ env_vars:
 use_buffers: True
 buffer: 350000
 n_dummy_radars: 60
+h3_resolution: 3
 excludes: rain_event_list.csv
 
 # settings for generating sequences

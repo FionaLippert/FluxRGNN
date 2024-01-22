@@ -130,6 +130,9 @@ flux_model:
 source_sink_model:
   _target_: fluxrgnn.models.SourceSink
   #_target_: fluxrgnn.models.DeltaMLP
+  model_inputs:
+    x: 1
+    #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
   dynamic_cell_features:
@@ -174,6 +177,23 @@ initial_model:
   dynamic_radar_features:
     x: 1
 
+ground_model:
+  _target_: fluxrgnn.models.InitialStateMLP
+  static_cell_features:
+    coords: ${model.coord_dim}
+  #dynamic_cell_features:
+  #  env: ${model.n_env}
+  n_hidden: ${model.n_hidden}
+  n_fc_layers: 1
+  activation:
+    _target_: torch.nn.ReLU
+  use_log_transform: ${model.use_log_transform}
+  log_offset: ${model.log_offset}
+  scale: ${model.scale}
+  dropout_p: ${model.dropout_p}
+  transforms: ${model.transforms}
+
+  
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
   context: ${model.context}
@@ -184,7 +204,7 @@ encoder:
     _target_: fluxrgnn.models.RadarToCellInterpolation
     dynamic_radar_features:
       x: 1
-      bird_uv: 1
+      bird_uv: 2
   static_cell_features:
     coords: ${model.coord_dim}
   dynamic_cell_features:
