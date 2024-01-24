@@ -18,6 +18,7 @@ import os.path as osp
 import os
 import numpy as np
 #import ruamel.yaml
+import yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
@@ -51,14 +52,19 @@ def run(cfg: DictConfig):
 
     print(f'output_dir = {cfg.output_dir}')
 
+    with open(osp.join(cfg.output_dir, 'full_config.yaml'), 'w') as f:
+        yaml.dump(OmegaConf.to_yaml(cfg), f)
+
     trainer = instantiate(cfg.trainer)
 
     if isinstance(trainer.logger, WandbLogger):
         # save config to wandb
         cfg_resolved = OmegaConf.to_container(cfg, resolve=True)
-        wandb.config = cfg_resolved
+        # wandb.config = cfg_resolved
         # trainer.logger.experiment.config.update(cfg_resolved)
-        print(trainer.logger.version)
+        wandb.config.update(cfg_resolved)
+
+        wandb.savefile(osp.join(cfg.output_dir, 'full_config.yaml'))
 
     #if cfg.device.accelerator == 'gpu' and torch.cuda.is_available():
     #    print('Use GPU')
@@ -77,6 +83,7 @@ def run(cfg: DictConfig):
         #model.load_state_dict(torch.load(model_path))
 
         model = eval(cfg.model._target_).load_from_checkpoint(model_path)
+
     
     if 'train' in cfg.task.name:
         training(trainer, model, cfg)

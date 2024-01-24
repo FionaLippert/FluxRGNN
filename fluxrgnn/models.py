@@ -149,7 +149,8 @@ class ForecastModel(pl.LightningModule):
             prediction = prediction[:radar_data.num_nodes]
 
         #compute loss
-        eval_dict = self._eval_step(radar_data, prediction, horizon, prefix='train', t0=t0)
+        eval_dict = self._eval_step(radar_data, prediction, horizon,
+                                    radar_mask=radar_data.train_mask, prefix='train', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
         return eval_dict['train/loss']
@@ -172,7 +173,8 @@ class ForecastModel(pl.LightningModule):
             prediction = prediction[:radar_data.num_nodes]
 
         # evaluate forecast
-        eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='val', t0=t0)
+        eval_dict = self._eval_step(radar_data, prediction, self.horizon,
+                                    radar_mask=radar_data.train_mask, prefix='val', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
 
@@ -207,18 +209,24 @@ class ForecastModel(pl.LightningModule):
                 prediction = self.observation_model(prediction, cells_to_radars)
                 prediction = prediction[:radar_data.num_nodes]
 
-            # compute evaluation metrics
-            eval_dict = self._eval_step(radar_data, prediction, self.horizon, prefix='test', t0=t0)
+            # compute evaluation metrics for radars used during training
+            eval_dict = self._eval_step(radar_data, prediction, self.horizon,
+                                        radar_mask=radar_data.train_mask, prefix='test/observed', t0=t0)
             self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
-            # compute evaluation metrics as a function of the forecasting horizon
-            eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False, t0=t0)
+            # compute evaluation metrics for held-out radars
+            eval_dict = self._eval_step(radar_data, prediction, self.horizon,
+                                        radar_mask=radar_data.test_mask, prefix='test/unobserved', t0=t0)
+            self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
-            for m, values in eval_dict_per_t.items():
-                if m in self.test_metrics:
-                    self.test_metrics[m].append(values)
-                else:
-                    self.test_metrics[m] = [values]
+            # # compute evaluation metrics as a function of the forecasting horizon
+            # eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False, t0=t0)
+            #
+            # for m, values in eval_dict_per_t.items():
+            #     if m in self.test_metrics:
+            #         self.test_metrics[m].append(values)
+            #     else:
+            #         self.test_metrics[m] = [values]
 
             self.test_results['test/mask'].append(
                 torch.logical_not(radar_data.missing)[:, t0:t0 +self.t_context + self.horizon]
@@ -288,17 +296,9 @@ class ForecastModel(pl.LightningModule):
                 self.transformed2raw(cell_prediction)
         )
         self.predict_results['predict/tidx'].append(cell_data.tidx[:self.t_context + self.horizon])
+        self.predict_results['predict/train_mask'].append(radar_data.train_mask)
 
-        #result = {
-        #    'predict/radar_predictions': self.transformed2raw(radar_prediction),
-        #    'predict/cell_predictions': self.transformed2raw(cell_prediction),
-        #    'predict/measurements': self.transformed2raw(radar_data.x)[:, :self.t_context + self.horizon],
-        #    'predict/cell_local_night': cell_data.local_night[:, :self.t_context + self.horizon],
-        #    'predict/radar_missing': radar_data.missing[:, :self.t_context + self.horizon],
-        #    'predict/tidx': cell_data.tidx[:self.t_context + self.horizon]
-        #}
-        
-        #return self.predict_results
+
 
     def apply_forward_transforms(self, values: torch.Tensor):
 
@@ -343,33 +343,33 @@ class ForecastModel(pl.LightningModule):
     def _regularizer(self):
         return 0
 
-    def _eval_step(self, radar_data, output, horizon, prefix='', aggregate_time=True, t0=0):
+    def _eval_step(self, radar_data, output, horizon, radar_mask=None, prefix='', aggregate_time=True, t0=0):
 
         if not isinstance(t0, torch.Tensor):
             t0 = torch.tensor(t0, device=self.device)
         t0 = t0.view(-1, 1)
-        
 
         if self.config.get('force_zeros', False):
-            mask = torch.logical_and(radar_data.local_night, torch.logical_not(radar_data.missing))
+            local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(radar_data.missing))
         else:
-            mask = torch.logical_not(radar_data.missing)
+            local_mask = torch.logical_not(radar_data.missing)
 
-        gt = tidx_select(radar_data.x, t0, steps=(self.t_context + horizon))
-        gt = gt.view(radar_data.x.size(0), -1)[:, self.t_context: self.t_context + horizon]
-        mask = tidx_select(mask, t0, steps=(self.t_context + horizon)).view(mask.size(0), -1)[:, self.t_context: self.t_context + horizon]
-        output = output[:, :horizon]
+        gt = tidx_select(radar_data.x, t0, steps=(self.t_context + horizon)).view(radar_data.x.size(0), -1)
+        gt = gt[radar_mask, self.t_context: self.t_context + horizon]
+        local_mask = tidx_select(local_mask, t0, steps=(self.t_context + horizon)).view(local_mask.size(0), -1)
+        local_mask = local_mask[radar_mask, self.t_context: self.t_context + horizon]
+        output = output[radar_mask, :horizon]
         
         if aggregate_time:
             gt = gt.reshape(-1)
-            mask = mask.reshape(-1)
+            local_mask = local_mask.reshape(-1)
             output = output.reshape(-1)
 
         if self.config.get('root_transformed_loss', False):
             weights = 1 + torch.pow(gt, 0.75)
-            loss = utils.MSE(output, gt, mask, weights)
+            loss = utils.MSE(output, gt, local_mask, weights)
         else:
-            loss = utils.MSE(output, gt, mask)
+            loss = utils.MSE(output, gt, local_mask)
         
         if self.training:
             regularizer = self._regularizer()
@@ -384,15 +384,15 @@ class ForecastModel(pl.LightningModule):
         if not self.training:
             raw_gt = self.transformed2raw(gt)
             raw_output = self.transformed2raw(output)
-            self._add_eval_metrics(eval_dict, raw_gt, raw_output, mask, prefix=f'{prefix}/raw')
+            self._add_eval_metrics(eval_dict, raw_gt, raw_output, local_mask, prefix=f'{prefix}/raw')
 
             log_gt = self.raw2log(raw_gt)
             log_output = self.raw2log(raw_output)
-            self._add_eval_metrics(eval_dict, log_gt, log_output, mask, prefix=f'{prefix}/log')
+            self._add_eval_metrics(eval_dict, log_gt, log_output, local_mask, prefix=f'{prefix}/log')
 
             pow_gt = self.raw2pow(raw_gt)
             pow_output = self.raw2pow(raw_output)
-            self._add_eval_metrics(eval_dict, pow_gt, pow_output, mask, prefix=f'{prefix}/pow')
+            self._add_eval_metrics(eval_dict, pow_gt, pow_output, local_mask, prefix=f'{prefix}/pow')
 
         return eval_dict
 

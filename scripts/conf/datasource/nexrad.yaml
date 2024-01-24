@@ -29,6 +29,7 @@ buffer: 350000
 n_dummy_radars: 60
 h3_resolution: 3
 excludes: rain_event_list.csv
+test_radars: []
 
 # settings for generating sequences
 tidx_start: 5 # 12:00 in US/Central, 11:00 in US/Mountain, 10:00 in US/Pacific, 13:00 in US/Eastern timezone

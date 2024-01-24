@@ -15,6 +15,7 @@ import os.path as osp
 import os
 import numpy as np
 #import ruamel.yaml
+import yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
@@ -37,12 +38,21 @@ def run(cfg: DictConfig):
     """
     os.makedirs(cfg.output_dir, exist_ok=True)
 
+    with open(osp.join(cfg.output_dir, 'full_config.yaml'), 'w') as f:
+        yaml.dump(OmegaConf.to_yaml(cfg), f)
+
     trainer = instantiate(cfg.trainer)
 
     if isinstance(cfg.trainer.logger, WandbLogger):
         # save config to wandb
+        print('use wandb for logging')
         cfg_resolved = OmegaConf.to_container(cfg, resolve=True)
-        wandb.config = cfg_resolved
+        # wandb.config = cfg_resolved
+        wandb.config.update(cfg_resolved)
+
+        wandb.savefile(osp.join(cfg.output_dir, 'full_config.yaml'))
+
+
         # trainer.logger.experiment.config.update(cfg_resolved)
 
     utils.seed_all(cfg.seed + cfg.get('job_id', 0))

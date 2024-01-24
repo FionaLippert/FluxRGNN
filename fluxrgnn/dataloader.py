@@ -268,7 +268,7 @@ class RadarData(InMemoryDataset):
         self.edge_type = kwargs.get('edge_type', 'voronoi')
         self.t_unit = kwargs.get('t_unit', '1H')
         self.birds_per_km2 = kwargs.get('birds_per_km2', False)
-        self.exclude = kwargs.get('exclude', [])
+        #self.exclude = kwargs.get('exclude', [])
 
         self.use_nights = kwargs.get('fixed_t0', True)
         self.seed = kwargs.get('seed', 1234)
@@ -724,7 +724,7 @@ class RadarHeteroData(InMemoryDataset):
         self.edge_type = kwargs.get('edge_type', 'voronoi')
         self.t_unit = kwargs.get('t_unit', '1H')
         self.birds_per_km2 = kwargs.get('birds_per_km2', True)
-        self.exclude = kwargs.get('exclude', [])
+        #self.exclude = kwargs.get('exclude', [])
 
         self.use_nights = kwargs.get('fixed_t0', True)
         self.tidx_start = kwargs.get('tidx_start', 0)
@@ -733,6 +733,8 @@ class RadarHeteroData(InMemoryDataset):
         self.seed = kwargs.get('seed', 1234)
         self.rng = np.random.default_rng(self.seed)
         self.data_perc = kwargs.get('data_perc', 1.0)
+
+        self.test_radars = kwargs.get('test_radars', [])
 
         print(kwargs)
 
@@ -806,8 +808,11 @@ class RadarHeteroData(InMemoryDataset):
             cell_to_radar_weights = torch.tensor(cell_to_radar_edges['weight'].values, dtype=torch.float)
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            radar_to_cell_edge_index = radar_to_cell_edge_index.t().contiguous()
-            radar_to_cell_weights = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)
+            # exclude test radars from interpolation
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[0], torch.tensor(self.test_radars)))
+            radar_to_cell_edge_index = radar_to_cell_edge_index[:, mask].t().contiguous()
+            radar_to_cell_weights = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)[mask]
+
 
         graph_file = osp.join(self.preprocessed_dir, 'delaunay.graphml')
         if osp.isfile(graph_file) and not self.edge_type == 'none':
@@ -989,8 +994,15 @@ class RadarHeteroData(InMemoryDataset):
         # interpolation model structure
         radar2cell_edges = {
             'edge_index': radar_to_cell_edge_index,
-            'edge_weight': radar_to_cell_weights
+            'edge_weight': radar_to_cell_weights,
+            # mask to exclude test radars from interpolation
+            # 'mask': torch.logical_not(torch.isin(radar_to_cell_edge_index[0], torch.tensor(self.test_radars)))
         }
+
+        # masks to select train or test radars
+        train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
+        train_mask[self.test_radars] = False
+        test_mask = torch.logical_not(train_mask)
 
         # create graph data objects per sequence
         data_list = []
@@ -1017,7 +1029,8 @@ class RadarHeteroData(InMemoryDataset):
             radar_data = {
                 # static radar features
                 'ridx': torch.arange(len(radar_ids), dtype=torch.long),
-
+                'train_mask': train_mask,
+                'test_mask': test_mask,
                 # TODO: add radar lonlat_encoding (and possibly sun elevation?)
 
                 # dynamic radar features
@@ -1169,6 +1182,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
             OmegaConf.save(config=cfg, f=f)
         with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
             pickle.dump(normalization, f)
+
+
     else:
         years = [cfg.datasource.test_year]
         norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
@@ -1193,6 +1208,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                       **cfg, **cfg.model,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
+                      test_radars=cfg.datasource.test_radars,
                       normalization=normalization,
                       env_vars=cfg.datasource.env_vars,
                       tidx_start=cfg.datasource.get('tidx_start', 0),
