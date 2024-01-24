@@ -181,7 +181,8 @@ class ForecastModel(pl.LightningModule):
         self.test_results = {
                 'test/mask': [], 
                 'test/measurements': [], 
-                'test/predictions': []
+                'test/predictions': [],
+                'test/cell_predictions': []
                 }
         self.test_metrics = {}
 
@@ -198,6 +199,7 @@ class ForecastModel(pl.LightningModule):
             prediction = self.forecast(batch, self.horizon, t0=t0)
             
             # TODO: also save full cell-level prediction? Or only do that in predict_step?
+            self.test_results['test/cell_predictions'].append(self.transformed2raw(prediction))
 
             # apply observation model to forecast
             if self.observation_model is not None:
@@ -468,7 +470,7 @@ class FluxRGNN(ForecastModel):
         self.source_sink_model = source_sink_model
         self.boundary_model = boundary_model
         self.initial_model = initial_model
-        self.ground_model = ground_model
+        #self.ground_model = ground_model
 
 
     def initialize(self, graph_data, t0=0):
@@ -517,12 +519,12 @@ class FluxRGNN(ForecastModel):
                         'boundary_nodes': cell_data.boundary.view(-1, 1),
                         'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
 
-        if self.ground_model is not None:
-             #model_states['ground_states'] = self.ground_model(graph_data, self.t_context + t0, h_t[-1])
-             model_states['ground_states'] = self.apply_forward_transforms(torch.ones_like(x) * 500)
-             self.regularizers.append(model_states['ground_states'])
-        else:
-            model_states['ground_states'] = None
+        #if self.ground_model is not None:
+        #     #model_states['ground_states'] = self.ground_model(graph_data, self.t_context + t0, h_t[-1])
+        #     model_states['ground_states'] = self.apply_forward_transforms(torch.ones_like(x) * 500)
+        #     self.regularizers.append(model_states['ground_states'])
+        #else:
+        #    model_states['ground_states'] = None
 
         return model_states
 
@@ -560,6 +562,8 @@ class FluxRGNN(ForecastModel):
             # predict fluxes between neighboring cells
             net_flux = self.flux_model(x, hidden, cell_data, t)
 
+            print(f'avg net flux = {net_flux.mean()}')
+
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes)
@@ -570,8 +574,8 @@ class FluxRGNN(ForecastModel):
         if self.source_sink_model is not None:
 
             # predict local source/sink terms
-            delta, ground_states = self.source_sink_model(x, hidden, cell_data, t,
-                                           ground_states=model_states['ground_states'])
+            delta, _ = self.source_sink_model(x, hidden, cell_data, t,
+                                           ground_states=None)
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
@@ -581,12 +585,12 @@ class FluxRGNN(ForecastModel):
                 else:
                     self.node_source.append(delta)
                     self.node_sink.append(-delta)
-            elif ground_states is None:
-                if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-                    self.regularizers.append(self.source_sink_model.node_source +
+            #elif ground_states is None:
+            if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+                self.regularizers.append(self.source_sink_model.node_source +
                                              self.source_sink_model.node_sink)
-                else:
-                    self.regularizers.append(delta)
+            else:
+                self.regularizers.append(delta)
         else:
             delta = 0
 
@@ -594,8 +598,18 @@ class FluxRGNN(ForecastModel):
         
         model_states['x'] = x
         model_states['hidden'] = hidden
-        model_states['ground_states'] = ground_states
+        #model_states['ground_states'] = ground_states
 
+        if torch.any(torch.isnan(x)):
+            print(f'net flux ({torch.isnan(net_flux).sum()} NaNs)')
+        
+            print(f'source ({torch.isnan(self.source_sink_model.node_source).sum()} NaNs)')
+        
+            print(f'sink ({torch.isnan(self.source_sink_model.node_sink).sum()} NaNs)')
+
+            print(f'hidden ({torch.isnan(hidden).sum()} NaNs)')
+        
+        
         return model_states
 
     def _regularizer(self):
@@ -1244,7 +1258,7 @@ class SourceSink(torch.nn.Module):
     Predict source and sink terms for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, model_inputs, static_cell_features, dynamic_cell_features, **kwargs):
+    def __init__(self, model_inputs=None, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -1254,9 +1268,9 @@ class SourceSink(torch.nn.Module):
 
         super(SourceSink, self).__init__()
 
-        self.model_inputs = model_inputs
-        self.static_cell_features = static_cell_features
-        self.dynamic_cell_features = dynamic_cell_features
+        self.model_inputs = {} if model_inputs is None else model_inputs
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
         n_node_in = sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
@@ -1316,23 +1330,24 @@ class SourceSink(torch.nn.Module):
         """
 
         # static graph features
-        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                          feature in self.static_cell_features], dim=1)
+        node_features = [graph_data.get(feature).reshape(x.size(0), -1) for
+                                          feature in self.static_cell_features]
 
         # dynamic features for current time step
-        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_cell_features], dim=1)
+        dynamic_features_t0 = [tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+                                         feature in self.dynamic_cell_features]
 
-        inputs = [node_features, dynamic_features_t0]
+        inputs = node_features + dynamic_features_t0
+
         if 'x' in self.model_inputs:
             inputs.append(x.view(-1, 1))
         if 'ground_states' in self.model_inputs:
             inputs.append(ground_states.view(-1, 1))
 
-        inputs = torch.cat(inputs, dim=1)
+        # inputs = torch.cat(inputs, dim=1)
         # inputs = self.input_embedding(inputs)
 
-        inputs = torch.cat([hidden, inputs], dim=1)
+        inputs = torch.cat([hidden] + inputs, dim=1)
         #inputs = hidden
 
         # hidden = self.node_lstm(inputs)
@@ -1366,6 +1381,9 @@ class SourceSink(torch.nn.Module):
                 source = frac_source * ground_states
                 ground_states = ground_states - source + sink
             delta = source - sink
+
+            print(f'avg source = {source.mean()}')
+            print(f'avg sink = {sink.mean()}')
 
 
         if not self.training:
@@ -1831,6 +1849,13 @@ class RecurrentDecoder(torch.nn.Module):
 
         hidden = self.node_lstm(inputs)
 
+        if torch.any(torch.isnan(hidden)):
+            print(f'found {torch.isnan(hidden).sum()} NaNs in hidden state')
+            print(f'{torch.isnan(x).sum()} NaNs in x')
+            print(f'{torch.isnan(node_features).sum()} NaNs in static features')
+            print(f'{torch.isnan(dynamic_features_t0).sum()} NaNs in dynamic features')
+
+            # assert 0
         return hidden
 
 
@@ -2444,6 +2469,14 @@ class RecurrentEncoder(torch.nn.Module):
             inputs = torch.cat([static_cell_features, dynamic_cell_features, radar_features], dim=1)
 
             h_t, c_t = self.update(inputs, h_t, c_t)
+
+            if torch.any(torch.isnan(h_t[-1])):
+                print(f'{torch.isnan(static_cell_features).sum()} NaNs in static features')
+                print(f'{torch.isnan(dynamic_cell_features).sum()} NaNs in dynamic features')
+                print(f'{torch.isnan(radar_features).sum()} NaNs in radar features')
+
+                # assert 0
+
 
         return h_t, c_t
 

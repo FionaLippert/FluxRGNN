@@ -24,10 +24,10 @@ optimizer:
         lr: ${model.lr}
 
 
-node_features:
+static_cell_features:
   coords: 4
 #  pos: 2
-dynamic_features:
+dynamic_cell_features:
   env: ${model.n_env}
 
 
@@ -57,11 +57,11 @@ context: 24
 test_horizon: 72
 test_context: 24
 
-force_zeros: false
+force_zeros: true
 #use_acc_vars: false
 #root_transformed_loss: false
-batch_size: 128
-edge_type: none
+batch_size: 64
+edge_type: hexagons # none
 birds_per_km2: true
 n_dummy_radars: 0
 
