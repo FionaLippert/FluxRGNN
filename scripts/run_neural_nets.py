@@ -52,8 +52,8 @@ def run(cfg: DictConfig):
 
     print(f'output_dir = {cfg.output_dir}')
 
-    with open(osp.join(cfg.output_dir, 'full_config.yaml'), 'w') as f:
-        yaml.dump(OmegaConf.to_yaml(cfg), f)
+    #with open(osp.join(cfg.output_dir, 'full_config.yaml'), 'w') as f:
+    #    yaml.dump(OmegaConf.to_yaml(cfg), f)
 
     trainer = instantiate(cfg.trainer)
 
@@ -64,7 +64,7 @@ def run(cfg: DictConfig):
         # trainer.logger.experiment.config.update(cfg_resolved)
         wandb.config.update(cfg_resolved)
 
-        wandb.savefile(osp.join(cfg.output_dir, 'full_config.yaml'))
+        #wandb.savefile(osp.join(cfg.output_dir, 'full_config.yaml'))
 
     #if cfg.device.accelerator == 'gpu' and torch.cuda.is_available():
     #    print('Use GPU')

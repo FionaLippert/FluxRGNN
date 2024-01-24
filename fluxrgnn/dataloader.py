@@ -809,9 +809,11 @@ class RadarHeteroData(InMemoryDataset):
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
             # exclude test radars from interpolation
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[0], torch.tensor(self.test_radars)))
-            radar_to_cell_edge_index = radar_to_cell_edge_index[:, mask].t().contiguous()
-            radar_to_cell_weights = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)[mask]
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(self.test_radars)))
+            radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
+            radar_to_cell_weights = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)
+            print(radar_to_cell_weights.size(), mask.size())
+            radar_to_cell_weights = radar_to_cell_weights[mask]
 
 
         graph_file = osp.join(self.preprocessed_dir, 'delaunay.graphml')
