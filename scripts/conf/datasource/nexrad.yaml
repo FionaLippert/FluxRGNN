@@ -17,6 +17,7 @@ env_vars:
   - tp
   - sp
   - t2m
+  - t
   - sshf
   - night
   - dusk
@@ -26,6 +27,8 @@ env_vars:
   - solarpos_dt
 use_buffers: True
 buffer: 350000
+observation_range: 25000
+interpolation_range: 350000
 n_dummy_radars: 60
 h3_resolution: 3
 excludes: rain_event_list.csv

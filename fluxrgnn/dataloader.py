@@ -870,15 +870,15 @@ class RadarHeteroData(InMemoryDataset):
 
         local_radar_pos = (radars[coord_cols] / xy_scale).to_numpy()
 
-        lonlat_encoding = np.stack([np.sin(cells['lon'].to_numpy()), 
-                                    np.cos(cells['lon'].to_numpy()),
-                                    np.sin(cells['lat'].to_numpy()),
-                                    np.cos(cells['lat'].to_numpy())], axis=1)
+        lonlat_encoding = np.stack([np.sin(cells['lon'].to_numpy() * np.pi / 180.),
+                                    np.cos(cells['lon'].to_numpy() * np.pi / 180.),
+                                    np.sin(cells['lat'].to_numpy() * np.pi / 180.),
+                                    np.cos(cells['lat'].to_numpy() * np.pi / 180.)], axis=1)
 
-        lonlat_radar_encoding = np.stack([np.sin(radars['lon'].to_numpy()),
-                                    np.cos(radars['lon'].to_numpy()),
-                                    np.sin(radars['lat'].to_numpy()),
-                                    np.cos(radars['lat'].to_numpy())], axis=1)
+        lonlat_radar_encoding = np.stack([np.sin(radars['lon'].to_numpy() * np.pi / 180.),
+                                    np.cos(radars['lon'].to_numpy() * np.pi / 180.),
+                                    np.sin(radars['lat'].to_numpy() * np.pi / 180.),
+                                    np.cos(radars['lat'].to_numpy() * np.pi / 180.)], axis=1)
 
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         area_scale = cells['area_km2'].max() # [km^2]
@@ -895,7 +895,12 @@ class RadarHeteroData(InMemoryDataset):
             # get distances, angles and face lengths between radars
             # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
             distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
-            angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
+
+            # angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
+            angles = np.array([data['angle'] for i, j, data in G.edges(data=True)])
+            angles_sin = np.sin(angles * np.pi / 180.)
+            angles_cos = np.cos(angles * np.pi / 180.)
+
             delta_x = np.array([local_pos[j, 0] - local_pos[i, 0] for i, j in G.edges()])
             delta_y = np.array([local_pos[j, 1] - local_pos[i, 1] for i, j in G.edges()])
             n_ij = np.stack([delta_x, delta_y], axis=1)
@@ -908,7 +913,8 @@ class RadarHeteroData(InMemoryDataset):
 
             edge_attr = torch.stack([
                 torch.tensor(rescale(distances, min=0), dtype=torch.float),
-                torch.tensor(angles, dtype=torch.float),
+                torch.tensor(angles_sin, dtype=torch.float),
+                torch.tensor(angles_cos, dtype=torch.float),
                 torch.tensor(delta_x, dtype=torch.float),
                 torch.tensor(delta_y, dtype=torch.float),
                 torch.tensor(rescale(face_lengths, min=0), dtype=torch.float)
