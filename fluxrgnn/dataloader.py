@@ -806,14 +806,15 @@ class RadarHeteroData(InMemoryDataset):
 
             cell_to_radar_edge_index = torch.tensor(cell_to_radar_edges[['cidx', 'ridx']].values, dtype=torch.long)
             cell_to_radar_edge_index = cell_to_radar_edge_index.t().contiguous()
-            cell_to_radar_dist = torch.tensor(cell_to_radar_edges['weight'].values, dtype=torch.float)
+            cell_to_radar_dist = torch.tensor(cell_to_radar_edges['distance'].values, dtype=torch.float)
             cell_to_radar_weights = 1 / cell_to_radar_dist
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
             # exclude test radars from interpolation
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[0], torch.tensor(self.test_radars)))
-            radar_to_cell_edge_index = radar_to_cell_edge_index[:, mask].t().contiguous()
-            radar_to_cell_dist = torch.tensor(radar_to_cell_edges['weight'].values, dtype=torch.float)[mask]
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(self.test_radars)))
+            radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
+            radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
+            radar_to_cell_dist = radar_to_cell_dist[mask]
             radar_to_cell_weights = 1 / radar_to_cell_dist
 
 
