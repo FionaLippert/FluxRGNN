@@ -18,8 +18,8 @@ dynamic_radar_features:
 
 use_log_transform: false
 log_offset: 0.1
-pow_exponent: 0.33333
-scale: 1.0 #1.0 #0.001 #0.1
+pow_exponent: 1.0 #0.33333
+scale: 0.001 #1.0 #1.0 #0.001 #0.1
 transforms:
   #  - _target_: transforms.PowerTransform
   #    feature: x

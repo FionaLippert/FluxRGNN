@@ -562,7 +562,7 @@ class FluxRGNN(ForecastModel):
             # predict fluxes between neighboring cells
             net_flux = self.flux_model(x, hidden, cell_data, t)
 
-            print(f'avg net flux = {net_flux.mean()}')
+            #print(f'avg net flux = {net_flux.mean()}')
 
             if not self.training and self.config.get('store_fluxes', False):
                 # save model component outputs
@@ -732,7 +732,7 @@ class LocalMLPForecast(ForecastModel):
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
         # static features
-        node_features = torch.cat([cell_data.get(feature).reshape(data.num_nodes, -1) for
+        node_features = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
                                    feature in self.static_cell_features], dim=1)
 
         # dynamic features for current time step t
@@ -960,7 +960,7 @@ class Fluxes(MessagePassing):
     Predicts fluxes for time step t -> t+1, given previous predictions and hidden states.
     """
 
-    def __init__(self, static_cell_features, edge_features, dynamic_cell_features, **kwargs):
+    def __init__(self, edge_features, dynamic_cell_features, **kwargs):
         """
         Initialize Fluxes.
 
@@ -972,7 +972,6 @@ class Fluxes(MessagePassing):
 
         super(Fluxes, self).__init__(aggr='add', node_dim=0)
 
-        self.static_cell_features = static_cell_features
         self.edge_features = edge_features
         self.dynamic_cell_features = dynamic_cell_features
 
@@ -1033,8 +1032,6 @@ class Fluxes(MessagePassing):
             hidden_sp = layer([graph_data.edge_index, hidden_sp])
 
         # static graph features
-        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                   feature in self.static_cell_features], dim=1)
         edge_features = torch.cat([graph_data.get(feature).reshape(graph_data.edge_index.size(1), -1) for
                                    feature in self.edge_features], dim=1)
 
@@ -1050,7 +1047,6 @@ class Fluxes(MessagePassing):
                                           x=x,
                                           hidden=hidden,
                                           hidden_sp=hidden_sp,
-                                          node_features=node_features,
                                           edge_features=edge_features,
                                           dynamic_features_t0=dynamic_features_t0,
                                           dynamic_features_t1=dynamic_features_t1,
@@ -1382,8 +1378,8 @@ class SourceSink(torch.nn.Module):
                 ground_states = ground_states - source + sink
             delta = source - sink
 
-            print(f'avg source = {source.mean()}')
-            print(f'avg sink = {sink.mean()}')
+            #print(f'avg source = {source.mean()}')
+            #print(f'avg sink = {sink.mean()}')
 
 
         if not self.training:
@@ -1804,7 +1800,7 @@ class RecurrentDecoder(torch.nn.Module):
     Recurrent neural network predicting the hidden states during forecasting.
     """
 
-    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
+    def __init__(self, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -1814,10 +1810,10 @@ class RecurrentDecoder(torch.nn.Module):
 
         super(RecurrentDecoder, self).__init__()
 
-        self.static_cell_features = static_cell_features
-        self.dynamic_cell_features = dynamic_cell_features
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        n_node_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values()) + 1
+        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) + 1
 
         self.node_lstm = NodeLSTM(n_node_in, **kwargs)
 
@@ -1837,15 +1833,15 @@ class RecurrentDecoder(torch.nn.Module):
         """
 
         # static graph features
-        node_features = torch.cat([graph_data.get(feature).reshape(x.size(0), -1) for
-                                          feature in self.static_cell_features], dim=1)
+        node_features = [graph_data.get(feature).reshape(x.size(0), -1) for
+                                          feature in self.static_cell_features]
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
-                                         feature in self.dynamic_cell_features], dim=1)
+        dynamic_features_t0 = [tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+                                         feature in self.dynamic_cell_features]
 
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
-        inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
+        inputs = torch.cat([x.view(-1, 1)] + node_features + dynamic_features_t0, dim=1)
 
         hidden = self.node_lstm(inputs)
 
@@ -2407,7 +2403,7 @@ class Extrapolation(MessagePassing):
 class RecurrentEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, radar2cell_model, static_cell_features, dynamic_cell_features, **kwargs):
+    def __init__(self, radar2cell_model, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         super(RecurrentEncoder, self).__init__()
 
         self.t_context = kwargs.get('context', 24)
@@ -2417,14 +2413,14 @@ class RecurrentEncoder(torch.nn.Module):
 
         self.radar2cell_model = radar2cell_model
 
-        self.static_cell_features = static_cell_features
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
         #print(static_cell_features)
-        self.dynamic_cell_features = dynamic_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
         # TODO: treat radar features separately
 
-        n_node_in = sum(static_cell_features.values()) + \
-                    sum(dynamic_cell_features.values()) + \
+        n_node_in = sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
                     self.radar2cell_model.n_features
 
         self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
@@ -2449,8 +2445,8 @@ class RecurrentEncoder(torch.nn.Module):
         c_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
                for _ in range(self.n_lstm_layers)]
 
-        static_cell_features = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1)
-                                   for feature in self.static_cell_features], dim=1)
+        static_cell_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1)
+                                   for feature in self.static_cell_features]
         # TODO: push node_features through GNN or MLP to extract spatial representations?
 
         # process all context time steps and the first forecasting time step
@@ -2459,14 +2455,14 @@ class RecurrentEncoder(torch.nn.Module):
             t = tidx + t0
             
             # dynamic features for current time step
-            dynamic_cell_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1)
-                                          for feature in self.dynamic_cell_features], dim=1)
+            dynamic_cell_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1)
+                                          for feature in self.dynamic_cell_features]
             # get radar features and map them to cells
             radar_features = self.radar2cell_model(data, t)
 
             #print(f'dynamic cell: {dynamic_cell_features.size()}, static cell: {static_cell_features.size()}, radar: {radar_features.size()}')
             
-            inputs = torch.cat([static_cell_features, dynamic_cell_features, radar_features], dim=1)
+            inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 
             h_t, c_t = self.update(inputs, h_t, c_t)
 
