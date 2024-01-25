@@ -4,7 +4,7 @@ _target_: fluxrgnn.models.FluxRGNN
 name: FluxRGNN
 
 coord_dim: 4
-n_edge_attr: 5
+n_edge_attr: 6
 n_env: ${len:${datasource.env_vars}}
 
 n_hidden: 128
