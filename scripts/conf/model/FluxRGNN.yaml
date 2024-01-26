@@ -219,7 +219,7 @@ encoder:
     #  _target_: torch.nn.ReLU # LeakyReLU
     #dropout_p: ${model.dropout_p}
   static_cell_features:
-    coords: ${model.coord_dim}
+      coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
 

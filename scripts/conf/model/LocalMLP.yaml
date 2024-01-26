@@ -60,10 +60,10 @@ test_context: 24
 force_zeros: true
 #use_acc_vars: false
 #root_transformed_loss: false
-batch_size: 64
+#batch_size: 64
 edge_type: hexagons # none
 birds_per_km2: true
-n_dummy_radars: 0
+#n_dummy_radars: 0
 
 #early_stopping: true
 #stopping_criterion: 1e-6

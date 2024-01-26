@@ -164,7 +164,7 @@ class SeasonalData(InMemoryDataset):
         # load features
         # dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
         measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'measurements.csv'))
-        cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_features.csv'))
+        # cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
 
         if not self.birds_per_km2:
             target_col = 'birds'
@@ -789,7 +789,7 @@ class RadarHeteroData(InMemoryDataset):
 
         # load features
         dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_cell_features.csv'))
-        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_measurements.csv'))
+        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'measurements.csv'))
         cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
         radars = pd.read_csv(osp.join(self.preprocessed_dir, 'static_radar_features.csv'))
 
@@ -1181,7 +1181,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
     if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-        res_info = f'h3={cfg.datasource.h3_resolution}'
+        res_info = f'res={cfg.datasource.h3_resolution}'
     else:
         res_info = f'ndummy={cfg.datasource.n_dummy_radars}'
 
