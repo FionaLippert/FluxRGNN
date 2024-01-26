@@ -99,8 +99,8 @@ decoder:
   n_hidden: ${model.n_hidden}
   n_lstm_layers: 1
   dropout_p: ${model.dropout_p}
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -109,8 +109,8 @@ decoder:
 flux_model:
   _target_: fluxrgnn.models.Fluxes
   #_target_: fluxrgnn.models.NumericalFluxes
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -133,8 +133,8 @@ source_sink_model:
   #model_inputs: []
     #x: 1
     #ground_states: 1
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
@@ -205,8 +205,8 @@ encoder:
     dynamic_radar_features:
       x: 1
       bird_uv: 2
-  #static_cell_features:
-  #    coords: ${model.coord_dim}
+  static_cell_features:
+      coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
 
