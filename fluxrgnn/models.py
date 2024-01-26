@@ -482,14 +482,12 @@ class FluxRGNN(ForecastModel):
 
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            h_t, c_t = self.encoder(graph_data, t0)
+            rnn_states = self.encoder(graph_data, t0)
+            self.decoder.initialize(rnn_states)
         else:
-            h_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device) for
-                   _ in range(self.decoder.n_lstm_layers)]
-            c_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device) for
-                   _ in range(self.decoder.n_lstm_layers)]
+            self.decoder.initialize_zeros(cell_data.num_nodes)
 
-        self.decoder.initialize(h_t, c_t)
+        hidden = self.decoder.get_hidden()
 
         self.regularizers = []
 
@@ -506,7 +504,7 @@ class FluxRGNN(ForecastModel):
 
         # predict initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, self.t_context + t0, h_t[-1])
+            x = self.initial_model(graph_data, self.t_context + t0, hidden)
             #x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
@@ -515,7 +513,7 @@ class FluxRGNN(ForecastModel):
         #print(f'initial x size = {x.size()}')
 
         model_states = {'x': x,
-                        'hidden': h_t[-1],
+                        'hidden': hidden,
                         'boundary_nodes': cell_data.boundary.view(-1, 1),
                         'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
 
@@ -1260,7 +1258,7 @@ class SourceSink(torch.nn.Module):
 
     def __init__(self, model_inputs=None, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
-        Initialize RecurrentDecoder module.
+        Initialize SourceSink module.
 
         :param node_features: tensor containing all static node features
         :param dynamic_features: tensor containing all dynamic node features
@@ -1600,15 +1598,13 @@ class InitialState(MessagePassing):
 
 class RadarToCellInterpolation(MessagePassing):
 
-    def __init__(self, static_radar_features=None, dynamic_radar_features=None, **kwargs):
+    def __init__(self, radar_variables, **kwargs):
 
         super(RadarToCellInterpolation, self).__init__(aggr='sum', node_dim=0)
 
-        self.static_radar_features = {} if static_radar_features is None else static_radar_features
-        self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
+        self.radar_variables = radar_variables
 
-        self.n_features = sum(self.static_radar_features.values()) + \
-                          sum(self.dynamic_radar_features.values())
+        self.n_features = sum(self.radar_variables.values())
         
     def forward(self, graph_data, t, *args, **kwargs):
 
@@ -1616,43 +1612,157 @@ class RadarToCellInterpolation(MessagePassing):
         n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
 
-        # static features
-        static_features = [graph_data['radar'].get(feature).reshape(n_radars, -1)
-                           for feature in self.static_radar_features]
-
         # dynamic features for current time step
-        dynamic_features_t0 = [tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1)
-                               for feature in self.dynamic_radar_features]
+        variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
+                               for var in self.radar_variables], dim=1)
 
-        all_features = torch.cat(static_features + dynamic_features_t0, dim=1)
-        dummy_features = torch.zeros((n_cells-n_radars, all_features.size(1)), device=all_features.device)
-        embedded_features = torch.cat([all_features, dummy_features], dim=0)
-
+        dummy_variables = torch.zeros((n_cells-n_radars, variables.size(1)), device=variables.device)
+        embedded_variables = torch.cat([variables, dummy_variables], dim=0)
 
         weighted_degree = scatter(radars_to_cells.edge_weight, radars_to_cells.edge_index[1],
                                   dim_size=n_cells, reduce='sum')
 
         cell_states = self.propagate(radars_to_cells.edge_index,
-                                     x=embedded_features,
+                                     x=embedded_variables,
                                      weighted_degree=weighted_degree,
                                      edge_weight=radars_to_cells.edge_weight)
 
+        return cell_states
 
-        # TODO: possibly learn error term with MLP?
-        # if self.mlp is not None:
-        #     inputs = torch.cat([cell_states, hidden], dim=1)
-        #     cell_states = cell_states + self.mlp(inputs)
+    def message(self, x_j, weighted_degree_i, edge_weight):
+        # from radar j to cell i
+        
+        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
+
+
+class CorrectedRadarToCellInterpolation(MessagePassing):
+
+    def __init__(self, radar_variables, static_cell_features=None, dynamic_cell_features=None, **kwargs):
+        super(CorrectedRadarToCellInterpolation, self).__init__(aggr='sum', node_dim=0)
+
+        self.radar_variables = radar_variables
+
+        self.n_features = sum(self.radar_variables.values())
+
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
+
+        n_in = sum(self.static_cell_features.values()) + \
+               sum(self.dynamic_cell_features.values()) + \
+               kwargs.get('n_hidden') + \
+               self.n_features
+
+        self.mlp = MLP(n_in, self.n_features, **kwargs)
+
+    def forward(self, graph_data, t, hidden, *args, **kwargs):
+        radars_to_cells = graph_data['radar', 'cell']
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+
+        # radar measurements for current time step
+        variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
+                               for var in self.radar_variables], dim=1)
+
+        dummy_variables = torch.zeros((n_cells - n_radars, variables.size(1)), device=variables.device)
+        embedded_variables = torch.cat([variables, dummy_variables], dim=0)
+
+        weighted_degree = scatter(radars_to_cells.edge_weight, radars_to_cells.edge_index[1],
+                                  dim_size=n_cells, reduce='sum')
+
+        cell_states = self.propagate(radars_to_cells.edge_index,
+                                     x=embedded_variables,
+                                     weighted_degree=weighted_degree,
+                                     edge_weight=radars_to_cells.edge_weight)
+
+        # static cell features
+        static_cell_features = [graph_data['cell'].get(feature).reshape(n_radars, -1)
+                                 for feature in self.static_cell_features]
+
+        # dynamic features for current time step
+        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_radars, -1)
+                                  for feature in self.dynamic_cell_features]
+
+        # predict correction term
+        cell_inputs = torch.cat([hidden, cell_states] + static_cell_features + dynamic_cell_features, dim=1)
+        cell_states = cell_states + self.mlp(cell_inputs)
 
         return cell_states
 
     def message(self, x_j, weighted_degree_i, edge_weight):
         # from radar j to cell i
 
-        # assert torch.all(x_j >= 0)
-        
         return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
+class RadarToCellGNN(MessagePassing):
+
+    def __init__(self, radar_variables, static_radar_features=None, dynamic_radar_features=None,
+                 static_cell_features=None, dynamic_cell_features=None, **kwargs):
+
+        super(RadarToCellGNN, self).__init__(aggr='sum', node_dim=0)
+
+        self.radar_variables = radar_variables
+        self.n_features = sum(self.radar_variables.values())
+
+        self.static_radar_features = {} if static_radar_features is None else static_radar_features
+        self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
+
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
+
+        n_edge_in = sum(self.static_radar_features.values()) + \
+                    sum(self.dynamic_radar_features.values()) + \
+                    sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
+                    kwargs.get('radar2cell_edge_attr') + \
+                    self.n_features
+
+        self.edge_mlp = MLP(n_edge_in, kwargs.get('n_hidden'), **kwargs)
+        self.node_mlp = MLP(kwargs.get('n_hidden'), kwargs.get('n_hidden'), **kwargs)
+
+    def forward(self, graph_data, t, hidden, *args, **kwargs):
+        radars_to_cells = graph_data['radar', 'cell']
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+
+        # static radar features
+        static_radar_features = [graph_data['radar'].get(feature).reshape(n_radars, -1)
+                           for feature in self.static_radar_features]
+
+        # dynamic radar features for current time step
+        dynamic_radar_features = [tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1)
+                               for feature in self.dynamic_radar_features]
+
+        all_radar_features = torch.cat(static_radar_features + dynamic_radar_features, dim=1)
+        dummy_features = torch.zeros((n_cells - n_radars, all_radar_features.size(1)), device=all_radar_features.device)
+        embedded_radar_features = torch.cat([all_radar_features, dummy_features], dim=0)
+
+        # static cell features
+        static_cell_features = [graph_data['cell'].get(feature).reshape(n_radars, -1)
+                                 for feature in self.static_cell_features]
+
+        # dynamic cell features for current time step
+        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_radars, -1)
+                                  for feature in self.dynamic_cell_features]
+
+        all_cell_features = torch.cat(static_cell_features + dynamic_cell_features, dim=1)
+
+        cell_states = self.propagate(radars_to_cells.edge_index,
+                                     x_radar=embedded_radar_features,
+                                     x_cell=all_cell_features,
+                                     edge_attr=radars_to_cells.edge_attr)
+
+        cell_states = self.node_mlp(cell_states)
+
+        return cell_states
+
+    def message(self, x_radar_j, x_cell_i, edge_attr):
+        # message from radar j to cell i
+
+        edge_inputs = torch.cat([x_radar_j, x_cell_i, edge_attr], dim=1)
+        msg = self.edge_mlp(edge_inputs)
+
+        return msg
 
 
 class InitialStateMLP(InitialState):
@@ -1819,11 +1929,22 @@ class RecurrentDecoder(torch.nn.Module):
 
         n_node_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values()) + 1
 
-        self.node_lstm = NodeLSTM(n_node_in, **kwargs)
+        if kwargs.get('rnn_type', 'LSTM'):
+            self.node_rnn = NodeLSTM(n_node_in, **kwargs)
+        else:
+            self.node_rnn = NodeGRU(n_node_in, **kwargs)
 
-    def initialize(self, h_t, c_t):
+    def initialize(self, *states):
 
-        self.node_lstm.setup_states(h_t, c_t)
+        self.node_rnn.setup_states(*states)
+
+    def initialize_zeros(self, batch_size):
+
+        self.node_rnn.setup_zero_states(batch_size)
+
+    def get_hidden(self):
+
+        return self.node_rnn.get_hidden()
 
 
     def forward(self, x, hidden, graph_data, t):
@@ -1847,16 +1968,12 @@ class RecurrentDecoder(torch.nn.Module):
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1), node_features, dynamic_features_t0], dim=1)
 
-        hidden = self.node_lstm(inputs)
+        rnn_states = self.node_rnn(inputs)
+        hidden = self.node_rnn.get_hidden()
 
-        if torch.any(torch.isnan(hidden)):
-            print(f'found {torch.isnan(hidden).sum()} NaNs in hidden state')
-            print(f'{torch.isnan(x).sum()} NaNs in x')
-            print(f'{torch.isnan(node_features).sum()} NaNs in static features')
-            print(f'{torch.isnan(dynamic_features_t0).sum()} NaNs in dynamic features')
-
-            # assert 0
         return hidden
+
+
 
 
 
@@ -2287,19 +2404,17 @@ class NodeLSTM(torch.nn.Module):
 
         self.n_in = n_in
         self.n_hidden = kwargs.get('n_hidden', 64)
-        self.n_lstm_layers = kwargs.get('n_lstm_layers', 2)
+        self.n_layers = kwargs.get('n_rnn_layers', 1)
         self.use_encoder = kwargs.get('use_encoder', True)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         # node embedding
         self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
 
-        if self.use_encoder:
-            self.lstm_in = torch.nn.LSTMCell(self.n_hidden * 2, self.n_hidden)
-        else:
-            self.lstm_in = torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
+        n_in = self.n_hidden * 2 if self.use_encoder else self.n_hidden
+        self.lstm_in = torch.nn.LSTMCell(n_in, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
-                                          for _ in range(self.n_lstm_layers - 1)])
+                                          for _ in range(self.n_layers - 1)])
 
         self.reset_parameters()
 
@@ -2312,12 +2427,10 @@ class NodeLSTM(torch.nn.Module):
     def setup_states(self, h, c):
         self.h = h
         self.c = c
-        self.alphas = []
-        self.enc_state = h[-1]
 
-    def get_alphas(self):
-        alphas = torch.stack(self.alphas)
-        return alphas
+    def setup_zero_states(self, batch_size):
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
+        self.c = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
 
     def get_hidden(self):
         return self.h[-1]
@@ -2327,16 +2440,68 @@ class NodeLSTM(torch.nn.Module):
         inputs = self.input2hidden(inputs)
 
         if self.use_encoder:
-            inputs = torch.cat([inputs, self.enc_state], dim=1)
+            inputs = torch.cat([inputs, self.h[-1]], dim=1)
 
         # lstm layers
         self.h[0], self.c[0] = self.lstm_in(inputs, (self.h[0], self.c[0]))
-        for l in range(self.n_lstm_layers - 1):
+        for l in range(self.n_layers - 1):
             self.h[0] = F.dropout(self.h[0], p=self.dropout_p, training=self.training, inplace=False)
             self.c[0] = F.dropout(self.c[0], p=self.dropout_p, training=self.training, inplace=False)
             self.h[l + 1], self.c[l + 1] = self.lstm_layers[l](self.h[l], (self.h[l + 1], self.c[l + 1]))
 
+        return self.h, self.c
+
+class NodeGRU(torch.nn.Module):
+    """Decoder GRU combining hidden states with additional inputs."""
+
+    def __init__(self, n_in, **kwargs):
+        super(NodeGRU, self).__init__()
+
+        self.n_in = n_in
+        self.n_hidden = kwargs.get('n_hidden', 64)
+        self.n_layers = kwargs.get('n_rnn_layers', 1)
+        self.use_encoder = kwargs.get('use_encoder', True)
+        self.dropout_p = kwargs.get('dropout_p', 0)
+
+        # node embedding
+        self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
+
+        n_in = self.n_hidden * 2 if self.use_encoder else self.n_hidden
+        self.gru_in = torch.nn.GRUCell(n_in, self.n_hidden)
+        self.gru_layers = nn.ModuleList([torch.nn.GRUCell(self.n_hidden, self.n_hidden)
+                                          for _ in range(self.n_layers - 1)])
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+
+        init_weights(self.input2hidden)
+        init_weights(self.gru_in)
+        self.gru_layers.apply(init_weights)
+
+    def setup_states(self, h):
+        self.h = h
+
+    def setup_zero_states(self, batch_size):
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
+
+    def get_hidden(self):
         return self.h[-1]
+
+    def forward(self, inputs):
+
+        inputs = self.input2hidden(inputs)
+
+        if self.use_encoder:
+            inputs = torch.cat([inputs, self.h[-1]], dim=1)
+
+        # gru layers
+        self.h[0] = self.gru_in(inputs, self.h[0])
+        for l in range(self.n_layers - 1):
+            self.h[0] = F.dropout(self.h[0], p=self.dropout_p, training=self.training, inplace=False)
+            self.h[l + 1] = self.gru_layers[l](self.h[l], self.h[l + 1])
+
+        return self.h
 
 
 
@@ -2412,7 +2577,7 @@ class RecurrentEncoder(torch.nn.Module):
 
         self.t_context = kwargs.get('context', 24)
         self.n_hidden = kwargs.get('n_hidden', 64)
-        self.n_lstm_layers = kwargs.get('n_rnn_layers', 1)
+        # self.n_lstm_layers = kwargs.get('n_rnn_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         self.radar2cell_model = radar2cell_model
@@ -2427,27 +2592,34 @@ class RecurrentEncoder(torch.nn.Module):
                     sum(dynamic_cell_features.values()) + \
                     self.radar2cell_model.n_features
 
-        self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
-        self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
-                                          for _ in range(self.n_lstm_layers)])
+        # self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
+        # self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
+        #                                   for _ in range(self.n_lstm_layers)])
 
-        self.reset_parameters()
+        if kwargs.get('rnn_type', 'LSTM'):
+            self.node_rnn = NodeLSTM(n_node_in, **kwargs)
+        else:
+            self.node_rnn = NodeGRU(n_node_in, **kwargs)
 
-    def reset_parameters(self):
+        # self.reset_parameters()
 
-        self.lstm_layers.apply(init_weights)
-        init_weights(self.input2hidden)
+    # def reset_parameters(self):
+    #
+    #     self.lstm_layers.apply(init_weights)
+    #     init_weights(self.input2hidden)
 
     def forward(self, data, t0=0):
         """Run encoder until the given number of context time steps has been reached."""
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
-        # initialize lstm variables
-        h_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
-               for _ in range(self.n_lstm_layers)]
-        c_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
-               for _ in range(self.n_lstm_layers)]
+        self.node_rnn.setup_zero_states(cell_data.num_nodes)
+
+        # # initialize lstm variables
+        # h_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
+        #        for _ in range(self.n_lstm_layers)]
+        # c_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
+        #        for _ in range(self.n_lstm_layers)]
 
         static_cell_features = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1)
                                    for feature in self.static_cell_features], dim=1)
@@ -2463,41 +2635,32 @@ class RecurrentEncoder(torch.nn.Module):
                                           for feature in self.dynamic_cell_features], dim=1)
             # get radar features and map them to cells
             radar_features = self.radar2cell_model(data, t)
-
-            #print(f'dynamic cell: {dynamic_cell_features.size()}, static cell: {static_cell_features.size()}, radar: {radar_features.size()}')
             
             inputs = torch.cat([static_cell_features, dynamic_cell_features, radar_features], dim=1)
 
-            h_t, c_t = self.update(inputs, h_t, c_t)
+            rnn_states = self.node_rnn(inputs)
+            # h_t, c_t = self.update(inputs, h_t, c_t)
 
-            if torch.any(torch.isnan(h_t[-1])):
-                print(f'{torch.isnan(static_cell_features).sum()} NaNs in static features')
-                print(f'{torch.isnan(dynamic_cell_features).sum()} NaNs in dynamic features')
-                print(f'{torch.isnan(radar_features).sum()} NaNs in radar features')
-
-                # assert 0
-
-
-        return h_t, c_t
-
-    def update(self, inputs, h_t, c_t):
-        """Include information on the current time step into the hidden state."""
-
-        inputs = self.input2hidden(inputs)
-
-        h_t[0], c_t[0] = self.lstm_layers[0](inputs, (h_t[0], c_t[0]))
-        for l in range(1, self.n_lstm_layers):
-            h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
-            c_t[l - 1] = F.dropout(c_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
-            h_t[l], c_t[l] = self.lstm_layers[l](h_t[l - 1], (h_t[l], c_t[l]))
-
-        return h_t, c_t
+        return rnn_states
+    #
+    # def update(self, inputs, h_t, c_t):
+    #     """Include information on the current time step into the hidden state."""
+    #
+    #     inputs = self.input2hidden(inputs)
+    #
+    #     h_t[0], c_t[0] = self.lstm_layers[0](inputs, (h_t[0], c_t[0]))
+    #     for l in range(1, self.n_lstm_layers):
+    #         h_t[l - 1] = F.dropout(h_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
+    #         c_t[l - 1] = F.dropout(c_t[l - 1], p=self.dropout_p, training=self.training, inplace=False)
+    #         h_t[l], c_t[l] = self.lstm_layers[l](h_t[l - 1], (h_t[l], c_t[l]))
+    #
+    #     return h_t, c_t
 
 
 class GRUEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, node_features, dynamic_features, **kwargs):
+    def __init__(self, radar2cell_model, static_cell_features, dynamic_cell_features, **kwargs):
         super(GRUEncoder, self).__init__()
 
         self.t_context = kwargs.get('context', 24)
@@ -2505,30 +2668,36 @@ class GRUEncoder(torch.nn.Module):
         self.n_layers = kwargs.get('n_rnn_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
-        self.node_features = node_features
-        self.dynamic_features = dynamic_features
+        self.radar2cell_model = radar2cell_model
+        self.static_cell_features = static_cell_features
+        self.dynamic_cell_features = dynamic_cell_features
 
-        n_node_in = sum(node_features.values()) + sum(dynamic_features.values())
+        n_node_in = sum(static_cell_features.values()) + \
+                    sum(dynamic_cell_features.values()) + \
+                    self.radar2cell_model.n_features
 
         self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
+
         self.gru_layers = nn.ModuleList([nn.GRUCell(self.n_hidden, self.n_hidden)
-                                          for _ in range(self.n_gru_layers)])
+                                          for _ in range(self.n_layers)])
 
         self.reset_parameters()
 
     def reset_parameters(self):
 
-        self.lstm_layers.apply(init_weights)
+        self.gru_layers.apply(init_weights)
         init_weights(self.input2hidden)
 
     def forward(self, data, t0=0):
         """Run encoder until the given number of context time steps has been reached."""
 
+        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+
         # initialize lstm variables
         h_t = [torch.zeros(data.num_nodes, self.n_hidden, device=data.coords.device) for _ in range(self.n_layers)]
 
-        node_features = torch.cat([data.get(feature).reshape(data.num_nodes, -1) for
-                                   feature in self.node_features], dim=1)
+        static_cell_features = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1)
+                                          for feature in self.static_cell_features], dim=1)
         # TODO: push node_features through GNN or MLP to extract spatial representations?
 
         # process all context time steps and the first forecasting time step
@@ -2536,9 +2705,12 @@ class GRUEncoder(torch.nn.Module):
             t = tidx + t0
 
             # dynamic features for current time step
-            dynamic_features = torch.cat([tidx_select(data.get(feature), t).reshape(data.num_nodes, -1) for
-                                          feature in self.dynamic_features], dim=1)
-            inputs = torch.cat([node_features, dynamic_features], dim=1)
+            dynamic_cell_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1)
+                                               for feature in self.dynamic_cell_features], dim=1)
+            # get radar features and map them to cells
+            radar_features = self.radar2cell_model(data, t)
+
+            inputs = torch.cat([static_cell_features, dynamic_cell_features, radar_features], dim=1)
 
             h_t = self.update(inputs, h_t)
 

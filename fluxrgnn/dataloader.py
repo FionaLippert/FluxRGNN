@@ -42,7 +42,7 @@ class Normalization:
                 print(f'Preprocessed data for year {year} not available. Please run preprocessing script first.')
 
             # load features
-            dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'dynamic_features.csv'))
+            dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'dynamic_cell_features.csv'))
             all_features.append(dynamic_feature_df)
 
             measurement_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'measurements.csv'))
@@ -1175,7 +1175,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
         context = cfg.model.get('test_context', 0)
 
     # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
-    seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) + cfg.datasource.get('tidx_step', 1) - 1
+    seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) \
+              + cfg.datasource.get('tidx_step', 1) - 1
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
