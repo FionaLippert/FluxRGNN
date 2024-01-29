@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj, degree, scatter
+from torch_geometric.unpool import knn_interpolate
 import pytorch_lightning as pl
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
@@ -1638,6 +1639,51 @@ class RadarToCellInterpolation(MessagePassing):
         # from radar j to cell i
         
         return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
+
+
+class RadarToCellKNNInterpolation(MessagePassing):
+
+    def __init__(self, radar_variables, k, **kwargs):
+        super(RadarToCellKNNInterpolation, self).__init__(aggr='sum', node_dim=0)
+
+        self.radar_variables = radar_variables
+        self.k = k
+
+        self.n_features = sum(self.radar_variables.values())
+
+    def forward(self, graph_data, t, *args, **kwargs):
+
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+        radar_pos = graph_data['radar'].pos
+        cell_pos = graph_data['cell'].pos
+
+        # dynamic features for current time step
+        variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
+                               for var in self.radar_variables], dim=1)
+
+        print(graph_data['radar'].batch)
+
+        cell_states = knn_interpolate(variables, radar_pos, cell_pos, graph_data['radar'].batch,
+                                      graph_data['cell'].batch, k=self.k)
+
+        # dummy_variables = torch.zeros((n_cells - n_radars, variables.size(1)), device=variables.device)
+        # embedded_variables = torch.cat([variables, dummy_variables], dim=0)
+        #
+        # weighted_degree = scatter(radars_to_cells.edge_weight, radars_to_cells.edge_index[1],
+        #                           dim_size=n_cells, reduce='sum')
+
+        # cell_states = self.propagate(radars_to_cells.edge_index,
+        #                              x=embedded_variables,
+        #                              weighted_degree=weighted_degree,
+        #                              edge_weight=radars_to_cells.edge_weight)
+
+        return cell_states
+
+    # def message(self, x_j, weighted_degree_i, edge_weight):
+    #     # from radar j to cell i
+    #
+    #     return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
 class CorrectedRadarToCellInterpolation(MessagePassing):

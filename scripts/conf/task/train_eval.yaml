@@ -3,3 +3,5 @@ name: train_eval
 slurm_job: scripts/run_train_eval_slurm.job
 local_job: scripts/run_train_eval_local.job
 repeats: 1
+n_cv_folds: 0 #10
+cv_fold: 0

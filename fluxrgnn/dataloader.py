@@ -1,5 +1,6 @@
 import torch
 from torch_geometric.data import Data, HeteroData, DataLoader, Dataset, InMemoryDataset
+import torch_geometric as ptg
 import numpy as np
 import networkx as nx
 import os.path as osp
@@ -181,7 +182,7 @@ class SeasonalData(InMemoryDataset):
         data = dict(targets=[], missing=[])
 
         groups = measurement_df.groupby('ID')
-        for name in cells.ID:
+        for name in measurement_df.ID:
             df = groups.get_group(name).sort_values(by='datetime').reset_index(drop=True)
             data['targets'].append(df[target_col].to_numpy())
             data['missing'].append(df.missing.to_numpy())
@@ -734,7 +735,9 @@ class RadarHeteroData(InMemoryDataset):
         self.rng = np.random.default_rng(self.seed)
         self.data_perc = kwargs.get('data_perc', 1.0)
 
-        self.test_radars = kwargs.get('test_radars', [])
+        # self.test_radars = kwargs.get('test_radars', [])
+        self.n_cv_folds = kwargs.get('n_cv_folds', 0)
+        self.cv_fold = kwargs.get('cv_fold', 0)
 
         print(kwargs)
 
@@ -793,6 +796,15 @@ class RadarHeteroData(InMemoryDataset):
         cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
         radars = pd.read_csv(osp.join(self.preprocessed_dir, 'static_radar_features.csv'))
 
+        # define test radars
+        if self.n_cv_folds == 0:
+            test_radars = []
+        else:
+            radar_idx = np.arange(len(radars))
+            shuffled_radars = self.rng.permutation(radar_idx)
+            n_test = int(np.ceil(len(radars) / self.n_cv_folds))
+            test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
+
         # relationship between cells and radars
         if self.edge_type in ['voronoi', 'none']:
             cell_to_radar_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
@@ -809,9 +821,16 @@ class RadarHeteroData(InMemoryDataset):
             cell_to_radar_dist = torch.tensor(cell_to_radar_edges['distance'].values, dtype=torch.float)
             cell_to_radar_weights = 1 / cell_to_radar_dist
 
-            radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
             # exclude test radars from interpolation
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(self.test_radars)))
+            # all_radars = torch.arange(len(radars))
+            # mask = torch.logical_not(torch.isin(all_radars, torch.tensor(test_radars)))
+            # train_radars = all_radars[mask]
+            # cell_pos = torch.tensor(cells[['x', 'y']].values) # size [n_radars, 2]
+            # radar_pos = torch.tensor(radars[['x', 'y']].values)[mask] # size [n_radars, 2]
+
+
+            radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index, torch.tensor(test_radars)))
             radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
             radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
             radar_to_cell_dist = radar_to_cell_dist[mask]
@@ -1030,7 +1049,7 @@ class RadarHeteroData(InMemoryDataset):
 
         # masks to select train or test radars
         train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
-        train_mask[self.test_radars] = False
+        train_mask[test_radars] = False
         test_mask = torch.logical_not(train_mask)
 
         # create graph data objects per sequence
@@ -1187,7 +1206,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}'
+                        f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}_' \
+                        f'fold={cfg.task.cv_fold}/{cfg.task.n_cv_folds}'
     
     preprocessed_dirname += f'_{res_info}'
     #processed_dirname += res_info
@@ -1237,10 +1257,10 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     #         for year in years]
 
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
-                      **cfg, **cfg.model,
+                      **cfg, **cfg.model, **cfg.task,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
-                      test_radars=cfg.datasource.test_radars,
+                      # test_radars=cfg.datasource.test_radars,
                       normalization=normalization,
                       env_vars=cfg.datasource.env_vars,
                       tidx_start=cfg.datasource.get('tidx_start', 0),
@@ -1275,7 +1295,8 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}'
+                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}' \
+                        f'_fold={cfg.task.cv_fold}/{cfg.task.n_cv_folds}'
     
     preprocessed_dirname += res_info
     processed_dirname += res_info
@@ -1295,7 +1316,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
 
 
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
-                      **cfg, **cfg.model,
+                      **cfg, **cfg.model, **cfg.task,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,
@@ -1321,9 +1342,8 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, tran
     else:
         res_info = '_ndummy={cfg.datasource.n_dummy_radars}'
 
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
-                        f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}'
+    processed_dirname = f'seasonal_buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
+                        f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_dataperc={cfg.data_perc}'
     
     preprocessed_dirname += res_info
     processed_dirname += res_info
@@ -1341,7 +1361,7 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, tran
 
     # load training and validation data
     data = [SeasonalData(year, preprocessed_dirname, processed_dirname,
-                                 **cfg, **cfg.model,
+                                 **cfg, **cfg.model, **cfg.task,
                                  data_root=data_dir,
                                  data_source=cfg.datasource.name,
                                  transform=transform
