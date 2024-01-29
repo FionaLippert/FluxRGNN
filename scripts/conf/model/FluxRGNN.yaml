@@ -7,7 +7,7 @@ coord_dim: 4
 n_edge_attr: 6
 n_env: ${len:${datasource.env_vars}}
 
-n_hidden: 128
+n_hidden: 64
 rnn_type: LSTM
 #n_fc_layers: 2
 #n_lstm_layers: 1
@@ -20,7 +20,7 @@ test_horizon: 72
 
 #epochs: 300
 #batch_size: 4
-lr: 1e-5
+lr: 3e-5
 lr_schedulers:
         #- _target_: torch.optim.lr_scheduler.LinearLR
         #  _partial_: true
@@ -78,10 +78,10 @@ transforms:
 dropout_p: 0.0
 teacher_forcing: 0.0
 teacher_forcing_gamma: 0.95
-increase_horizon_rate: 0.2
+increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
-force_zeros: false
+force_zeros: true
 #use_encoder: true
 #use_boundary_model: true
 #use_uv: true
@@ -100,7 +100,7 @@ decoder:
   rnn_type: ${model.rnn_type}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
-  use_encoder: false # true
+  use_encoder: false #true #false
   dropout_p: ${model.dropout_p}
   #static_cell_features:
   #  coords: ${model.coord_dim}
@@ -176,7 +176,7 @@ source_sink_model:
 #  transforms: ${model.transforms}
 
 initial_model:
-  _target_: fluxrgnn.models.CorrectedRadarToCellInterpolation
+  _target_: fluxrgnn.models.RadarToCellInterpolation
   radar_variables:
     x: 1
   dynamic_cell_features:
@@ -212,10 +212,9 @@ encoder:
   n_rnn_layers: 1
   dropout_p: ${model.dropout_p}
   radar2cell_model:
-    _target_: fluxrgnn.models.RadarToCellGNN
-    #_target_: fluxrgnn.models.CorrectedRadarToCellInterpolation
-    #radar_variables:
-    dynamic_radar_features:
+    #_target_: fluxrgnn.models.RadarToCellGNN
+    _target_: fluxrgnn.models.RadarToCellInterpolation
+    radar_variables:
       x: 1
       bird_uv: 2
     dynamic_cell_features:
