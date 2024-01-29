@@ -3,20 +3,22 @@
 #SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --job-name=preprocessing
-#SBATCH --time=14:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --job-name=xgboost
+#SBATCH --time=1:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
-source activate birds
+source activate fluxrgnn
 
 cd $HOME/FluxRGNN/scripts
 
 which python
 
+nvidia-smi
+
 OVERRIDES=$1
 
 echo $OVERRIDES
 
-srun python run_preprocessing.py $OVERRIDES
+srun python run_xgboost.py $OVERRIDES
 

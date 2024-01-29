@@ -1176,7 +1176,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
     seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) \
-              + cfg.datasource.get('tidx_step', 1) - 1
+              + cfg.datasource.get('tidx_step', 1) #- 1
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
@@ -1265,11 +1265,13 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     seq_len = 'all'
     seed = cfg.seed + cfg.get('job_id', 0)
 
-    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
-    if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-        res_info = f'_h3={cfg.datasource.h3_resolution}'
-    else:
-        res_info = '_ndummy={cfg.datasource.n_dummy_radars}'
+    preprocessed_dirname = f'{cfg.t_unit}_none'
+    cfg.model.edge_type = 'none'
+    cfg.datasource.n_dummy_radars = 0
+    #if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
+    #    res_info = f'_res={cfg.datasource.h3_resolution}'
+    #else:
+    res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \

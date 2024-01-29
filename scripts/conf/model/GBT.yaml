@@ -20,12 +20,11 @@ test_horizon: 72
 test_context: 24
 
 use_acc_vars: false
-edge_type: none
+edge_type: hexagons
 birds_per_km2: true
-#n_dummy_radars: 0
 
-static_cell_features:
-  coords: ${model.coord_dim}
+#static_cell_features:
+#  coords: ${model.coord_dim}
 #  pos: ${model.coord_dim}
 dynamic_cell_features:
   env: ${model.n_env}
@@ -35,14 +34,14 @@ force_zeros: true
 use_log_transform: false
 log_offset: 0.1
 pow_exponent: 0.3333
-scale: 1.0 #0.1 #0.001
+scale: 0.1 #1.0 #0.1 #0.001
 
 
 transforms:
   - _target_: transforms.PowerTransform
     feature: x
     exponent: ${model.pow_exponent}
-#  - _target_: transforms.Rescaling
-#    feature: x
-#    factor: ${model.scale}
+  - _target_: transforms.Rescaling
+    feature: x
+    factor: ${model.scale}
 

@@ -353,46 +353,54 @@ class ForecastModel(pl.LightningModule):
             local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(radar_data.missing))
         else:
             local_mask = torch.logical_not(radar_data.missing)
-
+        
         gt = tidx_select(radar_data.x, t0, steps=(self.t_context + horizon)).view(radar_data.x.size(0), -1)
         gt = gt[radar_mask, self.t_context: self.t_context + horizon]
         local_mask = tidx_select(local_mask, t0, steps=(self.t_context + horizon)).view(local_mask.size(0), -1)
         local_mask = local_mask[radar_mask, self.t_context: self.t_context + horizon]
         output = output[radar_mask, :horizon]
-        
-        if aggregate_time:
-            gt = gt.reshape(-1)
-            local_mask = local_mask.reshape(-1)
-            output = output.reshape(-1)
 
-        if self.config.get('root_transformed_loss', False):
-            weights = 1 + torch.pow(gt, 0.75)
-            loss = utils.MSE(output, gt, local_mask, weights)
+
+        if local_mask.sum() == 0:
+            # no valid data points
+            return {}
         else:
-            loss = utils.MSE(output, gt, local_mask)
+            # proceed with evaluation
+            if aggregate_time:
+                gt = gt.reshape(-1)
+                local_mask = local_mask.reshape(-1)
+                output = output.reshape(-1)
+
+            if self.config.get('root_transformed_loss', False):
+                weights = 1 + torch.pow(gt, 0.75)
+                loss = utils.MSE(output, gt, local_mask, weights)
+            else:
+                loss = utils.MSE(output, gt, local_mask)
         
-        if self.training:
-            regularizer = self._regularizer()
-            loss = loss + self.config.get('regularizer_weight', 1.0) * regularizer
-            eval_dict = {f'{prefix}/loss': loss,
+            if self.training:
+                regularizer = self._regularizer()
+                loss = loss + self.config.get('regularizer_weight', 1.0) * regularizer
+                eval_dict = {f'{prefix}/loss': loss,
                          f'{prefix}/log-loss': torch.log(loss),
                          f'{prefix}/regularizer': regularizer}
-        else:
-            eval_dict = {f'{prefix}/loss': loss,
+            else:
+                eval_dict = {f'{prefix}/loss': loss,
                          f'{prefix}/log-loss': torch.log(loss)}
 
-        if not self.training:
-            raw_gt = self.transformed2raw(gt)
-            raw_output = self.transformed2raw(output)
-            self._add_eval_metrics(eval_dict, raw_gt, raw_output, local_mask, prefix=f'{prefix}/raw')
+            if not self.training:
+                raw_gt = self.transformed2raw(gt)
+                raw_output = self.transformed2raw(output)
+                #print(f'gt size: {raw_gt.size()}, pred size: {raw_output.size()}, mask sum: {local_mask.sum()}')
+                #print(raw_output)
+                self._add_eval_metrics(eval_dict, raw_gt, raw_output, local_mask, prefix=f'{prefix}/raw')
 
-            log_gt = self.raw2log(raw_gt)
-            log_output = self.raw2log(raw_output)
-            self._add_eval_metrics(eval_dict, log_gt, log_output, local_mask, prefix=f'{prefix}/log')
+                log_gt = self.raw2log(raw_gt)
+                log_output = self.raw2log(raw_output)
+                self._add_eval_metrics(eval_dict, log_gt, log_output, local_mask, prefix=f'{prefix}/log')
 
-            pow_gt = self.raw2pow(raw_gt)
-            pow_output = self.raw2pow(raw_output)
-            self._add_eval_metrics(eval_dict, pow_gt, pow_output, local_mask, prefix=f'{prefix}/pow')
+                pow_gt = self.raw2pow(raw_gt)
+                pow_output = self.raw2pow(raw_output)
+                self._add_eval_metrics(eval_dict, pow_gt, pow_output, local_mask, prefix=f'{prefix}/pow')
 
         return eval_dict
 
@@ -485,7 +493,7 @@ class FluxRGNN(ForecastModel):
             rnn_states = self.encoder(graph_data, t0)
             self.decoder.initialize(rnn_states)
         else:
-            self.decoder.initialize_zeros(cell_data.num_nodes)
+            self.decoder.initialize_zeros(cell_data.num_nodes, self.device)
 
         hidden = self.decoder.get_hidden()
 
@@ -514,6 +522,7 @@ class FluxRGNN(ForecastModel):
 
         model_states = {'x': x,
                         'hidden': hidden,
+                        'hidden_enc': hidden if self.encoder is not None else None,
                         'boundary_nodes': cell_data.boundary.view(-1, 1),
                         'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
 
@@ -552,7 +561,7 @@ class FluxRGNN(ForecastModel):
         #print(f'x after boundary model: {x.size()}')
 
         # update hidden states
-        hidden = self.decoder(x, hidden, cell_data, t)
+        hidden = self.decoder(x, cell_data, t, model_states['hidden_enc'])
 
         # predict movements
         if self.flux_model is not None:
@@ -710,18 +719,18 @@ class LocalMLPForecast(ForecastModel):
     Forecast model using a local MLP with parameters shared across time and space.
     """
 
-    def __init__(self, static_cell_features, dynamic_cell_features, **kwargs):
+    def __init__(self, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
         Initialize LocalMLPForecast and all its components.
         """
 
         super(LocalMLPForecast, self).__init__(**kwargs)
 
-        self.static_cell_features = static_cell_features
-        self.dynamic_cell_features = dynamic_cell_features
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
         # setup model
-        n_in = sum(static_cell_features.values()) + sum(dynamic_cell_features.values())
+        n_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values())
         self.mlp = NodeMLP(n_in, **kwargs)
 
 
@@ -730,15 +739,15 @@ class LocalMLPForecast(ForecastModel):
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
         # static features
-        node_features = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
-                                   feature in self.static_cell_features], dim=1)
+        node_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
+                                   feature in self.static_cell_features]
 
         # dynamic features for current time step t
-        dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1) for
-                                      feature in self.dynamic_cell_features], dim=1)
+        dynamic_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1) for
+                                      feature in self.dynamic_cell_features]
 
         # combined features
-        inputs = torch.cat([node_features, dynamic_features], dim=1)
+        inputs = torch.cat(node_features + dynamic_features, dim=1)
 
         x = self.mlp(inputs)
 
@@ -868,7 +877,7 @@ class XGBoostForecast(ForecastModel):
     Forecast model using XGBoost to predict local animal densities.
     """
 
-    def __init__(self, xgboost, static_cell_features, dynamic_cell_features, **kwargs):
+    def __init__(self, xgboost, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
         Initialize XGBoostForecast model.
         """
@@ -877,8 +886,8 @@ class XGBoostForecast(ForecastModel):
 
         self.automatic_optimization = False
 
-        self.static_cell_features = static_cell_features
-        self.dynamic_cell_features = dynamic_cell_features
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
         self.xgboost = xgboost
 
@@ -891,15 +900,15 @@ class XGBoostForecast(ForecastModel):
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
         # static graph features
-        node_features = torch.cat([cell_data.get(feature).reshape(cell_data.coords.size(0), -1) for
-                                   feature in self.static_cell_features], dim=1)
+        node_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1) for
+                                   feature in self.static_cell_features]
 
         # dynamic features for current and previous time step
-        dynamic_features = torch.cat([tidx_select(cell_data.get(feature), t).reshape(cell_data.coords.size(0), -1) for
-                                         feature in self.dynamic_cell_features], dim=1)
+        dynamic_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.coords.size(0), -1) for
+                                         feature in self.dynamic_cell_features]
 
         # combined features
-        inputs = torch.cat([node_features, dynamic_features], dim=1).detach().numpy()
+        inputs = torch.cat(node_features + dynamic_features, dim=1).detach().numpy()
 
         # apply XGBoost
         model_states['x'] = torch.tensor(self.xgboost.predict(inputs)).view(-1, 1)
@@ -1474,21 +1483,21 @@ class ObservationModel(MessagePassing):
         return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
-class RadarToCellGNN(MessagePassing):
+#class RadarToCellGNN(MessagePassing):
 
-    def __init__(self, static_radar_features=None, dynamic_radar_features=None, **kwargs):
-        super(RadarToCellGNN, self).__init__(**kwargs)
-
-        self.static_radar_features = {} if static_radar_features is None else static_radar_features
-        self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
+#    def __init__(self, static_radar_features=None, dynamic_radar_features=None, **kwargs):
+#        super(RadarToCellGNN, self).__init__(**kwargs)
+#
+#        self.static_radar_features = {} if static_radar_features is None else static_radar_features
+#        self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
 
         # n_node_in = sum(self.dynamic_features.values()) + 1
         #
         # self.mlp = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
 
-    def forward(self, graph_data, t, *args, **kwargs):
-
-        n_radars = graph_data['radar'].num_nodes
+#    def forward(self, graph_data, t, *args, **kwargs):
+#
+#        n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
 
         radars_to_cells = graph_data['radar', 'cell']
@@ -1498,19 +1507,19 @@ class RadarToCellGNN(MessagePassing):
 
         dynamic_features = [tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1) for
                             feature in self.dynamic_radar_features]
-
-        all_features = torch.cat(static_features + dynamic_features, dim=1)
-        dummy_features = torch.zeros((n_cells - n_radars, all_features.size(1)), device=all_features.device)
-        embedded_features = torch.cat([all_features, dummy_features], dim=0)
-
-        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1])
-
-        cell_states = self.propagate(radars_to_cells.edge_index,
-                                     x=embedded_features,
-                                     weighted_degree=weighted_degree,
-                                     edge_weight=radars_to_cells.edge_weight)
-
-        return cell_states
+#
+#        all_features = torch.cat(static_features + dynamic_features, dim=1)
+#        dummy_features = torch.zeros((n_cells - n_radars, all_features.size(1)), device=all_features.device)
+#        embedded_features = torch.cat([all_features, dummy_features], dim=0)
+#
+#        weighted_degree = scatter('add', radars_to_cells.edge_weight, radars_to_cells.edge_index[1])
+#
+#        cell_states = self.propagate(radars_to_cells.edge_index,
+#                                     x=embedded_features,
+#                                     weighted_degree=weighted_degree,
+#                                     edge_weight=radars_to_cells.edge_weight)
+#
+#        return cell_states
 
     # def message(self, x_j, edge_weight):
     #     # from radar j to cell i
@@ -1523,10 +1532,10 @@ class RadarToCellGNN(MessagePassing):
     #
     #     return m_ij
 
-    def message(self, x_j, weighted_degree_i, edge_weight):
-        # from radar j to cell i
-        # compute weighted average of closeby radars
-        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
+#    def message(self, x_j, weighted_degree_i, edge_weight):
+#        # from radar j to cell i
+#        # compute weighted average of closeby radars
+#        return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
 
 
 class InitialState(MessagePassing):
@@ -1671,11 +1680,11 @@ class CorrectedRadarToCellInterpolation(MessagePassing):
                                      edge_weight=radars_to_cells.edge_weight)
 
         # static cell features
-        static_cell_features = [graph_data['cell'].get(feature).reshape(n_radars, -1)
+        static_cell_features = [graph_data['cell'].get(feature).reshape(n_cells, -1)
                                  for feature in self.static_cell_features]
 
         # dynamic features for current time step
-        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_radars, -1)
+        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
                                   for feature in self.dynamic_cell_features]
 
         # predict correction term
@@ -1692,13 +1701,12 @@ class CorrectedRadarToCellInterpolation(MessagePassing):
 
 class RadarToCellGNN(MessagePassing):
 
-    def __init__(self, radar_variables, static_radar_features=None, dynamic_radar_features=None,
+    def __init__(self, static_radar_features=None, dynamic_radar_features=None,
                  static_cell_features=None, dynamic_cell_features=None, **kwargs):
 
         super(RadarToCellGNN, self).__init__(aggr='sum', node_dim=0)
 
-        self.radar_variables = radar_variables
-        self.n_features = sum(self.radar_variables.values())
+        self.n_features = kwargs.get('n_hidden')
 
         self.static_radar_features = {} if static_radar_features is None else static_radar_features
         self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
@@ -1710,8 +1718,7 @@ class RadarToCellGNN(MessagePassing):
                     sum(self.dynamic_radar_features.values()) + \
                     sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
-                    kwargs.get('radar2cell_edge_attr') + \
-                    self.n_features
+                    kwargs.get('radar2cell_edge_attr')
 
         self.edge_mlp = MLP(n_edge_in, kwargs.get('n_hidden'), **kwargs)
         self.node_mlp = MLP(kwargs.get('n_hidden'), kwargs.get('n_hidden'), **kwargs)
@@ -1734,11 +1741,11 @@ class RadarToCellGNN(MessagePassing):
         embedded_radar_features = torch.cat([all_radar_features, dummy_features], dim=0)
 
         # static cell features
-        static_cell_features = [graph_data['cell'].get(feature).reshape(n_radars, -1)
+        static_cell_features = [graph_data['cell'].get(feature).reshape(n_cells, -1)
                                  for feature in self.static_cell_features]
 
         # dynamic cell features for current time step
-        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_radars, -1)
+        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
                                   for feature in self.dynamic_cell_features]
 
         all_cell_features = torch.cat(static_cell_features + dynamic_cell_features, dim=1)
@@ -1930,20 +1937,20 @@ class RecurrentDecoder(torch.nn.Module):
         else:
             self.node_rnn = NodeGRU(n_node_in, **kwargs)
 
-    def initialize(self, *states):
+    def initialize(self, states):
 
-        self.node_rnn.setup_states(*states)
+        self.node_rnn.setup_states(states)
 
-    def initialize_zeros(self, batch_size):
+    def initialize_zeros(self, batch_size, device):
 
-        self.node_rnn.setup_zero_states(batch_size)
+        self.node_rnn.setup_zero_states(batch_size, device)
 
     def get_hidden(self):
 
         return self.node_rnn.get_hidden()
 
 
-    def forward(self, x, hidden, graph_data, t):
+    def forward(self, x, graph_data, t, hidden_enc=None):
         """
         Predict next hidden state.
 
@@ -1964,7 +1971,7 @@ class RecurrentDecoder(torch.nn.Module):
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1)] + node_features + dynamic_features_t0, dim=1)
 
-        rnn_states = self.node_rnn(inputs)
+        rnn_states = self.node_rnn(inputs, hidden_enc)
         hidden = self.node_rnn.get_hidden()
 
         return hidden
@@ -2401,7 +2408,7 @@ class NodeLSTM(torch.nn.Module):
         self.n_in = n_in
         self.n_hidden = kwargs.get('n_hidden', 64)
         self.n_layers = kwargs.get('n_rnn_layers', 1)
-        self.use_encoder = kwargs.get('use_encoder', True)
+        self.use_encoder = kwargs.get('use_encoder', False)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         # node embedding
@@ -2420,23 +2427,23 @@ class NodeLSTM(torch.nn.Module):
         init_weights(self.lstm_in)
         self.lstm_layers.apply(init_weights)
 
-    def setup_states(self, h, c):
-        self.h = h
-        self.c = c
+    def setup_states(self, states):
 
-    def setup_zero_states(self, batch_size):
-        self.h = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
-        self.c = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
+        self.h, self.c = states
+
+    def setup_zero_states(self, batch_size, device):
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
+        self.c = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
 
     def get_hidden(self):
         return self.h[-1]
 
-    def forward(self, inputs):
+    def forward(self, inputs, hidden=None):
 
         inputs = self.input2hidden(inputs)
 
-        if self.use_encoder:
-            inputs = torch.cat([inputs, self.h[-1]], dim=1)
+        if hidden is not None and self.use_encoder:
+            inputs = torch.cat([inputs, hidden], dim=1)
 
         # lstm layers
         self.h[0], self.c[0] = self.lstm_in(inputs, (self.h[0], self.c[0]))
@@ -2456,7 +2463,7 @@ class NodeGRU(torch.nn.Module):
         self.n_in = n_in
         self.n_hidden = kwargs.get('n_hidden', 64)
         self.n_layers = kwargs.get('n_rnn_layers', 1)
-        self.use_encoder = kwargs.get('use_encoder', True)
+        self.use_encoder = kwargs.get('use_encoder', False)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         # node embedding
@@ -2478,18 +2485,18 @@ class NodeGRU(torch.nn.Module):
     def setup_states(self, h):
         self.h = h
 
-    def setup_zero_states(self, batch_size):
-        self.h = [torch.zeros(batch_size, self.n_hidden, device=self.device) for _ in range(self.n_layers)]
+    def setup_zero_states(self, batch_size, device):
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
 
     def get_hidden(self):
         return self.h[-1]
 
-    def forward(self, inputs):
+    def forward(self, inputs, hidden=None):
 
         inputs = self.input2hidden(inputs)
 
-        if self.use_encoder:
-            inputs = torch.cat([inputs, self.h[-1]], dim=1)
+        if hidden is not None and self.use_encoder:
+            inputs = torch.cat([inputs, hidden], dim=1)
 
         # gru layers
         self.h[0] = self.gru_in(inputs, self.h[0])
@@ -2609,7 +2616,7 @@ class RecurrentEncoder(torch.nn.Module):
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
-        self.node_rnn.setup_zero_states(cell_data.num_nodes)
+        self.node_rnn.setup_zero_states(cell_data.num_nodes, device=cell_data.coords.device)
 
         # # initialize lstm variables
         # h_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
@@ -2630,7 +2637,7 @@ class RecurrentEncoder(torch.nn.Module):
             dynamic_cell_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1)
                                           for feature in self.dynamic_cell_features]
             # get radar features and map them to cells
-            radar_features = self.radar2cell_model(data, t)
+            radar_features = self.radar2cell_model(data, t, self.node_rnn.get_hidden())
             
             inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 
@@ -3001,15 +3008,23 @@ def tidx_select(features, indices, steps=0):
     mask = torch.logical_and(tidx >= full_indices, tidx <= full_indices + steps)
 
     if len(shape) > 2:
+        #print(f'mask: {mask.size()}, features: {features.size()}')
         dim1 = torch.prod(shape[1:-1])
-        f = features.view(shape[0], -1, shape[-1])[mask.view(shape[0], 1, shape[-1]).repeat(1, dim1, 1)]
+        mask = mask.view(shape[0], 1, shape[-1])
+        #print(f'{features.view(shape[0], -1, shape[-1])[mask]}')
+        f = features.view(shape[0], -1, shape[-1])[mask.repeat(1, dim1, 1)]
         #f = f.view(*shape[:-1], -1)
+        #print(f'features after: {f.size()}')
     else:
+        #print(f'mask: {mask.size()}, features: {features.size()}, mask_sum: {mask.sum()}')
+        #print(f'steps: {steps}')
+        #print(steps * shape[0])
         f = features[mask]
+
+        #print(f'mask per node: {mask.sum(-1)}')
 
 
     #f = features.view(-1, shape[-1])[torch.arange(torch.prod(shape[:-1]), device=features.device), full_indices]
-    
     f = f.view(*shape[:-1], -1)
     
     #print(f'original shape = {shape}, after selection = {f.size()}')

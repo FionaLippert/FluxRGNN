@@ -24,8 +24,8 @@ optimizer:
         lr: ${model.lr}
 
 
-static_cell_features:
-  coords: 4
+#static_cell_features:
+#  coords: 4
 #  pos: 2
 dynamic_cell_features:
   env: ${model.n_env}

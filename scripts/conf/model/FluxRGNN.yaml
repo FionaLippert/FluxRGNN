@@ -15,7 +15,7 @@ rnn_type: LSTM
 max_t0: ${datasource.tidx_step}
 context: 24
 horizon: 48
-min_horizon: 2
+min_horizon: 1
 test_horizon: 72
 
 #epochs: 300
@@ -87,7 +87,7 @@ force_zeros: false
 #use_uv: true
 root_transformed_loss: false
 #compute_fluxes: true
-edge_type: voronoi
+edge_type: hexagons # voronoi
 birds_per_km2: true
 
 regularizer_weight: 0.0
@@ -100,9 +100,10 @@ decoder:
   rnn_type: ${model.rnn_type}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
+  use_encoder: false # true
   dropout_p: ${model.dropout_p}
-  static_cell_features:
-    coords: ${model.coord_dim}
+  #static_cell_features:
+  #  coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -111,8 +112,8 @@ decoder:
 flux_model:
   _target_: fluxrgnn.models.Fluxes
   #_target_: fluxrgnn.models.NumericalFluxes
-  static_cell_features:
-    coords: ${model.coord_dim}
+  #static_cell_features:
+  #  coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -135,8 +136,8 @@ source_sink_model:
   #model_inputs: []
     #x: 1
     #ground_states: 1
-  static_cell_features:
-    coords: ${model.coord_dim}
+  #static_cell_features:
+    #coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
@@ -175,9 +176,16 @@ source_sink_model:
 #  transforms: ${model.transforms}
 
 initial_model:
-  _target_: fluxrgnn.models.RadarToCellInterpolation
-  dynamic_radar_features:
+  _target_: fluxrgnn.models.CorrectedRadarToCellInterpolation
+  radar_variables:
     x: 1
+  dynamic_cell_features:
+    env: ${model.n_env}
+  n_hidden: ${model.n_hidden}
+  n_fc_layers: 1
+  activation:
+    _target_: torch.nn.ReLU # LeakyReLU
+  dropout_p: ${model.dropout_p}
 
 #ground_model:
 #  _target_: fluxrgnn.models.InitialStateMLP
@@ -204,22 +212,22 @@ encoder:
   n_rnn_layers: 1
   dropout_p: ${model.dropout_p}
   radar2cell_model:
-    _target_: fluxrgnn.models.RadarToCellInterpolation
+    _target_: fluxrgnn.models.RadarToCellGNN
     #_target_: fluxrgnn.models.CorrectedRadarToCellInterpolation
-    radar_variables:
+    #radar_variables:
+    dynamic_radar_features:
       x: 1
       bird_uv: 2
-    #static_cell_features:
-    #  coords: ${model.coord_dim}
-    #dynamic_cell_features:
-    #  env: ${model.n_env}
-    #n_hidden: 32
-    #n_fc_layers: 1
-    #activation:
-    #  _target_: torch.nn.ReLU # LeakyReLU
-    #dropout_p: ${model.dropout_p}
-  static_cell_features:
-      coords: ${model.coord_dim}
+    dynamic_cell_features:
+      env: ${model.n_env}
+    radar2cell_edge_attr: 3
+    n_hidden: ${model.n_hidden}
+    n_fc_layers: 1
+    activation:
+      _target_: torch.nn.ReLU # LeakyReLU
+    dropout_p: ${model.dropout_p}
+  #static_cell_features:
+  #    coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
 
