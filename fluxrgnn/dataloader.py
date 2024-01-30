@@ -916,6 +916,8 @@ class RadarHeteroData(InMemoryDataset):
             # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
             distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
 
+            edge_weights = rescale(1. / distances**2, min=0)
+
             # angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
             angles = np.array([data['angle'] for i, j, data in G.edges(data=True)])
             angles_sin = np.sin(angles * np.pi / 180.)
@@ -939,6 +941,7 @@ class RadarHeteroData(InMemoryDataset):
                 torch.tensor(delta_y, dtype=torch.float),
                 torch.tensor(rescale(face_lengths, min=0), dtype=torch.float)
             ], dim=1)
+            edge_weights = torch.tensor(edge_weights, dtype=torch.float)
 
 
             # radar-cell edge features
@@ -1022,7 +1025,7 @@ class RadarHeteroData(InMemoryDataset):
             seq_index = np.arange(tidx.shape[-1])
             print(seq_index)
 
-        # Delaunay triangulation features
+        # tessellation structure
         cell2cell_edges = {
             'edge_index': edge_index,
             'reverse_edges': reverse_edges,
@@ -1031,6 +1034,7 @@ class RadarHeteroData(InMemoryDataset):
             'boundary2boundary_edges': boundary2boundary_edges.bool(),
             'inner_edges': inner_edges.bool(),
             'edge_attr': edge_attr,
+            'edge_weights': edge_weights,
             'edge_normals': torch.tensor(n_ij, dtype=torch.float),
             'edge_face_lengths': torch.tensor(face_lengths, dtype=torch.float)
         }

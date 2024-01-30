@@ -94,7 +94,10 @@ observation_model:
 
 decoder:
   _target_: fluxrgnn.models.RecurrentDecoder
-  rnn_type: ${model.rnn_type}
+  # rnn_type: ${model.rnn_type}
+  node_rnn:
+    _target_: fluxrgnn.models.NodeLSTM
+    _partial_: true
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
   use_encoder: true #false
@@ -205,7 +208,10 @@ initial_model:
   
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
-  rnn_type: ${model.rnn_type}
+  # rnn_type: ${model.rnn_type}
+  node_rnn:
+    _target_: fluxrgnn.models.NodeLSTM
+    _partial_: true
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1

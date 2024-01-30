@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj, degree, scatter
 from torch_geometric.nn.unpool import knn_interpolate
+from torch_geometric_temporal.nn.recurrent import GConvLSTM, GConvGRU, DCRNN
 import pytorch_lightning as pl
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
@@ -1984,7 +1985,7 @@ class RecurrentDecoder(torch.nn.Module):
     Recurrent neural network predicting the hidden states during forecasting.
     """
 
-    def __init__(self, static_cell_features=None, dynamic_cell_features=None, **kwargs):
+    def __init__(self, node_rnn, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         """
         Initialize RecurrentDecoder module.
 
@@ -1997,12 +1998,14 @@ class RecurrentDecoder(torch.nn.Module):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) + 1
+        n_inputs = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) + 1
 
-        if kwargs.get('rnn_type', 'LSTM'):
-            self.node_rnn = NodeLSTM(n_node_in, **kwargs)
-        else:
-            self.node_rnn = NodeGRU(n_node_in, **kwargs)
+        # if kwargs.get('rnn_type', 'LSTM'):
+        #     self.node_rnn = NodeLSTM(n_node_in, **kwargs)
+        # else:
+        #     self.node_rnn = NodeGRU(n_node_in, **kwargs)
+
+        self.node_rnn = node_rnn(n_inputs, **kwargs)
 
     def initialize(self, states):
     
@@ -2042,7 +2045,7 @@ class RecurrentDecoder(torch.nn.Module):
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1)] + node_features + dynamic_features_t0, dim=1)
 
-        rnn_states = self.node_rnn(inputs, hidden_enc)
+        rnn_states = self.node_rnn(inputs, edge_index=graph_data.edge_index, edge_weight=None, hidden=hidden_enc)
         hidden = self.node_rnn.get_hidden()
 
         #h_t, c_t = self.node_rnn(inputs, hidden_enc)
@@ -2477,20 +2480,19 @@ class MLP(torch.nn.Module):
 class NodeLSTM(torch.nn.Module):
     """Decoder LSTM combining hidden states with additional inputs."""
 
-    def __init__(self, n_in, **kwargs):
+    def __init__(self, n_inputs, **kwargs):
         super(NodeLSTM, self).__init__()
 
-        self.n_in = n_in
         self.n_hidden = kwargs.get('n_hidden', 64)
         self.n_layers = kwargs.get('n_rnn_layers', 1)
         self.use_encoder = kwargs.get('use_encoder', False)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         # node embedding
-        self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
+        self.input2hidden = torch.nn.Linear(n_inputs, self.n_hidden, bias=False)
 
-        n_in = self.n_hidden * 2 if self.use_encoder else self.n_hidden
-        self.lstm_in = torch.nn.LSTMCell(n_in, self.n_hidden)
+        n_in_hidden = self.n_hidden * 2 if self.use_encoder else self.n_hidden
+        self.lstm_in = torch.nn.LSTMCell(n_in_hidden, self.n_hidden)
         self.lstm_layers = nn.ModuleList([torch.nn.LSTMCell(self.n_hidden, self.n_hidden)
                                           for _ in range(self.n_layers - 1)])
 
@@ -2513,7 +2515,7 @@ class NodeLSTM(torch.nn.Module):
     def get_hidden(self):
         return self.h[-1]
 
-    def forward(self, inputs, hidden=None):
+    def forward(self, inputs, hidden=None, **kwargs):
 
         inputs = self.input2hidden(inputs)
 
@@ -2523,8 +2525,8 @@ class NodeLSTM(torch.nn.Module):
         # lstm layers
         self.h[0], self.c[0] = self.lstm_in(inputs, (self.h[0], self.c[0]))
         for l in range(self.n_layers - 1):
-            self.h[0] = F.dropout(self.h[0], p=self.dropout_p, training=self.training, inplace=False)
-            self.c[0] = F.dropout(self.c[0], p=self.dropout_p, training=self.training, inplace=False)
+            self.h[l] = F.dropout(self.h[l], p=self.dropout_p, training=self.training, inplace=False)
+            self.c[l] = F.dropout(self.c[l], p=self.dropout_p, training=self.training, inplace=False)
             self.h[l + 1], self.c[l + 1] = self.lstm_layers[l](self.h[l], (self.h[l + 1], self.c[l + 1]))
 
         return self.h, self.c
@@ -2532,20 +2534,19 @@ class NodeLSTM(torch.nn.Module):
 class NodeGRU(torch.nn.Module):
     """Decoder GRU combining hidden states with additional inputs."""
 
-    def __init__(self, n_in, **kwargs):
+    def __init__(self, n_inputs, **kwargs):
         super(NodeGRU, self).__init__()
 
-        self.n_in = n_in
         self.n_hidden = kwargs.get('n_hidden', 64)
         self.n_layers = kwargs.get('n_rnn_layers', 1)
         self.use_encoder = kwargs.get('use_encoder', False)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         # node embedding
-        self.input2hidden = torch.nn.Linear(self.n_in, self.n_hidden, bias=False)
+        self.input2hidden = torch.nn.Linear(n_inputs, self.n_hidden, bias=False)
 
-        n_in = self.n_hidden * 2 if self.use_encoder else self.n_hidden
-        self.gru_in = torch.nn.GRUCell(n_in, self.n_hidden)
+        n_in_hidden = self.n_hidden * 2 if self.use_encoder else self.n_hidden
+        self.gru_in = torch.nn.GRUCell(n_in_hidden, self.n_hidden)
         self.gru_layers = nn.ModuleList([torch.nn.GRUCell(self.n_hidden, self.n_hidden)
                                           for _ in range(self.n_layers - 1)])
 
@@ -2566,7 +2567,7 @@ class NodeGRU(torch.nn.Module):
     def get_hidden(self):
         return self.h[-1]
 
-    def forward(self, inputs, hidden=None):
+    def forward(self, inputs, hidden=None, **kwargs):
 
         inputs = self.input2hidden(inputs)
 
@@ -2576,10 +2577,65 @@ class NodeGRU(torch.nn.Module):
         # gru layers
         self.h[0] = self.gru_in(inputs, self.h[0])
         for l in range(self.n_layers - 1):
-            self.h[0] = F.dropout(self.h[0], p=self.dropout_p, training=self.training, inplace=False)
+            self.h[l] = F.dropout(self.h[l], p=self.dropout_p, training=self.training, inplace=False)
             self.h[l + 1] = self.gru_layers[l](self.h[l], self.h[l + 1])
 
         return self.h
+
+
+class NodeGConvGRU(torch.nn.Module):
+    """Decoder GConvGRU combining hidden states with additional inputs."""
+
+    def __init__(self, n_inputs, **kwargs):
+        super(NodeGConvGRU, self).__init__()
+
+        self.n_hidden = kwargs.get('n_hidden', 64)
+        self.n_layers = kwargs.get('n_rnn_layers', 1)
+        self.use_encoder = kwargs.get('use_encoder', False)
+        self.dropout_p = kwargs.get('dropout_p', 0)
+
+        # node embedding
+        self.input2hidden = torch.nn.Linear(n_inputs, self.n_hidden, bias=False)
+
+        n_in_hidden = self.n_hidden * 2 if self.use_encoder else self.n_hidden
+        self.layer_in = GConvGRU(n_in_hidden, self.n_hidden, **kwargs)
+        self.hidden_layers = nn.ModuleList([GConvGRU(self.n_hidden, self.n_hidden, **kwargs)
+                                          for _ in range(self.n_layers - 1)])
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+
+        init_weights(self.input2hidden)
+        init_weights(self.layer_in)
+        self.hidden_layers.apply(init_weights)
+
+    def setup_states(self, states):
+
+        self.h = states
+
+    def setup_zero_states(self, batch_size, device):
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
+
+    def get_hidden(self):
+        return self.h[-1]
+
+    def forward(self, inputs, edge_index, edge_weight=None, hidden=None):
+
+        inputs = self.input2hidden(inputs)
+
+        if hidden is not None and self.use_encoder:
+            inputs = torch.cat([inputs, hidden], dim=1)
+
+        # lstm layers
+        self.h[0] = self.layer_in(inputs, edge_index=edge_index, edge_weight=edge_weight, H=self.h[0])
+        for l in range(self.n_layers - 1):
+            self.h[l] = F.dropout(self.h[l], p=self.dropout_p, training=self.training, inplace=False)
+            self.h[l + 1] = self.hidden_layers[l](self.h[l], edge_index=edge_index,
+                                                  edge_weight=edge_weight, H=self.h[l + 1])
+
+        return self.h
+
 
 
 
@@ -2650,7 +2706,7 @@ class Extrapolation(MessagePassing):
 class RecurrentEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, radar2cell_model, static_cell_features=None, dynamic_cell_features=None, **kwargs):
+    def __init__(self, node_rnn, radar2cell_model, static_cell_features=None, dynamic_cell_features=None, **kwargs):
         super(RecurrentEncoder, self).__init__()
 
         self.t_context = kwargs.get('context', 24)
@@ -2666,7 +2722,7 @@ class RecurrentEncoder(torch.nn.Module):
 
         # TODO: treat radar features separately
 
-        n_node_in = sum(self.static_cell_features.values()) + \
+        n_inputs = sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
                     self.radar2cell_model.n_features
 
@@ -2674,10 +2730,12 @@ class RecurrentEncoder(torch.nn.Module):
         # self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
         #                                   for _ in range(self.n_lstm_layers)])
 
-        if kwargs.get('rnn_type', 'LSTM'):
-            self.node_rnn = NodeLSTM(n_node_in, **kwargs)
-        else:
-            self.node_rnn = NodeGRU(n_node_in, **kwargs)
+        # if kwargs.get('rnn_type', 'LSTM'):
+        #     self.node_rnn = NodeLSTM(n_node_in, **kwargs)
+        # else:
+        #     self.node_rnn = NodeGRU(n_node_in, **kwargs)
+
+        self.node_rnn = node_rnn(n_inputs, **kwargs)
 
         # self.reset_parameters()
 
@@ -2716,7 +2774,7 @@ class RecurrentEncoder(torch.nn.Module):
             
             inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 
-            rnn_states = self.node_rnn(inputs)
+            rnn_states = self.node_rnn(inputs, edge_index=cell_data.edge_index, edge_weight=None) # TODO use weights
             # h_t, c_t = self.update(inputs, h_t, c_t)
 
         return rnn_states
