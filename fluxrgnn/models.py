@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj, degree, scatter
-from torch_geometric.unpool import knn_interpolate
+from torch_geometric.nn.unpool import knn_interpolate
 import pytorch_lightning as pl
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor

@@ -1,5 +1,5 @@
 # @package task
-name: train
+task_name: train
 slurm_job: scripts/run_train_eval_slurm.job
 local_job: scripts/run_train_eval_local.job
 repeats: 1

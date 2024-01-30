@@ -59,11 +59,11 @@ def run(cfg: DictConfig):
     model = instantiate(cfg.model)
     print(model)
     
-    if 'train' in cfg.task.name:
+    if 'train' in cfg.task.task_name:
         training(model, cfg)
-    if 'eval' in cfg.task.name:
+    if 'eval' in cfg.task.task_name:
         testing(trainer, model, cfg)
-    if 'predict' in cfg.task.name:
+    if 'predict' in cfg.task.task_name:
         prediction(trainer, model, cfg)
 
     if isinstance(trainer.logger, WandbLogger):
@@ -95,6 +95,9 @@ def load_training_data(cfg):
     
     data = torch.utils.data.ConcatDataset(data)
 
+    dynamic_cell_features = cfg.model.get('dynamic_cell_features', {})
+    static_cell_features = cfg.model.get('static_cell_features', {})
+
     # TODO: join all years into one big input matrix X and one big output vector y
     X = []
     y = []
@@ -111,17 +114,18 @@ def load_training_data(cfg):
         print(f'num nodes = {cell_data.num_nodes}')
 
         assert cell_data.num_nodes == radar_data.num_nodes
-
+        #print(dynamic_features)
+        #print(cell_data)
         # dynamic features for current and previous time step
-        dynamic_features = torch.cat([cell_data.get(feature).reshape(cell_data.coords.size(0), -1, T) for
-                                      feature in cfg.model.dynamic_features], dim=1)
+        dynamic_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1, T) for
+                                      feature in dynamic_cell_features]
 
         # static graph features
-        node_features = torch.cat([cell_data.get(feature).reshape(cell_data.coords.size(0), -1, 1).repeat(1, 1, T) for
-                                   feature in cfg.model.node_features], dim=1)
+        node_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1, 1).repeat(1, 1, T) for
+                                   feature in static_cell_features]
 
         # combined features
-        inputs = torch.cat([node_features, dynamic_features], dim=1) #.detach().numpy()
+        inputs = torch.cat(node_features + dynamic_features, dim=1) #.detach().numpy()
         inputs = inputs.permute(0, 2, 1) # [nodes, time, features]
         inputs = inputs.reshape(cell_data.num_nodes * T, -1) # [num_nodes * T, features]
 

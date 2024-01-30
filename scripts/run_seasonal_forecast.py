@@ -65,9 +65,9 @@ def run(cfg: DictConfig):
         print('------------------------------------------------------')
 
 
-    if 'train' in cfg.task.name:
+    if 'train' in cfg.task.task_name:
         training(trainer, model, cfg)
-    if 'eval' in cfg.task.name:
+    if 'eval' in cfg.task.task_name:
         # if hasattr(cfg, 'importance_sampling'):
         #     cfg.importance_sampling = False
 

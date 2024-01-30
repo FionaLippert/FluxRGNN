@@ -830,7 +830,7 @@ class RadarHeteroData(InMemoryDataset):
 
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index, torch.tensor(test_radars)))
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(test_radars)))
             radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
             radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
             radar_to_cell_dist = radar_to_cell_dist[mask]
@@ -909,6 +909,7 @@ class RadarHeteroData(InMemoryDataset):
             edge_attr = torch.zeros(0)
             n_ij = torch.zeros(0)
             face_lengths = torch.zeros(0)
+            radar_to_cell_edge_attr = torch.zeros(0)
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars
