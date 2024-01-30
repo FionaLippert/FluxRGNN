@@ -55,7 +55,7 @@ def run(cfg: DictConfig):
         print('------------------------------------------------------')
 
 
-    if 'eval' in cfg.task.name:
+    if 'eval' in cfg.task.task_name:
 
         testing(trainer, model, cfg)
 

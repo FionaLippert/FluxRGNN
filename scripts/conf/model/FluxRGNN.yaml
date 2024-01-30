@@ -15,7 +15,7 @@ rnn_type: LSTM
 max_t0: ${datasource.tidx_step}
 context: 24
 horizon: 48
-min_horizon: 1
+min_horizon: 2
 test_horizon: 72
 
 #epochs: 300
@@ -97,7 +97,7 @@ decoder:
   rnn_type: ${model.rnn_type}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
-  use_encoder: false #true #false
+  use_encoder: true #false
   dropout_p: ${model.dropout_p}
   #static_cell_features:
   #  coords: ${model.coord_dim}
@@ -173,7 +173,9 @@ source_sink_model:
 #  transforms: ${model.transforms}
 
 initial_model:
-  _target_: fluxrgnn.models.RadarToCellInterpolation
+  #_target_: fluxrgnn.models.RadarToCellInterpolation
+  _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+  k: 10
   radar_variables:
     x: 1
 #  dynamic_cell_features:

@@ -85,9 +85,9 @@ def run(cfg: DictConfig):
         model = eval(cfg.model._target_).load_from_checkpoint(model_path)
 
     
-    if 'train' in cfg.task.name:
+    if 'train' in cfg.task.task_name:
         training(trainer, model, cfg)
-    if 'eval' in cfg.task.name:
+    if 'eval' in cfg.task.task_name:
         # if hasattr(cfg, 'importance_sampling'):
         #     cfg.importance_sampling = False
 
@@ -103,7 +103,7 @@ def run(cfg: DictConfig):
         #     for y in training_years:
         #         cfg.datasource.test_year = y
         #         testing(trainer, model, cfg, output_dir, log, ext=f'_training_year_{y}')
-    if 'predict' in cfg.task.name:
+    if 'predict' in cfg.task.task_name:
         prediction(trainer, model, cfg)
 
     if isinstance(trainer.logger, WandbLogger):

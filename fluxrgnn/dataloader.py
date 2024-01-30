@@ -830,7 +830,7 @@ class RadarHeteroData(InMemoryDataset):
 
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index, torch.tensor(test_radars)))
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(test_radars)))
             radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
             radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
             radar_to_cell_dist = radar_to_cell_dist[mask]
@@ -909,6 +909,7 @@ class RadarHeteroData(InMemoryDataset):
             edge_attr = torch.zeros(0)
             n_ij = torch.zeros(0)
             face_lengths = torch.zeros(0)
+            radar_to_cell_edge_attr = torch.zeros(0)
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars
@@ -1199,6 +1200,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
+    print(preprocessed_dirname)
     if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
         res_info = f'res={cfg.datasource.h3_resolution}'
     else:
@@ -1207,10 +1209,12 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}_' \
-                        f'fold={cfg.task.cv_fold}/{cfg.task.n_cv_folds}'
+                        f'fold={cfg.task.n_cv_folds}-{cfg.task.cv_fold}'
     
     preprocessed_dirname += f'_{res_info}'
     #processed_dirname += res_info
+
+    print(processed_dirname)
     
     data_dir = osp.join(cfg.device.root, 'data')
 
@@ -1286,17 +1290,18 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_none'
-    cfg.model.edge_type = 'none'
-    cfg.datasource.n_dummy_radars = 0
+
+    model_cfg = dict(cfg.model)
+    model_cfg['edge_type'] = 'none'
     #if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
     #    res_info = f'_res={cfg.datasource.h3_resolution}'
     #else:
-    res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
+    res_info = f'_ndummy=0'
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}' \
-                        f'_fold={cfg.task.cv_fold}/{cfg.task.n_cv_folds}'
+                        f'_fold={cfg.task.cv_fold}-{cfg.task.n_cv_folds}'
     
     preprocessed_dirname += res_info
     processed_dirname += res_info
@@ -1316,7 +1321,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
 
 
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
-                      **cfg, **cfg.model, **cfg.task,
+                      **cfg, **model_cfg, **cfg.task,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,

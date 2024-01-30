@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --job-name=xgboost
-#SBATCH --time=1:00:00
+#SBATCH --time=5:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
