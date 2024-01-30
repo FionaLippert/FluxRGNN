@@ -778,7 +778,10 @@ class RadarToCellForecast(ForecastModel):
 
         super(RadarToCellForecast, self).__init__(**kwargs)
 
-        self.radar2cell = RadarToCellInterpolation(**kwargs)
+        if kwargs.get('k', None) is not None:
+            self.radar2cell = RadarToCellKNNInterpolation(**kwargs)
+        else:
+            self.radar2cell = RadarToCellInterpolation(**kwargs)
 
 
     def forecast_step(self, model_states, data, t, *args, **kwargs):
