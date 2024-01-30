@@ -86,7 +86,7 @@ class ForecastModel(pl.LightningModule):
             
             # make prediction for next time step
             model_states = self.forecast_step(model_states, data, t, teacher_forcing)
-            
+
             x = model_states['x']
 
             if self.config.get('force_zeros', False):
@@ -481,6 +481,8 @@ class FluxRGNN(ForecastModel):
         self.initial_model = initial_model
         #self.ground_model = ground_model
 
+        self.n_hidden = kwargs.get('n_hidden')
+
 
     def initialize(self, graph_data, t0=0):
 
@@ -491,19 +493,27 @@ class FluxRGNN(ForecastModel):
 
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            # rnn_states = self.encoder(graph_data, t0)
-            # self.decoder.initialize(rnn_states)
-            h_t, c_t = self.encoder(graph_data, t0)
+            rnn_states = self.encoder(graph_data, t0)
+            self.decoder.initialize(rnn_states)
+            #h_t, c_t = self.encoder(graph_data, t0)
+            #hidden = h_t[-1]
         else:
-            # self.decoder.initialize_zeros(cell_data.num_nodes, self.device)
-            h_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device)
-                   for _ in range(self.decoder.node_rnn.n_layers)]
-            c_t = [torch.zeros(cell_data.num_nodes, self.decoder.n_hidden, device=cell_data.coords.device)
-                   for _ in range(self.decoder.node_rnn.n_layers)]
+            self.decoder.initialize_zeros(cell_data.num_nodes, self.device)
+            #if self.decoder is not None:
+            #    h_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
+            #       for _ in range(self.decoder.node_rnn.n_layers)]
+            #    c_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
+            #       for _ in range(self.decoder.node_rnn.n_layers)]
+            #    hidden = h_t[-1]
+            #else:
+            #    hidden = torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
 
-        self.decoder.initialize(h_t, c_t)
+        
+        #if self.decoder is not None:
+        #    self.decoder.initialize(h_t, c_t)
 
-        hidden = h_t[-1] #self.decoder.get_hidden()
+        # hidden = h_t[-1] #self.decoder.get_hidden()
+        hidden = self.decoder.get_hidden()
 
         self.regularizers = []
 
@@ -569,7 +579,8 @@ class FluxRGNN(ForecastModel):
         #print(f'x after boundary model: {x.size()}')
 
         # update hidden states
-        hidden = self.decoder(x, cell_data, t, model_states['hidden']) #model_states['hidden_enc'])
+        #if self.decoder is not None:
+        hidden = self.decoder(x, cell_data, t, model_states['hidden_enc'])
 
         # predict movements
         if self.flux_model is not None:
@@ -1990,13 +2001,13 @@ class RecurrentDecoder(torch.nn.Module):
         else:
             self.node_rnn = NodeGRU(n_node_in, **kwargs)
 
-    # def initialize(self, states):
-    #
-    #     self.node_rnn.setup_states(states)
+    def initialize(self, states):
+    
+         self.node_rnn.setup_states(states)
 
-    def initialize(self, h_t, c_t):
+    #def initialize(self, h_t, c_t):
 
-        self.node_rnn.setup_states(h_t, c_t)
+    #    self.node_rnn.setup_states(h_t, c_t)
 
     def initialize_zeros(self, batch_size, device):
 
@@ -2028,12 +2039,12 @@ class RecurrentDecoder(torch.nn.Module):
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1)] + node_features + dynamic_features_t0, dim=1)
 
-        # rnn_states = self.node_rnn(inputs, hidden_enc)
-        # hidden = self.node_rnn.get_hidden()
+        rnn_states = self.node_rnn(inputs, hidden_enc)
+        hidden = self.node_rnn.get_hidden()
 
-        h_t, c_t = self.node_rnn(inputs, hidden_enc)
+        #h_t, c_t = self.node_rnn(inputs, hidden_enc)
 
-        hidden = h_t[-1]
+        #hidden = h_t[-1]
 
         return hidden
 
