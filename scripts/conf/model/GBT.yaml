@@ -16,7 +16,7 @@ xgboost:
   random_state: ${seed}
 
 observation_model:
-  _target_: fluxrgnn.model.ObservationModel
+  _target_: fluxrgnn.models.ObservationModel
   
 max_t0: ${datasource.tidx_step}
 test_horizon: 72
