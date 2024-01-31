@@ -812,10 +812,11 @@ class RadarHeteroData(InMemoryDataset):
             
             radar_to_cell_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
             radar_to_cell_weights = torch.ones(len(cells))
+            radar_to_cell_dist = torch.zeros(len(cells))
         else:
             cell_to_radar_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'cell_to_radar_edges.csv'))
             radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
-
+            
             cell_to_radar_edge_index = torch.tensor(cell_to_radar_edges[['cidx', 'ridx']].values, dtype=torch.long)
             cell_to_radar_edge_index = cell_to_radar_edge_index.t().contiguous()
             cell_to_radar_dist = torch.tensor(cell_to_radar_edges['distance'].values, dtype=torch.float)
