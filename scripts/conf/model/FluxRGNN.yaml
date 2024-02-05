@@ -8,7 +8,7 @@ n_edge_attr: 6
 n_env: ${len:${datasource.env_vars}}
 
 n_hidden: 64
-rnn_type: LSTM
+#rnn_type: LSTM
 #n_fc_layers: 2
 #n_lstm_layers: 1
 
@@ -17,6 +17,8 @@ context: 24
 horizon: 48
 min_horizon: 2
 test_horizon: 72
+
+store_fluxes: false
 
 #epochs: 300
 #batch_size: 4
@@ -94,13 +96,12 @@ observation_model:
 
 decoder:
   _target_: fluxrgnn.models.RecurrentDecoder
-  # rnn_type: ${model.rnn_type}
   node_rnn:
     _target_: fluxrgnn.models.NodeLSTM
     _partial_: true
-  n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
-  use_encoder: true #false
+  n_hidden: ${model.n_hidden}
+  use_encoder: false #true
   dropout_p: ${model.dropout_p}
   #static_cell_features:
   #  coords: ${model.coord_dim}
@@ -225,7 +226,8 @@ encoder:
     #dynamic_radar_features:
     #  x: 1
     #  bird_uv: 2
-    _target_: fluxrgnn.models.RadarToCellInterpolation
+    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+    k: 10
     radar_variables:
       x: 1
       bird_uv: 2

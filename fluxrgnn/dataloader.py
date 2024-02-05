@@ -921,6 +921,7 @@ class RadarHeteroData(InMemoryDataset):
             n_ij = torch.zeros(0)
             face_lengths = torch.zeros(0)
             radar_to_cell_edge_attr = torch.zeros(0)
+            edge_weights = torch.zeros(0)
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars

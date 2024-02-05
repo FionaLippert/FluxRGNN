@@ -33,8 +33,8 @@ dynamic_cell_features:
 
 use_log_transform: false
 log_offset: 0.1
-pow_exponent: 0.33333
-scale: 0.1 #0.001 #0.1
+pow_exponent: 1.0 #0.33333
+scale: 0.001 #0.1
 transforms:
   #- _target_: transforms.LogTransform
   #  feature: x
@@ -46,7 +46,7 @@ transforms:
     feature: x
     factor: ${model.scale}
 
-increase_horizon_rate: 0.0
+increase_horizon_rate: 0.1
 increase_horizon_start: 0
 #lr_decay: 300
 #lr_gamma: 1.0

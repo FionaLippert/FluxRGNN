@@ -256,6 +256,8 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
+    print(f'config store fluxes: {cfg.model.store_fluxes}')
+    model.store_fluxes = cfg.model.store_fluxes
     trainer.predict(model, test_loader)
 
     pred_path = osp.join(cfg.output_dir, 'prediction')

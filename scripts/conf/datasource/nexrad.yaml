@@ -28,7 +28,7 @@ env_vars:
   - solarpos_dt
 use_buffers: True
 buffer: 350000
-observation_range: 25000
+observation_range: 35000
 interpolation_range: 350000
 n_dummy_radars: 60
 h3_resolution: 3
