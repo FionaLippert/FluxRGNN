@@ -5,16 +5,27 @@ command:
   - ${interpreter}
   - ${program}
   - ${args_no_hyphens}
+  - seed=1234
   - model=FluxRGNN
   - trainer.max_epochs=400
   - dataloader.batch_size=64
-  - model.lr=3e-5
+  - task.store_test_results=false
 method: grid
 metric:
   name: test/observed/raw/RMSE
   goal: minimize
 parameters:
-  seed:
-    values: [0, 1, 2, 3, 4]
+#  seed:
+#    values: [0, 1, 2, 3, 4]
   model.n_hidden:
     values: [32, 64, 128]
+  model.lr:
+    values: [3e-4, 1e-4, 3e-5, 1e-5, 3e-6]
+  model.node_rnn._target_:
+    values:
+      - fluxrgnn.models.NodeLSTM
+      - fluxrgnn.models.NodeGRU
+  model.flux_model.n_fc_layers:
+    values: [1, 2]
+  model.source_sink_model.n_fc_layers:
+    values: [1, 2]

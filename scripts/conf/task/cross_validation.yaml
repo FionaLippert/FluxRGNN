@@ -1,5 +1,5 @@
 # @package task
-name: hp_search
-n_folds: 5
-slurm_job: scripts/run_hp_search_slurm.job
-local_job: scripts/run_hp_search_local.job
+name: cv
+n_cv_folds: 10
+cv_fold: 0
+

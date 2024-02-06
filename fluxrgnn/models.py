@@ -189,7 +189,7 @@ class ForecastModel(pl.LightningModule):
                 'test/predictions': [],
                 'test/cell_predictions': []
                 }
-        self.test_metrics = {}
+        # self.test_metrics = {}
 
 
     def test_step(self, batch, batch_idx):
