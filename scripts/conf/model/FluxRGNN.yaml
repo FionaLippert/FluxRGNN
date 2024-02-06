@@ -8,9 +8,6 @@ n_edge_attr: 6
 n_env: ${len:${datasource.env_vars}}
 
 n_hidden: 64
-#rnn_type: LSTM
-#n_fc_layers: 2
-#n_lstm_layers: 1
 
 max_t0: ${datasource.tidx_step}
 context: 24
@@ -20,8 +17,6 @@ test_horizon: 72
 
 store_fluxes: false
 
-#epochs: 300
-#batch_size: 4
 lr: 3e-5
 lr_schedulers:
         #- _target_: torch.optim.lr_scheduler.LinearLR
@@ -72,36 +67,37 @@ transforms:
     feature: x
     factor: ${model.scale}
 
-  #lr_decay: 300
-#lr_gamma: 1.0
-#early_stopping: true
-#stopping_criterion: 1e-6
-#avg_window: 50
 dropout_p: 0.0
 teacher_forcing: 0.0
-teacher_forcing_gamma: 1.0 #0.95
+teacher_forcing_gamma: 1.0
 increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
-force_zeros: false
+
+force_zeros: false #true
 root_transformed_loss: false
-#compute_fluxes: true
+weight_exponent: 0.75
 edge_type: hexagons # voronoi
 birds_per_km2: true
 
 regularizer_weight: 0.0
 
+activation:
+  _target_: torch.nn.ReLU #LeakyReLU
+
 observation_model:
   _target_: fluxrgnn.models.ObservationModel
 
+node_rnn:
+  _target_: fluxrgnn.models.NodeLSTM
+  _partial_: true
+
 decoder:
   _target_: fluxrgnn.models.RecurrentDecoder
-  node_rnn:
-    _target_: fluxrgnn.models.NodeGRU
-    _partial_: true
+  node_rnn: ${model.node_rnn}
   n_rnn_layers: 1
   n_hidden: ${model.n_hidden}
-  use_encoder: false #true
+  use_encoder: true
   dropout_p: ${model.dropout_p}
   #static_cell_features:
   #  coords: ${model.coord_dim}
@@ -122,8 +118,7 @@ flux_model:
   n_hidden: ${model.n_hidden}
   n_fc_layers: 2
   n_graph_layers: 0
-  activation:
-    _target_: torch.nn.ReLU
+  activation: ${model.activation}
   use_log_transform: ${model.use_log_transform}
   log_offset: ${model.log_offset}
   scale: ${model.scale}
@@ -143,8 +138,7 @@ source_sink_model:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1
-  activation:
-    _target_: torch.nn.ReLU # LeakyReLU
+  activation: ${model.activation}
   use_log_transform: ${model.use_log_transform}
   log_offset: ${model.log_offset}
   scale: ${model.scale}
@@ -209,10 +203,7 @@ initial_model:
   
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
-  # rnn_type: ${model.rnn_type}
-  node_rnn:
-    _target_: fluxrgnn.models.NodeGRU
-    _partial_: true
+  node_rnn: ${model.node_rnn}
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
