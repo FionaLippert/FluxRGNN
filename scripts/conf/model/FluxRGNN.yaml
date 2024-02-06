@@ -83,7 +83,7 @@ teacher_forcing_gamma: 1.0 #0.95
 increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
-force_zeros: true
+force_zeros: false
 root_transformed_loss: false
 #compute_fluxes: true
 edge_type: hexagons # voronoi
@@ -97,7 +97,7 @@ observation_model:
 decoder:
   _target_: fluxrgnn.models.RecurrentDecoder
   node_rnn:
-    _target_: fluxrgnn.models.NodeLSTM
+    _target_: fluxrgnn.models.NodeGRU
     _partial_: true
   n_rnn_layers: 1
   n_hidden: ${model.n_hidden}
@@ -113,8 +113,8 @@ decoder:
 flux_model:
   _target_: fluxrgnn.models.Fluxes
   #_target_: fluxrgnn.models.NumericalFluxes
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -137,8 +137,8 @@ source_sink_model:
   #model_inputs: []
     #x: 1
     #ground_states: 1
-  #static_cell_features:
-    #coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
@@ -211,7 +211,7 @@ encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
   # rnn_type: ${model.rnn_type}
   node_rnn:
-    _target_: fluxrgnn.models.NodeLSTM
+    _target_: fluxrgnn.models.NodeGRU
     _partial_: true
   context: ${model.context}
   n_hidden: ${model.n_hidden}

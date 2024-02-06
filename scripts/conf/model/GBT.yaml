@@ -26,8 +26,8 @@ use_acc_vars: false
 edge_type: hexagons
 birds_per_km2: true
 
-#static_cell_features:
-#  coords: ${model.coord_dim}
+static_cell_features:
+  coords: ${model.coord_dim}
 #  pos: ${model.coord_dim}
 dynamic_cell_features:
   env: ${model.n_env}

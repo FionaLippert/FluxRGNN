@@ -60,7 +60,7 @@ class ForecastModel(pl.LightningModule):
         # initialize forecast (including prediction for first time step)
         model_states = self.initialize(data, t0)
         forecast = [model_states['x']]
-
+        
         # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         # radar_data = data['radar']
 
@@ -274,7 +274,7 @@ class ForecastModel(pl.LightningModule):
         radar_data = batch['radar']
 
 
-        for t0 in [0]: #range(self.config.get('max_t0', 1)):
+        for t0 in range(self.config.get('max_t0', 1)):
         
             # make predictions for all cells
             cell_prediction = self.forecast(batch, self.horizon, t0=t0)
