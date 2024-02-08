@@ -73,6 +73,7 @@ teacher_forcing_gamma: 1.0
 increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
+
 force_zeros: false #true
 root_transformed_loss: false
 weight_exponent: 0.75
@@ -108,8 +109,8 @@ decoder:
 flux_model:
   _target_: fluxrgnn.models.Fluxes
   #_target_: fluxrgnn.models.NumericalFluxes
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features:
@@ -131,8 +132,8 @@ source_sink_model:
   #model_inputs: []
     #x: 1
     #ground_states: 1
-  #static_cell_features:
-    #coords: ${model.coord_dim}
+  static_cell_features:
+    coords: ${model.coord_dim}
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
@@ -202,7 +203,6 @@ initial_model:
   
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
-  # rnn_type: ${model.rnn_type}
   node_rnn: ${model.node_rnn}
   context: ${model.context}
   n_hidden: ${model.n_hidden}

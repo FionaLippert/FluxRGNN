@@ -60,7 +60,7 @@ class ForecastModel(pl.LightningModule):
         # initialize forecast (including prediction for first time step)
         model_states = self.initialize(data, t0)
         forecast = [model_states['x']]
-
+        
         # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         # radar_data = data['radar']
 

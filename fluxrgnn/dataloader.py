@@ -910,6 +910,10 @@ class RadarHeteroData(InMemoryDataset):
                                     np.sin(radars['lat'].to_numpy() * np.pi / 180.),
                                     np.cos(radars['lat'].to_numpy() * np.pi / 180.)], axis=1)
 
+        
+        lonlat_encoding = (lonlat_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)
+        lonlat_radar_encoding = (lonlat_radar_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)    
+
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         area_scale = cells['area_km2'].max() # [km^2]
         length_scale = np.sqrt(area_scale) # [km]
