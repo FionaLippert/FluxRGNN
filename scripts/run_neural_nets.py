@@ -71,7 +71,7 @@ def run(cfg: DictConfig):
     if (cfg.model.load_states_from is not None) and isinstance(trainer.logger, WandbLogger):
         # load model checkpoint
         # model_checkpoint has form 'user/project/model-runID:version' where version is vX, latest or best
-        artifact_dir = trainer.logger.download_artifact(cfg.model_checkpoint, artifact_type='model')
+        artifact_dir = trainer.logger.download_artifact(cfg.model.load_states_from, artifact_type='model')
         model_path = osp.join(artifact_dir, 'model.ckpt')
 
         model = eval(cfg.model._target_).load_from_checkpoint(model_path)

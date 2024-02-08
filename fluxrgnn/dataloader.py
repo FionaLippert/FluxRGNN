@@ -77,7 +77,19 @@ class Normalization:
             return self.measurement_df[key].dropna().max()
         else:
             return self.feature_df[key].dropna().max()
+    
+    def mean(self, key):
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().mean()
+        else:
+            return self.feature_df[key].dropna().mean()
 
+    def std(self, key):
+        if key in self.measurement_df:
+            return self.measurement_df[key].dropna().std()
+        else:
+            return self.feature_df[key].dropna().std()
+    
     def absmax(self, key):
         if key in self.measurement_df:
             return self.measurement_df[key].dropna().abs().max()
@@ -376,6 +388,8 @@ class RadarData(InMemoryDataset):
         # normalize dynamic features
         if self.normalization is not None:
             dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df, input_col)
+
+        print(dynamic_feature_df.describe())
 
         # normalize static features
         coord_cols = ['x', 'y']
@@ -892,6 +906,8 @@ class RadarHeteroData(InMemoryDataset):
             dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df)
             measurement_df = self.normalize_dynamic(measurement_df)
 
+        print(dynamic_feature_df[self.env_vars].describe())
+
         # normalize static features
         coord_cols = ['x', 'y']
         xy_scale = cells[coord_cols].abs().max().max()
@@ -911,9 +927,12 @@ class RadarHeteroData(InMemoryDataset):
                                     np.cos(radars['lat'].to_numpy() * np.pi / 180.)], axis=1)
 
         
-        lonlat_encoding = (lonlat_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)
-        lonlat_radar_encoding = (lonlat_radar_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)    
-
+        lonlat_encoding_old = (lonlat_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)
+        print(f'lonlat min = {lonlat_encoding_old.min(0)}, lonlat max = {lonlat_encoding_old.max(0)}')
+        lonlat_encoding = lonlat_encoding - lonlat_encoding.mean()
+        #lonlat_radar_encoding = (lonlat_radar_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)    
+        lonlat_radar_encoding = lonlat_radar_encoding - lonlat_radar_encoding.mean()
+        
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         area_scale = cells['area_km2'].max() # [km^2]
         length_scale = np.sqrt(area_scale) # [km]
@@ -1149,40 +1168,38 @@ class RadarHeteroData(InMemoryDataset):
 
         cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
                                                  'bird_speed', 'bird_direction',
-                                                 # 'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
-                                                 # 'tp', 'sshf', 'cc', 'q',
+                                                 'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
+                                                 'cc', 'sshf',
                                                  'radar', 'ID', 'night', 'boundary',
                                                  'dusk', 'dawn', 'datetime', 'missing'])
 
 
         # apply to u, v, u10, v10, bird_u, bird_v, t2m, t, sp, cc, q, sshf, tp, acc vars
+        #dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
+        #    lambda col: (col - self.normalization.mean(col.name)) / self.normalization.std(col.name), axis=0)
+        # rescale q, t2m, t, sp to [-1, 1] 
         dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
-            lambda col: (col - self.normalization.mean(col.name)) / self.normalization.std(col.name), axis=0)
+             lambda col: 2 * ((col - self.normalization.min(col.name)) /
+                         (self.normalization.max(col.name) - self.normalization.min(col.name))) - 1, axis=0)
 
-        # dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
-        #     lambda col: (col - self.normalization.min(col.name)) /
-        #                 (self.normalization.max(col.name) - self.normalization.min(col.name)), axis=0)
+        #if 'tp' in dynamic_feature_df:
+        #    dynamic_feature_df['tp'] = dynamic_feature_df['tp'] / self.normalization.max('tp')
+        
+        #
+        if 'sshf' in dynamic_feature_df:
+            dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
 
-        # if 'tp' in dynamic_feature_df:
-        #     dynamic_feature_df['tp'] = dynamic_feature_df['tp'] / self.normalization.max('tp')
-        #
-        # if 'q' in dynamic_feature_df:
-        #     dynamic_feature_df['q'] = dynamic_feature_df['q'] / self.normalization.max('q')
-        #
-        # if 'sshf' in dynamic_feature_df:
-        #     dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.std('sshf')
-
-        # if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
-        #     uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
-        #     dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
-        #
-        # if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
-        #     uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))
-        #     dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
-        #
-        # if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
-        #     uv_scale = max(self.normalization.absmax('u10'), self.normalization.absmax('v10'))
-        #     dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
+        if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
+            uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
+            dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
+        
+        if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
+            uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))
+            dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
+        
+        if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
+            uv_scale = max(self.normalization.absmax('u10'), self.normalization.absmax('v10'))
+            dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
 
         if 'dayofyear' in dynamic_feature_df:
             dynamic_feature_df['dayofyear'] /= self.normalization.max('dayofyear')  # always use 365?
