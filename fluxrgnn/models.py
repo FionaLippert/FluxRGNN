@@ -514,6 +514,7 @@ class FluxRGNN(ForecastModel):
         # relevant info for later
         if not self.training and self.store_fluxes:
             self.edge_fluxes = []#torch.zeros((cell_edges.edge_index.size(1), 1, self.horizon), device=cell_data.coords.device)
+            self.node_velocity = []  # torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
             self.node_flux = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
             self.node_sink = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
             self.node_source = []#torch.zeros((cell_data.num_nodes, 1, self.horizon), device=cell_data.coords.device)
@@ -582,6 +583,8 @@ class FluxRGNN(ForecastModel):
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes)
                 self.node_flux.append(self.flux_model.node_flux)
+                if hasattr(self.flux_model, 'node_velocity'):
+                    self.node_velocity.append(self.flux_model.node_velocity)
         else:
             net_flux = 0
 
@@ -640,24 +643,31 @@ class FluxRGNN(ForecastModel):
 
         print('store fluxes?')
         if self.store_fluxes:
-            
-            if 'node_source' not in self.predict_results:
-                self.predict_results['node_source'] = []
-            if 'node_sink' not in self.predict_results:
-                self.predict_results['node_sink'] = []
-            if 'node_flux' not in self.predict_results:
-                self.predict_results['node_flux'] = []
-            if 'edge_flux' not in self.predict_results:
-                self.predict_results['edge_flux'] = []
-        
-            self.predict_results['node_source'].append(torch.cat(self.node_source, dim=-1))
-            self.predict_results['node_sink'].append(torch.cat(self.node_sink, dim=-1))
-            self.predict_results['node_flux'].append(torch.cat(self.node_flux, dim=-1))
-            self.predict_results['edge_flux'].append(torch.cat(self.edge_fluxes, dim=-1))
 
-            print('yes')
-        else:
-            print('no')
+            if len(self.node_source) > 0:
+                if 'node_source' not in self.predict_results:
+                    self.predict_results['node_source'] = []
+                self.predict_results['node_source'].append(torch.cat(self.node_source, dim=-1))
+
+            if len(self.node_sink) > 0:
+                if 'node_sink' not in self.predict_results:
+                    self.predict_results['node_sink'] = []
+                self.predict_results['node_sink'].append(torch.cat(self.node_sink, dim=-1))
+
+            if len(self.node_flux) > 0:
+                if 'node_flux' not in self.predict_results:
+                    self.predict_results['node_flux'] = []
+                self.predict_results['node_flux'].append(torch.cat(self.node_flux, dim=-1))
+
+            if len(self.node_flux) > 0:
+                if 'node_velocity' not in self.predict_results:
+                    self.predict_results['node_velocity'] = []
+                self.predict_results['node_velocity'].append(torch.cat(self.node_velocity, dim=-1))
+
+            if len(self.edge_fluxes) > 0:
+                if 'edge_flux' not in self.predict_results:
+                    self.predict_results['edge_flux'] = []
+                self.predict_results['edge_flux'].append(torch.cat(self.edge_fluxes, dim=-1))
 
 
     #def on_predict_start(self):
@@ -1056,7 +1066,7 @@ class Fluxes(MessagePassing):
         return raw
 
 
-    def forward(self, x, hidden, graph_data, t):
+    def forward(self, x, hidden, cell_data, t):
         """
         Predict fluxes for one time step.
 
@@ -1069,28 +1079,28 @@ class Fluxes(MessagePassing):
         # propagate hidden states through graph to combine spatial information
         hidden_sp = hidden
         for layer in self.graph_layers:
-            hidden_sp = layer([graph_data.edge_index, hidden_sp])
+            hidden_sp = layer([cell_data.edge_index, hidden_sp])
 
         # static graph features
-        edge_features = torch.cat([graph_data.get(feature).reshape(graph_data.edge_index.size(1), -1) for
+        edge_features = torch.cat([cell_data.get(feature).reshape(cell_data.edge_index.size(1), -1) for
                                    feature in self.edge_features], dim=1)
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = torch.cat([tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+        dynamic_features_t0 = torch.cat([tidx_select(cell_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features], dim=1)
-        dynamic_features_t1 = torch.cat([tidx_select(graph_data.get(feature), t-1).reshape(x.size(0), -1) for
+        dynamic_features_t1 = torch.cat([tidx_select(cell_data.get(feature), t-1).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features], dim=1)
 
         # message passing through graph
-        net_flux = self.propagate(graph_data.edge_index,
-                                          reverse_edges=graph_data.reverse_edges,
+        net_flux = self.propagate(cell_data.edge_index,
+                                          reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
                                           hidden_sp=hidden_sp,
                                           edge_features=edge_features,
                                           dynamic_features_t0=dynamic_features_t0,
                                           dynamic_features_t1=dynamic_features_t1,
-                                          areas=graph_data.areas)
+                                          areas=cell_data.areas)
 
         if not self.training:
             if self.use_log_transform:
@@ -1218,7 +1228,7 @@ class NumericalFluxes(MessagePassing):
         return raw
 
 
-    def forward(self, x, hidden, graph_data, t):
+    def forward(self, x, hidden, cell_data, t):
         """
         Predict velocities and compute fluxes for one time step.
 
@@ -1233,40 +1243,42 @@ class NumericalFluxes(MessagePassing):
         # propagate hidden states through graph to combine spatial information
         hidden_sp = hidden
         for layer in self.graph_layers:
-            hidden_sp = layer([graph_data.edge_index, hidden_sp])
+            hidden_sp = layer([cell_data.edge_index, hidden_sp])
 
         # static graph features
-        node_features = [graph_data.get(feature).reshape(x.size(0), -1) for
+        node_features = [cell_data.get(feature).reshape(x.size(0), -1) for
                                    feature in self.static_cell_features]
 
         # dynamic features for current and previous time step
-        dynamic_features_t0 = [tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
+        dynamic_features_t0 = [tidx_select(cell_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features]
-
-        wind = tidx_select(graph_data.get('wind'), t).reshape(x.size(0), -1)
 
         inputs = node_features + dynamic_features_t0 + [hidden_sp]
         inputs = torch.cat(inputs, dim=1)
 
         velocities = self.velocity_mlp(inputs)
 
+        if self.use_wind:
+            wind = tidx_select(cell_data.get('wind'), t).reshape(x.size(0), -1)
+            velocities = velocities + wind
+
         # message passing through graph
-        net_flux = self.propagate(graph_data.edge_index,
-                                          reverse_edges=graph_data.reverse_edges,
+        net_flux = self.propagate(cell_data.edge_index,
+                                          reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
                                           hidden_sp=hidden_sp,
                                           node_features=node_features,
                                           dynamic_features_t0=dynamic_features_t0,
                                           velocities=velocities,
-                                          wind=wind,
-                                          areas=graph_data.areas,
-                                          face_length=graph_data.edge_face_lengths,
-                                          edge_normals=graph_data.edge_normals)
+                                          areas=cell_data.areas,
+                                          face_length=cell_data.edge_face_lengths,
+                                          edge_normals=cell_data.edge_normals)
 
         if not self.training:
             raw_net_flux = self.transformed2raw(net_flux)
             self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+            self.node_velocity = velocities * cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
 
         return net_flux
 
@@ -1276,11 +1288,6 @@ class NumericalFluxes(MessagePassing):
         """
         Construct message from node j to node i (for all edges in parallel)
         """
-
-        if self.use_wind:
-            # add wind on top of predicted velocities to get ground speed
-            velocities_i = velocities_i + wind_i
-            velocities_j = velocities_j + wind_j
 
         # compute upwind fluxes from cell j to cell i
         print(f'min velocity: {velocities_j.min()}, max velocity: {velocities_j.max()}')

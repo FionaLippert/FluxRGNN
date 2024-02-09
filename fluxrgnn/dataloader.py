@@ -1035,7 +1035,6 @@ class RadarHeteroData(InMemoryDataset):
                 data['wind'].append(wind)
 
 
-
         # process radar measurements
         radar_ids = measurement_df.ID.unique()
         for rid, group_df in measurement_df.groupby('ID'):
@@ -1048,6 +1047,8 @@ class RadarHeteroData(InMemoryDataset):
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
             print(k, data[k].shape)
+
+        print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
 
 
         if self.timesteps == 'all':
@@ -1141,7 +1142,8 @@ class RadarHeteroData(InMemoryDataset):
                 # dynamic cell features
                 # 'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
                 'local_night': torch.tensor(data['cell_nighttime'][..., idx], dtype=torch.bool),
-                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
+                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long),
+                'length_scale': torch.tensor(length_scale)
             }
 
             for var in self.env_vars:
