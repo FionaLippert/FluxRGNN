@@ -30,6 +30,7 @@ def run(cfg: DictConfig):
         print(f'process dynamic features? {cfg.process_dynamic}')
         datasets.prepare_features(target_dir, raw_data_root, str(year), cfg.datasource.name,
                              random_seed=cfg.seed, edge_type=cfg.model.edge_type,
+                             landcover_data=osp.join(target_dir, 'land_cover_hist.csv')
                              **cfg.datasource, **cfg)
 
 if __name__ == "__main__":
