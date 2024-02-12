@@ -1300,7 +1300,7 @@ class NumericalFluxes(MessagePassing):
         if not self.training:
             raw_net_flux = self.transformed2raw(net_flux)
             self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
-            self.node_velocity = velocities * cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
+            self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
 
         return net_flux
 
