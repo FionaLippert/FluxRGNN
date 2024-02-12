@@ -584,6 +584,11 @@ class FluxRGNN(ForecastModel):
 
             #print(f'avg net flux = {net_flux.mean()}')
 
+            if self.training and hasattr(self.flux_model, 'node_velocity'):
+                uv_hat = self.flux_model.node_velocity
+                uv_gt = tidx_select(data['radar'].bird_uv, t)
+                self.regularizers.append(uv_hat - uv_gt)
+
             if not self.training and self.store_fluxes:
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes.detach())
@@ -608,20 +613,20 @@ class FluxRGNN(ForecastModel):
                     self.node_source.append(delta.detach())
                     self.node_sink.append(-delta.detach())
             #elif ground_states is None:
-            if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-                #reg = self.source_sink_model.node_source * torch.logical_not(torch.logical_and(tidx_select(cell_data.local_night, t), torch.logical_not(tidx_select(cell_data.local_night, t-1))))
-                #self.regularizers.append(reg)
-                
-                self.regularizers.append(self.source_sink_model.node_source +
-                                             self.source_sink_model.node_sink)
-
-                #mask = torch.logical_not(torch.logical_or(tidx_select(cell_data.dusk, t),
-                #                                          tidx_select(cell_data.dawn, t)))
-
-                #self.regularizers.append(mask * (self.source_sink_model.node_source +
-                #                                 self.source_sink_model.node_sink))
-            else:
-                self.regularizers.append(delta)
+            # if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+            #     #reg = self.source_sink_model.node_source * torch.logical_not(torch.logical_and(tidx_select(cell_data.local_night, t), torch.logical_not(tidx_select(cell_data.local_night, t-1))))
+            #     #self.regularizers.append(reg)
+            #
+            #     self.regularizers.append(self.source_sink_model.node_source +
+            #                                  self.source_sink_model.node_sink)
+            #
+            #     #mask = torch.logical_not(torch.logical_or(tidx_select(cell_data.dusk, t),
+            #     #                                          tidx_select(cell_data.dawn, t)))
+            #
+            #     #self.regularizers.append(mask * (self.source_sink_model.node_source +
+            #     #                                 self.source_sink_model.node_sink))
+            # else:
+            #     self.regularizers.append(delta)
         else:
             delta = 0
 
