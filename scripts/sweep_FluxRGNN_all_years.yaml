@@ -1,0 +1,26 @@
+program: run_neural_nets.py
+name: sweep_FluxRGNN
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - seed=1234
+  - model=FluxRGNN
+  - trainer.max_epochs=400
+  - dataloader.batch_size=64
+  - task.store_test_results=true
+  - model.n_hidden=64
+  - model.lr=3e-5
+method: grid
+metric:
+  name: test/observed/raw/RMSE
+  goal: minimize
+parameters:
+  test_year:
+    values:
+      - 2015
+      - 2016
+      - 2017
+      - 2018
+      - 2019

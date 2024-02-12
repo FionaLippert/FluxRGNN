@@ -911,6 +911,10 @@ class RadarHeteroData(InMemoryDataset):
         print(f'target col = {target_col}')
 
         # normalize dynamic features
+        if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
+            # keep original wind velocities
+            dynamic_feature_df['wind_u'] = dynamic_feature_df['u']
+            dynamic_feature_df['wind_v'] = dynamic_feature_df['v']
         if self.normalization is not None:
             dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df)
             measurement_df = self.normalize_dynamic(measurement_df)
@@ -941,10 +945,22 @@ class RadarHeteroData(InMemoryDataset):
         lonlat_encoding = lonlat_encoding - lonlat_encoding.mean()
         #lonlat_radar_encoding = (lonlat_radar_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)    
         lonlat_radar_encoding = lonlat_radar_encoding - lonlat_radar_encoding.mean()
+
+        # land cover
+        # if 'nlcd_maj_c' in cells.columns:
+        #     land_cover = torch.tensor(cells.nlcd_maj_c.values, dtype=torch.float)
+        #     land_cover = torch.nn.functional.one_hot(land_cover) # binary tensor of shape [cells, classes]
+        if 'nlcd_hist' in cells.columns:
+            land_cover = torch.tensor(np.stack(cells.nlcd_hist.values), dtype=torch.float) # shape [cells, classes]
+        else:
+            land_cover = torch.zeros(0)
         
         areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
         area_scale = cells['area_km2'].max() # [km^2]
         length_scale = np.sqrt(area_scale) # [km]
+        length_scale = length_scale * 1e3 # [0.001 km]
+
+        time_scale = pd.Timedelta(self.t_unit).total_seconds() # number of seconds per time step
 
         if self.edge_type == 'none':
             print('No graph structure used')
@@ -958,7 +974,7 @@ class RadarHeteroData(InMemoryDataset):
             print('Use tessellation')
             # get distances, angles and face lengths between radars
             # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
-            distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
+            distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / length_scale
 
             edge_weights = rescale(1. / distances**2, min=0)
 
@@ -972,7 +988,7 @@ class RadarHeteroData(InMemoryDataset):
             n_ij = np.stack([delta_x, delta_y], axis=1)
             n_ij = n_ij / np.linalg.norm(n_ij, ord=2, axis=1).reshape(-1, 1) # normalize to unit vectors
 
-            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
+            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / length_scale
             print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
             print(f'max distance: {distances.max()}, min distance: {distances.min()}')
             print(f'max area: {areas.max()}, min area: {areas.min()}')
@@ -1006,24 +1022,48 @@ class RadarHeteroData(InMemoryDataset):
 
         data = {'env': [], 'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
 
+        for var in self.env_vars:
+            data[var] = []
+
+        if 'wind_u' in dynamic_feature_df and 'wind_v' in dynamic_feature_df:
+            data['wind'] = []
+
         # process dynamic cell features
         for cid, group_df in dynamic_feature_df.groupby('ID'):
             df = group_df.sort_values(by='datetime').reset_index(drop=True)
-            data['env'].append(df[self.env_vars].to_numpy().T)
+            # data['env'].append(df[self.env_vars].to_numpy().T)
             data['cell_nighttime'].append(df.night.to_numpy())
+
+            for var in self.env_vars:
+                data[var].append(df[var].to_numpy())
+
+            if 'wind' in data:
+                wind = df[['wind_u', 'wind_v']].to_numpy().T # in m/s
+                wind = wind * time_scale / 1e3 # in km/[t_unit]
+                wind = wind / length_scale # in [length_scale]/[t_unit]
+                data['wind'].append(wind)
+
 
         # process radar measurements
         radar_ids = measurement_df.ID.unique()
         for rid, group_df in measurement_df.groupby('ID'):
             group_df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data[target_col].append(group_df[target_col].to_numpy())
-            data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
+            # data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
             data['missing'].append(group_df['missing'].to_numpy())
             data['radar_nighttime'].append(group_df.night.to_numpy())
+
+            bird_uv = df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
+            bird_uv = bird_uv * time_scale / 1e3  # in km/[t_unit]
+            bird_uv = bird_uv / length_scale  # in [length_scale]/[t_unit]
+            data['bird_uv'].append(bird_uv)
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
             print(k, data[k].shape)
+
+        print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
+        print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
 
 
         if self.timesteps == 'all':
@@ -1112,12 +1152,20 @@ class RadarHeteroData(InMemoryDataset):
                 'areas': torch.tensor(areas, dtype=torch.float),
                 'boundary': torch.tensor(boundary, dtype=torch.bool),
                 'cidx': torch.arange(len(cells), dtype=torch.long),
+                'land_cover': land_cover,
 
                 # dynamic cell features
-                'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
+                # 'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
                 'local_night': torch.tensor(data['cell_nighttime'][..., idx], dtype=torch.bool),
-                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
+                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long),
+                'length_scale': torch.tensor(length_scale)
             }
+
+            for var in self.env_vars:
+                cell_data[var] = torch.tensor(data[var][..., idx], dtype=torch.float)
+
+            if 'wind' in data:
+                cell_data['wind'] = torch.tensor(data['wind'][..., idx], dtype=torch.float)
 
             if self.edge_type in ['voronoi', 'none']:
                 cell_data['x'] = torch.tensor(data[target_col][..., idx], dtype=torch.float)
@@ -1161,7 +1209,9 @@ class RadarHeteroData(InMemoryDataset):
                 'env_vars': self.env_vars,
                 'timepoints': time,
                 'tidx': tidx,
-                'n_seq_discarded': n_seq_discarded
+                'n_seq_discarded': n_seq_discarded,
+                'length_scale': length_scale,
+                'time_scale': time_scale
         }
 
         with open(osp.join(self.processed_dir, self.info_file_name), 'wb') as f:
@@ -1176,7 +1226,7 @@ class RadarHeteroData(InMemoryDataset):
         """Normalize dynamic features to range between 0 and 1."""
 
         cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
-                                                 'bird_speed', 'bird_direction',
+                                                 'bird_speed', 'bird_direction', 'wind_u', 'wind_v',
                                                  'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
                                                  'cc', 'sshf',
                                                  'radar', 'ID', 'night', 'boundary',
@@ -1198,9 +1248,9 @@ class RadarHeteroData(InMemoryDataset):
         if 'sshf' in dynamic_feature_df:
             dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
 
-        if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
-            uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
-            dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
+        # if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
+        #     uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
+        #     dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
         
         if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
             uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))

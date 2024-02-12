@@ -5,7 +5,26 @@ name: FluxRGNN
 
 coord_dim: 4
 n_edge_attr: 6
-n_env: ${len:${datasource.env_vars}}
+#n_env: ${len:${datasource.env_vars}}
+
+env_vars:
+  u: 1
+  v: 1
+  u10: 1
+  v10: 1
+  cc: 1
+  tp: 1
+  sp: 1
+  t2m: 1
+  t: 1
+  q: 1
+  sshf: 1
+  night: 1
+  dusk: 1
+  dawn: 1
+  dayofyear: 1
+  solarpos: 1
+  solarpos_dt: 1
 
 n_hidden: 64
 
@@ -107,8 +126,8 @@ decoder:
   #  coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
-  dynamic_cell_features:
-    env: ${model.n_env}
+  dynamic_cell_features: ${model.env_vars}
+  #  env: ${model.n_env}
 
 flux_model:
   _target_: fluxrgnn.models.Fluxes
@@ -117,8 +136,8 @@ flux_model:
     coords: ${model.coord_dim}
   edge_features:
     edge_attr: ${model.n_edge_attr}
-  dynamic_cell_features:
-    env: ${model.n_env}
+  dynamic_cell_features: ${model.env_vars}
+  #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1
   n_graph_layers: 0
@@ -138,8 +157,8 @@ source_sink_model:
     #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
-  dynamic_cell_features:
-    env: ${model.n_env}
+  dynamic_cell_features: ${model.env_vars}
+  #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1 
   activation: ${model.activation}
@@ -214,8 +233,8 @@ encoder:
   dropout_p: ${model.dropout_p}
   #static_cell_features:
   #    coords: ${model.coord_dim}
-  dynamic_cell_features:
-    env: ${model.n_env}
+  dynamic_cell_features: ${model.env_vars}
+  #  env: ${model.n_env}
   radar2cell_model:
     #_target_: fluxrgnn.models.RadarToCellGNN
     #dynamic_radar_features:
