@@ -1040,15 +1040,21 @@ class RadarHeteroData(InMemoryDataset):
         for rid, group_df in measurement_df.groupby('ID'):
             group_df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data[target_col].append(group_df[target_col].to_numpy())
-            data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
+            # data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
             data['missing'].append(group_df['missing'].to_numpy())
             data['radar_nighttime'].append(group_df.night.to_numpy())
+
+            bird_uv = df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
+            bird_uv = bird_uv * time_scale / 1e3  # in km/[t_unit]
+            bird_uv = bird_uv / length_scale  # in [length_scale]/[t_unit]
+            data['bird_uv'].append(bird_uv)
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
             print(k, data[k].shape)
 
         print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
+        print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
 
 
         if self.timesteps == 'all':
@@ -1233,9 +1239,9 @@ class RadarHeteroData(InMemoryDataset):
         if 'sshf' in dynamic_feature_df:
             dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
 
-        if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
-            uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
-            dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
+        # if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
+        #     uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
+        #     dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
         
         if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
             uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))

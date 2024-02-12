@@ -604,8 +604,14 @@ class FluxRGNN(ForecastModel):
                     self.node_sink.append(-delta)
             #elif ground_states is None:
             if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-                self.regularizers.append(self.source_sink_model.node_source +
-                                             self.source_sink_model.node_sink)
+                # self.regularizers.append(self.source_sink_model.node_source +
+                #                              self.source_sink_model.node_sink)
+
+                mask = torch.logical_not(torch.logical_or(tidx_select(cell_data.dusk, t),
+                                                          tidx_select(cell_data.dawn, t)))
+
+                self.regularizers.append(mask * (self.source_sink_model.node_source +
+                                                 self.source_sink_model.node_sink))
             else:
                 self.regularizers.append(delta)
         else:
@@ -1190,10 +1196,18 @@ class NumericalFluxes(MessagePassing):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) + kwargs.get('n_hidden')
+        self.use_hidden = kwargs.get('use_hidden', True)
+
+        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values())
 
         # setup model components
-        self.velocity_mlp = MLP(n_node_in, 2, **kwargs)
+        self.input2hidden = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
+
+        if self.use_hidden:
+            mlp_in = 2 * kwargs.get('n_hidden')
+        else:
+            mlp_in = kwargs.get('n_hidden')
+        self.velocity_mlp = MLP(mlp_in, 2, **kwargs)
 
         n_graph_layers = kwargs.get('n_graph_layers', 0)
         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
@@ -1203,6 +1217,11 @@ class NumericalFluxes(MessagePassing):
 
         self.transforms = kwargs.get('transforms', [])
         self.zero_value = self.apply_forward_transforms(torch.tensor(0))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init_weights(self.input2hidden)
 
     def apply_backward_transforms(self, values: torch.Tensor):
 
@@ -1253,8 +1272,11 @@ class NumericalFluxes(MessagePassing):
         dynamic_features_t0 = [tidx_select(cell_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features]
 
-        inputs = node_features + dynamic_features_t0 + [hidden_sp]
+        inputs = node_features + dynamic_features_t0 #+ [hidden_sp]
         inputs = torch.cat(inputs, dim=1)
+
+        inputs = self.input2hidden(inputs)
+        inputs = torch.cat([inputs, hidden_sp])
 
         velocities = self.velocity_mlp(inputs)
 
@@ -1331,15 +1353,18 @@ class SourceSink(torch.nn.Module):
                     sum(self.dynamic_cell_features.values()) + \
                     sum(self.model_inputs.values())
 
-        if self.use_hidden:
-            n_node_in += kwargs.get('n_hidden')
-
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
         #self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
-        # self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
-        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+        self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
+
+        if self.use_hidden:
+            mlp_in = 2 * kwargs.get('n_hidden')
+        else:
+            mlp_in = kwargs.get('n_hidden')
+        self.source_sink_mlp = MLP(mlp_in, 2, **kwargs)
+
         # self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
         # self.source_sink_mlp = MLP(kwargs.get('n_hidden'), 2, **kwargs)
 
@@ -1400,13 +1425,12 @@ class SourceSink(torch.nn.Module):
             inputs.append(x.view(-1, 1))
         if 'ground_states' in self.model_inputs:
             inputs.append(ground_states.view(-1, 1))
-        if self.use_hidden:
-            inputs.append(hidden)
-
-        # inputs = torch.cat(inputs, dim=1)
-        # inputs = self.input_embedding(inputs)
 
         inputs = torch.cat(inputs, dim=1)
+        inputs = self.input_embedding(inputs)
+
+        if self.use_hidden:
+            inputs = torch.cat([inputs, hidden], dim=1)
 
         # hidden = self.node_lstm(inputs)
         #source, frac_sink = self.source_sink_mlp(hidden, inputs)
@@ -2364,16 +2388,18 @@ class EdgeFluxMLP(torch.nn.Module):
 
         self.use_hidden = kwargs.get('use_hidden', True)
 
-        if self.use_hidden:
-            n_in += self.n_hidden
 
         # TODO: check if this works better or worse than with input2hidden
-        # self.input2hidden = torch.nn.Linear(n_in, self.n_hidden, bias=False)
+        self.input2hidden = torch.nn.Linear(n_in, self.n_hidden, bias=False)
         
         #self.hidden2output = torch.nn.Linear(self.n_hidden, 1)
 
-        # self.edge_mlp = MLP(self.n_hidden * 2, 1, **kwargs)
-        self.edge_mlp = MLP(n_in, 1, **kwargs)
+        if self.use_hidden:
+            mlp_in = 2 * self.n_hidden
+        else:
+            mlp_in = self.n_hidden
+        self.edge_mlp = MLP(mlp_in, 1, **kwargs)
+        #self.edge_mlp = MLP(n_in, 1, **kwargs)
 
         self.reset_parameters()
 
@@ -2385,7 +2411,7 @@ class EdgeFluxMLP(torch.nn.Module):
         #self.edge_mlp.apply(init_weights)
 
     def forward(self, inputs, hidden_j):
-        # inputs = self.input2hidden(inputs)
+        inputs = self.input2hidden(inputs)
         if self.use_hidden:
             inputs = torch.cat([inputs, hidden_j], dim=1)
 
