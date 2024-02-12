@@ -57,7 +57,7 @@ context: 24
 test_horizon: 72
 test_context: 24
 
-force_zeros: true
+force_zeros: false
 #use_acc_vars: false
 #root_transformed_loss: false
 #batch_size: 64
@@ -74,3 +74,5 @@ birds_per_km2: true
 
 observation_model:
     _target_: fluxrgnn.models.ObservationModel
+
+load_states_from: null

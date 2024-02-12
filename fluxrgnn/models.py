@@ -52,14 +52,15 @@ class ForecastModel(pl.LightningModule):
         :return: predicted migration intensities for all cells and time points
         """
 
+        
         # make sure t0 is tensor of dimension 2
         if not isinstance(t0, torch.Tensor):
             t0 = torch.tensor(t0, device=self.device)
         t0 = t0.view(-1, 1)
 
         # initialize forecast (including prediction for first time step)
-        model_states = self.initialize(data, t0)
-        forecast = [model_states['x']]
+        x = self.initialize(data, t0)
+        forecast = [x]
 
         
         # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
@@ -81,23 +82,21 @@ class ForecastModel(pl.LightningModule):
                 #model_states['x'] = data.x[..., t - 1].view(-1, 1)
                 radars_to_cells = data['radar', 'cell']
                 interpolated = self.observation_model(data['radar'].x, radars_to_cells)
-                model_states['x'] = tidx_select(interpolated, t - 1).view(-1, 1)
+                x = tidx_select(interpolated, t - 1).view(-1, 1)
             #else:
             #    print('no ground truth data available to use for teacher forcing')
             
             
             # make prediction for next time step
-            model_states = self.forecast_step(model_states, data, t, teacher_forcing)
-
-            x = model_states['x']
+            x = self.forecast_step(x, data, t, teacher_forcing)
 
             if self.config.get('force_zeros', False):
                 local_night = tidx_select(data['cell'].local_night, t)
-                model_states['x'] = model_states['x'] * local_night
-                model_states['x'] = model_states['x'] + self.zero_value.to(model_states['x'].device) * \
+                x = x * local_night
+                x = x + self.zero_value.to(x.device) * \
                                     torch.logical_not(local_night)
 
-            forecast.append(model_states['x'])
+            forecast.append(x)
 
         forecast = torch.cat(forecast, dim=-1)
 
@@ -106,22 +105,21 @@ class ForecastModel(pl.LightningModule):
 
     def initialize(self, data, t0=0):
 
-        model_states = {}
-
         # make prediction for first time step
         # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
-        model_states = self.forecast_step(model_states, data, t0 + self.t_context)
+        x = self.forecast_step(None, data, t0 + self.t_context)
 
-        return model_states
+        return x
 
 
-    def forecast_step(self, model_states, data, t, teacher_forcing=0):
+    def forecast_step(self, x, data, t, teacher_forcing=0):
 
         raise NotImplementedError
 
 
     def training_step(self, batch, batch_idx):
 
+        print(torch.cuda.memory_allocated(), torch.cuda.max_memory_allocated())
 
         # get teacher forcing probability for current epoch
         tf = self.tf_start * pow(self.config.get('teacher_forcing_gamma', 1), 
@@ -152,6 +150,10 @@ class ForecastModel(pl.LightningModule):
                                     radar_mask=batch['radar'].train_mask, prefix='train', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
+        del prediction
+
+        torch.cuda.empty_cache()
+
         return loss
 
 
@@ -171,6 +173,8 @@ class ForecastModel(pl.LightningModule):
         _, eval_dict = self._eval_step(batch['radar'], prediction, self.horizon,
                                     radar_mask=batch['radar'].train_mask, prefix='val', t0=t0)
         self.log_dict(eval_dict, batch_size=batch.num_graphs)
+
+        del prediction
 
 
     def on_test_epoch_start(self):
@@ -286,8 +290,8 @@ class ForecastModel(pl.LightningModule):
             self.predict_results['predict/tidx'].append(batch['cell'].tidx[t0: t0 + self.t_context + self.horizon])
             self.predict_results['predict/train_mask'].append(batch['radar'].train_mask)
 
-            self.predict_results['predict/env'].append(cell_data.env[:, :, t0: t0 + self.t_context + self.horizon])
-            self.predict_results['predict/coords'].append(cell_data.coords)
+            self.predict_results['predict/env'].append(batch['cell'].env[:, :, t0: t0 + self.t_context + self.horizon])
+            self.predict_results['predict/coords'].append(batch['cell'].coords)
 
             self.add_additional_predict_results()
 
@@ -338,7 +342,7 @@ class ForecastModel(pl.LightningModule):
         return pow
 
     def _regularizer(self):
-        return 0
+        return torch.zeros(1, device=self.device)
 
     def _eval_step(self, radar_data, output, horizon, radar_mask=None, prefix='', aggregate_time=True, t0=0):
 
@@ -364,7 +368,7 @@ class ForecastModel(pl.LightningModule):
 
         if local_mask.sum() == 0:
             # no valid data points
-            return {}
+            return 0, {}
         else:
             # proceed with evaluation
             if aggregate_time:
@@ -380,12 +384,12 @@ class ForecastModel(pl.LightningModule):
         
             if self.training:
                 loss = loss + self.config.get('regularizer_weight', 1.0) * self._regularizer()
-                eval_dict = {f'{prefix}/loss': loss.detach().item(),
-                         f'{prefix}/log-loss': torch.log(loss).detach().item(),
-                         f'{prefix}/regularizer': self._regularizer().detach().item()}
+                eval_dict = {f'{prefix}/loss': loss.detach(),
+                         f'{prefix}/log-loss': torch.log(loss).detach(),
+                         f'{prefix}/regularizer': self._regularizer().detach()}
             else:
-                eval_dict = {f'{prefix}/loss': loss.detach().item(),
-                         f'{prefix}/log-loss': torch.log(loss).detach().item()}
+                eval_dict = {f'{prefix}/loss': loss.detach(),
+                         f'{prefix}/log-loss': torch.log(loss).detach()}
 
             if not self.training:
                 raw_gt = self.transformed2raw(gt)
@@ -407,27 +411,27 @@ class ForecastModel(pl.LightningModule):
     def _add_eval_metrics(self, eval_dict, gt, output, mask, prefix=''):
 
         # root mean squared error
-        rmse = torch.sqrt(utils.MSE(output, gt, mask)).detach().item()
+        rmse = torch.sqrt(utils.MSE(output, gt, mask)).detach()
         eval_dict.update({f'{prefix}/RMSE': rmse})
 
         # mean absolute error
-        mae = utils.MAE(output, gt, mask).detach().item()
+        mae = utils.MAE(output, gt, mask).detach()
         eval_dict.update({f'{prefix}/MAE': mae})
 
         # symmetric mean absolute percentage error
-        smape = utils.SMAPE(output, gt, mask).detach().item()
+        smape = utils.SMAPE(output, gt, mask).detach()
         eval_dict.update({f'{prefix}/SMAPE': smape})
 
         # mean absolute percentage error
-        mape = utils.MAPE(output, gt, mask).detach().item()
+        mape = utils.MAPE(output, gt, mask).detach()
         eval_dict.update({f'{prefix}/MAPE': mape})
         
         # avg residuals
-        mean_res = (((output - gt) * mask).sum(0) / mask.sum(0)).detach().item()
+        mean_res = (((output - gt) * mask).sum(0) / mask.sum(0)).detach()
         eval_dict.update({f'{prefix}/mean_residual': mean_res})
 
         # pseudo R squared (a.k.a "variance explained")
-        r2 = utils.R2(output, gt, mask).detach().item()
+        r2 = utils.R2(output, gt, mask).detach()
         eval_dict.update({f'{prefix}/R2': r2})
 
 
@@ -538,11 +542,11 @@ class FluxRGNN(ForecastModel):
             x = torch.zeros_like(cell_data.coords[:, 0]).unsqueeze(-1)
         #print(f'initial x size = {x.size()}')
 
-        model_states = {'x': x,
-                        'hidden': hidden,
-                        'hidden_enc': hidden if self.encoder is not None else None,
-                        'boundary_nodes': cell_data.boundary.view(-1, 1),
-                        'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
+        #model_states = {'x': x,
+        #                'hidden': hidden,
+        #                'hidden_enc': hidden if self.encoder is not None else None,
+        #                'boundary_nodes': cell_data.boundary.view(-1, 1),
+        #                'inner_nodes': torch.logical_not(cell_data.boundary).view(-1, 1)}
 
         #if self.ground_model is not None:
         #     #model_states['ground_states'] = self.ground_model(graph_data, self.t_context + t0, h_t[-1])
@@ -551,12 +555,16 @@ class FluxRGNN(ForecastModel):
         #else:
         #    model_states['ground_states'] = None
 
-        return model_states
+        #return model_states
+        return x
 
-    def forecast_step(self, model_states, data, t, teacher_forcing=0):
+    def forecast_step(self, x, data, t, teacher_forcing=0):
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
+        boundary_nodes = cell_data.boundary.view(-1, 1)
+        inner_nodes = torch.logical_not(boundary_nodes)
+        
         # use gt data instead of model output with probability 'teacher_forcing'
         #r = torch.rand(1)
         #if cell_data.x is not None and (r < teacher_forcing):
@@ -564,24 +572,20 @@ class FluxRGNN(ForecastModel):
             #  or use smaller horizon instead of teacher forcing?
             #x = cell_data.x[torch.arange(cell_data.num_nodes, device=cell_data.x.device), t - 1].view(-1, 1)
         #else:
-        x = model_states['x']
-        
-        hidden = model_states['hidden']
-        #tidx = t - self.t_context
+        #x = model_states['x']
+       
 
         if self.boundary_model is not None:
             x_boundary = self.boundary_model(x)
-            h_boundary = self.boundary_model(hidden)
-            x = x * model_states['inner_nodes'] + x_boundary * model_states['boundary_nodes']
-            hidden = hidden * model_states['inner_nodes'] + h_boundary * model_states['boundary_nodes']
-            # TODO: also interpolate ground states?
-
-        #print(f'x after boundary model: {x.size()}')
+            x = x * inner_nodes + x_boundary * boundary_nodes
 
         # update hidden states
         #if self.decoder is not None:
-        hidden = self.decoder(x, cell_data, t, model_states['hidden_enc'])
+        hidden = self.decoder(x, cell_data, t)
 
+        if self.boundary_model is not None:
+            h_boundary = self.boundary_model(hidden)
+            hidden = hidden * inner_nodes + h_boundary * boundary_nodes
         # predict movements
         if self.flux_model is not None:
 
@@ -592,8 +596,8 @@ class FluxRGNN(ForecastModel):
 
             if not self.training and self.store_fluxes:
                 # save model component outputs
-                self.edge_fluxes.append(self.flux_model.edge_fluxes)
-                self.node_flux.append(self.flux_model.node_flux)
+                self.edge_fluxes.append(self.flux_model.edge_fluxes.detach())
+                self.node_flux.append(self.flux_model.node_flux.detach())
         else:
             net_flux = 0
 
@@ -606,13 +610,16 @@ class FluxRGNN(ForecastModel):
             if not self.training and self.store_fluxes:
                 # save model component outputs
                 if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-                    self.node_source.append(self.source_sink_model.node_source)
-                    self.node_sink.append(self.source_sink_model.node_sink)
+                    self.node_source.append(self.source_sink_model.node_source.detach())
+                    self.node_sink.append(self.source_sink_model.node_sink.detach())
                 else:
-                    self.node_source.append(delta)
-                    self.node_sink.append(-delta)
+                    self.node_source.append(delta.detach())
+                    self.node_sink.append(-delta.detach())
             #elif ground_states is None:
             if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+                #reg = self.source_sink_model.node_source * torch.logical_not(torch.logical_and(tidx_select(cell_data.local_night, t), torch.logical_not(tidx_select(cell_data.local_night, t-1))))
+                #self.regularizers.append(reg)
+                
                 self.regularizers.append(self.source_sink_model.node_source +
                                              self.source_sink_model.node_sink)
             else:
@@ -622,21 +629,7 @@ class FluxRGNN(ForecastModel):
 
         x = x + net_flux + delta
         
-        model_states['x'] = x
-        model_states['hidden'] = hidden
-        #model_states['ground_states'] = ground_states
-
-        if torch.any(torch.isnan(x)):
-            print(f'net flux ({torch.isnan(net_flux).sum()} NaNs)')
-        
-            print(f'source ({torch.isnan(self.source_sink_model.node_source).sum()} NaNs)')
-        
-            print(f'sink ({torch.isnan(self.source_sink_model.node_sink).sum()} NaNs)')
-
-            print(f'hidden ({torch.isnan(hidden).sum()} NaNs)')
-        
-        
-        return model_states
+        return x
 
     def _regularizer(self):
 
@@ -644,7 +637,7 @@ class FluxRGNN(ForecastModel):
             regularizers = torch.cat(self.regularizers, dim=0)
             penalty = regularizers.pow(2).mean()
         else:
-            penalty = 0
+            penalty = torch.zeros(1, device=self.device)
 
         return penalty
 
@@ -776,7 +769,7 @@ class LocalMLPForecast(ForecastModel):
         self.mlp = NodeMLP(n_in, **kwargs)
 
 
-    def forecast_step(self, model_states, data, t, *args, **kwargs):
+    def forecast_step(self, x, data, t, *args, **kwargs):
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
@@ -800,9 +793,15 @@ class LocalMLPForecast(ForecastModel):
             x = x * tidx_select(cell_data.local_night, t)
             x = x + self.zero_value.to(x.device) * torch.logical_not(tidx_select(cell_data.local_night, t))
 
-        model_states['x'] = x
+        #model_states['x'] = x
 
-        return model_states
+        del node_features
+        del dynamic_features
+        del inputs
+        #del x
+
+        #return model_states
+        return x
 
 
 class RadarToCellForecast(ForecastModel):
@@ -818,13 +817,14 @@ class RadarToCellForecast(ForecastModel):
             self.radar2cell = RadarToCellInterpolation(**kwargs)
 
 
-    def forecast_step(self, model_states, data, t, *args, **kwargs):
+    def forecast_step(self, x, data, t, *args, **kwargs):
 
         x = self.radar2cell(data, t)
 
-        model_states['x'] = x
+        #model_states['x'] = x
 
-        return model_states
+        #return model_states
+        return x
 
 
 
@@ -898,14 +898,14 @@ class SeasonalityForecast(ForecastModel):
 
         self.automatic_optimization = False
 
-    def forecast_step(self, model_states, data, t, *args, **kwargs):
+    def forecast_step(self, x, data, t, *args, **kwargs):
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
         # print(data.tidx.min(), data.tidx.max(), self.seasonal_patterns.size())
-        model_states['x'] = self.seasonal_patterns[cell_data.cidx, cell_data.tidx[t]].view(-1, 1)
+        x = self.seasonal_patterns[cell_data.cidx, cell_data.tidx[t]].view(-1, 1)
 
-        return model_states
+        return x
 
     def training_step(self, batch, batch_idx):
         pass
@@ -940,7 +940,7 @@ class XGBoostForecast(ForecastModel):
 
         self.xgboost.fit(X, y)
 
-    def forecast_step(self, model_states, data, t, *args, **kwargs):
+    def forecast_step(self, x, data, t, *args, **kwargs):
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
 
@@ -956,9 +956,9 @@ class XGBoostForecast(ForecastModel):
         inputs = torch.cat(node_features + dynamic_features, dim=1).detach().numpy()
 
         # apply XGBoost
-        model_states['x'] = torch.tensor(self.xgboost.predict(inputs)).view(-1, 1)
+        x = torch.tensor(self.xgboost.predict(inputs)).view(-1, 1)
 
-        return model_states
+        return x
 
     def training_step(self, batch, batch_idx):
         pass
@@ -1032,7 +1032,7 @@ class Fluxes(MessagePassing):
         # setup model components
         self.edge_mlp = EdgeFluxMLP(n_edge_in, **kwargs)
         #self.input2hidden = torch.nn.Linear(n_edge_in, kwargs.get('n_hidden'), bias=False)
-        #self.edge_mlp = MLP(2 * kwargs.get('n_hidden'), 1, **kwargs)
+        #self.edge_mlp = EdgeFluxMLP(kwargs.get('n_hidden'), **kwargs)
         n_graph_layers = kwargs.get('n_graph_layers', 0)
         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
 
@@ -1192,10 +1192,20 @@ class NumericalFluxes(MessagePassing):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) + kwargs.get('n_hidden')
+        n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) #+ kwargs.get('n_hidden')
 
+        self.use_hidden = kwargs.get('use_hidden', True)
+        
         # setup model components
-        self.velocity_mlp = MLP(n_node_in, 2, **kwargs)
+        self.input2hidden = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
+        
+        if self.use_hidden:
+            mlp_in = 2 * kwargs.get('n_hidden')
+        else:
+            mlp_in = kwargs.get('n_hidden')
+        self.velocity_mlp = MLP(mlp_in, 2, **kwargs)
+        #self.velocity_mlp = MLP(n_node_in, 2, **kwargs)
+
 
         n_graph_layers = kwargs.get('n_graph_layers', 0)
         self.graph_layers = nn.ModuleList([GraphLayer(**kwargs) for l in range(n_graph_layers)])
@@ -1204,6 +1214,11 @@ class NumericalFluxes(MessagePassing):
 
         self.transforms = kwargs.get('transforms', [])
         self.zero_value = self.apply_forward_transforms(torch.tensor(0))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init_weights(self.input2hidden)
 
     def apply_backward_transforms(self, values: torch.Tensor):
 
@@ -1254,8 +1269,13 @@ class NumericalFluxes(MessagePassing):
         dynamic_features_t0 = [tidx_select(graph_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features]
 
-        inputs = node_features + dynamic_features_t0 + [hidden_sp]
+        inputs = node_features + dynamic_features_t0 #+ [hidden_sp]
         inputs = torch.cat(inputs, dim=1)
+
+        inputs = self.input2hidden(inputs)
+
+        if self.use_hidden:
+            inputs = torch.cat([inputs, hidden_sp], dim=1)
 
         velocities = self.velocity_mlp(inputs)
 
@@ -1322,16 +1342,22 @@ class SourceSink(torch.nn.Module):
 
         n_node_in = sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
-                    kwargs.get('n_hidden') + \
                     sum(self.model_inputs.values())
+
 
         # setup model components
         # self.node_lstm = NodeLSTM(n_node_in, **kwargs)
         #self.source_sink_mlp = SourceSinkMLP(n_node_in, **kwargs)
         #self.input_embedding = MLP(n_node_in, kwargs.get('n_hidden'), **kwargs)
-        # self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
-        self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
-        # self.source_sink_mlp = MLP(2 * kwargs.get('n_hidden'), 2, **kwargs)
+        self.input_embedding = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
+        #self.source_sink_mlp = MLP(n_node_in, 2, **kwargs)
+
+        self.use_hidden = kwargs.get('use_hidden', True)
+        if self.use_hidden:
+            mlp_in = 2 * kwargs.get('n_hidden')
+        else:
+            mlp_in = kwargs.get('n_hidden')
+        self.source_sink_mlp = MLP(mlp_in, 2, **kwargs)
         # self.source_sink_mlp = MLP(kwargs.get('n_hidden'), 2, **kwargs)
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
@@ -1341,6 +1367,11 @@ class SourceSink(torch.nn.Module):
 
         self.transforms = kwargs.get('transforms', [])
         self.zero_value = self.apply_forward_transforms(torch.tensor(0))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init_weights(self.input_embedding)
 
     def apply_backward_transforms(self, values: torch.Tensor):
 
@@ -1392,10 +1423,11 @@ class SourceSink(torch.nn.Module):
         if 'ground_states' in self.model_inputs:
             inputs.append(ground_states.view(-1, 1))
 
-        # inputs = torch.cat(inputs, dim=1)
-        # inputs = self.input_embedding(inputs)
+        inputs = torch.cat(inputs, dim=1)
+        inputs = self.input_embedding(inputs)
 
-        inputs = torch.cat([hidden] + inputs, dim=1)
+        if self.use_hidden:
+            inputs = torch.cat([hidden, inputs], dim=1)
         #inputs = hidden
 
         # hidden = self.node_lstm(inputs)
@@ -2031,6 +2063,7 @@ class RecurrentDecoder(torch.nn.Module):
     def initialize(self, states):
     
          self.node_rnn.setup_states(states)
+         self.hidden_enc = self.node_rnn.get_hidden()
 
     #def initialize(self, h_t, c_t):
 
@@ -2039,13 +2072,14 @@ class RecurrentDecoder(torch.nn.Module):
     def initialize_zeros(self, batch_size, device):
 
         self.node_rnn.setup_zero_states(batch_size, device)
+        self.hidden_enc = self.node_rnn.get_hidden()
 
     def get_hidden(self):
 
         return self.node_rnn.get_hidden()
 
 
-    def forward(self, x, graph_data, t, hidden_enc=None):
+    def forward(self, x, graph_data, t):
         """
         Predict next hidden state.
 
@@ -2066,7 +2100,7 @@ class RecurrentDecoder(torch.nn.Module):
         #print(x.size(), node_features.size(), dynamic_features_t0.size())
         inputs = torch.cat([x.view(-1, 1)] + node_features + dynamic_features_t0, dim=1)
 
-        rnn_states = self.node_rnn(inputs, edge_index=graph_data.edge_index, edge_weight=None, hidden=hidden_enc)
+        rnn_states = self.node_rnn(inputs, edge_index=graph_data.edge_index, edge_weight=None, hidden=self.hidden_enc)
         hidden = self.node_rnn.get_hidden()
 
         #h_t, c_t = self.node_rnn(inputs, hidden_enc)
@@ -2344,12 +2378,16 @@ class EdgeFluxMLP(torch.nn.Module):
     def __init__(self, n_in, **kwargs):
         super(EdgeFluxMLP, self).__init__()
 
-        self.n_hidden = kwargs.get('n_hidden', 64)
+        self.n_hidden = kwargs.get('n_hidden')
         self.n_fc_layers = kwargs.get('n_fc_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
         self.activation = kwargs.get('activation', torch.nn.ReLU())
 
+        self.use_hidden = kwargs.get('use_hidden', True)
+        #if self.use_hidden:
+        #    n_in += self.n_hidden
+      
         self.input2hidden = torch.nn.Linear(n_in, self.n_hidden, bias=False)
         #self.fc_edge_in = torch.nn.Linear(self.n_hidden * 2, self.n_hidden)
         #self.fc_edge_hidden = nn.ModuleList([torch.nn.Linear(self.n_hidden, self.n_hidden)
@@ -2357,7 +2395,12 @@ class EdgeFluxMLP(torch.nn.Module):
         
         #self.hidden2output = torch.nn.Linear(self.n_hidden, 1)
 
-        self.edge_mlp = MLP(self.n_hidden * 2, 1, **kwargs)
+        #self.edge_mlp = MLP(self.n_hidden * 2, 1, **kwargs)
+        if self.use_hidden:
+            mlp_in = 2 * self.n_hidden
+        else:
+            mlp_in = self.n_hidden
+        self.edge_mlp = MLP(mlp_in, 1, **kwargs)
 
         self.reset_parameters()
 
@@ -2368,9 +2411,10 @@ class EdgeFluxMLP(torch.nn.Module):
         #init_weights(self.hidden2output)
         #self.edge_mlp.apply(init_weights)
 
-    def forward(self, inputs, hidden_j):
+    def forward(self, inputs, hidden):
         inputs = self.input2hidden(inputs)
-        inputs = torch.cat([inputs, hidden_j], dim=1)
+        if self.use_hidden:
+            inputs = torch.cat([inputs, hidden], dim=1)
 
         flux = self.edge_mlp(inputs)
 
@@ -2530,8 +2574,8 @@ class NodeLSTM(torch.nn.Module):
         self.h, self.c = states
 
     def setup_zero_states(self, batch_size, device):
-        self.h = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
-        self.c = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=device, requires_grad=False) for _ in range(self.n_layers)]
+        self.c = [torch.zeros(batch_size, self.n_hidden, device=device, requires_grad=False) for _ in range(self.n_layers)]
 
     def get_hidden(self):
         return self.h[-1]
@@ -2583,7 +2627,7 @@ class NodeGRU(torch.nn.Module):
         self.h = h
 
     def setup_zero_states(self, batch_size, device):
-        self.h = [torch.zeros(batch_size, self.n_hidden, device=device) for _ in range(self.n_layers)]
+        self.h = [torch.zeros(batch_size, self.n_hidden, device=device, requires_grad=False) for _ in range(self.n_layers)]
 
     def get_hidden(self):
         return self.h[-1]

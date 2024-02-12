@@ -24,9 +24,13 @@ lr_schedulers:
         #  start_factor: 1e-5
         #  end_factor: 1.0
         #  total_iters: 10
+        #- _target_: torch.optim.lr_scheduler.StepLR
+        #  _partial_: true
+        #  step_size: 50
+        #  gamma: 0.65
         #- _target_: torch.optim.lr_scheduler.CosineAnnealingLR
         #  _partial_: true
-        #  T_max: 40
+        #  T_max: 100
         #  eta_min: 1e-5
         #- _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
         #  _partial_: true
@@ -47,7 +51,7 @@ lr_schedulers:
           factor: 1.0
           total_iters: ${trainer.max_epochs}
 lr_milestones: []
-#        - 10
+#        - 100
 #        - 50
 #        - 90
           #- 100 #50
@@ -89,7 +93,7 @@ observation_model:
   _target_: fluxrgnn.models.ObservationModel
 
 node_rnn:
-  _target_: fluxrgnn.models.NodeLSTM
+  _target_: fluxrgnn.models.NodeGRU
   _partial_: true
 
 decoder:
@@ -116,7 +120,7 @@ flux_model:
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
-  n_fc_layers: 2
+  n_fc_layers: 1
   n_graph_layers: 0
   activation: ${model.activation}
   use_log_transform: ${model.use_log_transform}
@@ -137,7 +141,7 @@ source_sink_model:
   dynamic_cell_features:
     env: ${model.n_env}
   n_hidden: ${model.n_hidden}
-  n_fc_layers: 1
+  n_fc_layers: 1 
   activation: ${model.activation}
   use_log_transform: ${model.use_log_transform}
   log_offset: ${model.log_offset}
@@ -235,4 +239,4 @@ encoder:
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation
 
-load_states_from: none
+load_states_from: null

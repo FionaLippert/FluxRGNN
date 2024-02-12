@@ -50,57 +50,66 @@ class Normalization:
             measurement_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'measurements.csv'))
             all_measurements.append(measurement_df)
 
-        self.feature_df = pd.concat(all_features)
-        self.measurement_df = pd.concat(all_measurements)
+        feature_df = pd.concat(all_features)
+        measurement_df = pd.concat(all_measurements)
         #self.measurement_df = pd.DataFrame()
 
+        self.feature_stats = feature_df.describe()
+        self.feature_stats.loc['absmax'] = feature_df[self.feature_stats.columns].apply(lambda x: np.max(np.abs(x)))
+
+        self.measurement_stats = measurement_df.describe()
+        self.measurement_stats.loc['absmax'] = measurement_df[self.measurement_stats.columns].apply(lambda x: np.max(np.abs(x)))
+
+
     def normalize(self, data, key):
-        min = self.min(key)
-        max = self.max(key)
-        data = (data - min) / (max - min)
+
+        key_min = self.min(key)
+        key_max = self.max(key)
+
+        data = (data - key_min) / (key_max - key_min)
         return data
 
     def denormalize(self, data, key):
-        min = self.min(key)
-        max = self.max(key)
-        data = data * (max - min) + min
+        key_min = self.min(key)
+        key_max = self.max(key)
+        data = data * (key_max - key_min) + key_min
         return data
 
     def min(self, key):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().min()
+        if key in self.measurement_stats:
+            return self.measurement_stats[key]['min']
         else:
-            return self.feature_df[key].dropna().min()
+            return self.feature_stats[key]['min']
 
     def max(self, key):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().max()
+        if key in self.measurement_stats:
+            return self.measurement_stats[key]['max']
         else:
-            return self.feature_df[key].dropna().max()
+            return self.feature_stats[key]['max']
     
     def mean(self, key):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().mean()
+        if key in self.measurement_stats:
+            return self.measurement_stats[key]['mean']
         else:
-            return self.feature_df[key].dropna().mean()
+            return self.feature_stats[key]['mean']
 
     def std(self, key):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().std()
+        if key in self.measurement_stats:
+            return self.measurement_stats[key]['std']
         else:
-            return self.feature_df[key].dropna().std()
+            return self.feature_stats[key]['std']
     
     def absmax(self, key):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().abs().max()
+        if key in self.measurement_stats:
+            return self.measurement_stats[key]['absmax']
         else:
-            return self.feature_df[key].dropna().abs().max()
+            return self.feature_stats[key]['absmax']
 
-    def quantile(self, key, q=0.99):
-        if key in self.measurement_df:
-            return self.measurement_df[key].dropna().quantile(q)
-        else:
-            return self.feature_df[key].dropna().quantile(q)
+    #def quantile(self, key, q=0.99):
+    #    if key in self.measurement_df:
+    #        return self.measurement_df[key].dropna().quantile(q)
+    #    else:
+    #        return self.feature_df[key].dropna().quantile(q)
 
     def preprocessed_dir(self, year):
         return osp.join(self.root, 'preprocessed', self.preprocessed_dirname,
