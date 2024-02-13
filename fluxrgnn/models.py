@@ -252,8 +252,8 @@ class ForecastModel(pl.LightningModule):
                 'predict/cell_predictions': [],
                 'predict/tidx': [],
                 'predict/train_mask': [],
-                'predict/env': [],
-                'predict/coords': []
+                #'predict/env': [],
+                #'predict/coords': []
                 }
 
     def on_predict_epoch_end(self):
@@ -290,8 +290,8 @@ class ForecastModel(pl.LightningModule):
             self.predict_results['predict/tidx'].append(batch['cell'].tidx[t0: t0 + self.t_context + self.horizon])
             self.predict_results['predict/train_mask'].append(batch['radar'].train_mask)
 
-            self.predict_results['predict/env'].append(batch['cell'].env[:, :, t0: t0 + self.t_context + self.horizon])
-            self.predict_results['predict/coords'].append(batch['cell'].coords)
+            #self.predict_results['predict/env'].append(batch['cell'].env[:, :, t0: t0 + self.t_context + self.horizon])
+            #self.predict_results['predict/coords'].append(batch['cell'].coords)
 
             self.add_additional_predict_results()
 
@@ -585,9 +585,13 @@ class FluxRGNN(ForecastModel):
             #print(f'avg net flux = {net_flux.mean()}')
 
             if self.training and hasattr(self.flux_model, 'node_velocity'):
+                print('add velocity regularizer')
                 uv_hat = self.flux_model.node_velocity
                 uv_gt = tidx_select(data['radar'].bird_uv, t)
-                self.regularizers.append(uv_hat - uv_gt)
+                uv_hat = self.observation_model(uv_hat, data['cell', 'radar'])
+                uv_hat = uv_hat[:data['radar'].num_nodes]
+                self.regularizers.append(uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1))
+                print(self.regularizers[-1].size())
 
             if not self.training and self.store_fluxes:
                 # save model component outputs
@@ -613,20 +617,21 @@ class FluxRGNN(ForecastModel):
                     self.node_source.append(delta.detach())
                     self.node_sink.append(-delta.detach())
             #elif ground_states is None:
-            # if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-            #     #reg = self.source_sink_model.node_source * torch.logical_not(torch.logical_and(tidx_select(cell_data.local_night, t), torch.logical_not(tidx_select(cell_data.local_night, t-1))))
-            #     #self.regularizers.append(reg)
-            #
-            #     self.regularizers.append(self.source_sink_model.node_source +
-            #                                  self.source_sink_model.node_sink)
-            #
-            #     #mask = torch.logical_not(torch.logical_or(tidx_select(cell_data.dusk, t),
-            #     #                                          tidx_select(cell_data.dawn, t)))
-            #
-            #     #self.regularizers.append(mask * (self.source_sink_model.node_source +
-            #     #                                 self.source_sink_model.node_sink))
-            # else:
-            #     self.regularizers.append(delta)
+            if self.training and not hasattr(self.flux_model, 'node_velocity'):
+                if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+                    #reg = self.source_sink_model.node_source * torch.logical_not(torch.logical_and(tidx_select(cell_data.local_night, t), torch.logical_not(tidx_select(cell_data.local_night, t-1))))
+                    #self.regularizers.append(reg)
+                    print('add source/sink regularizer') 
+                    self.regularizers.append(self.source_sink_model.node_source +
+                                              self.source_sink_model.node_sink)
+            
+                    #mask = torch.logical_not(torch.logical_or(tidx_select(cell_data.dusk, t),
+                    #                                          tidx_select(cell_data.dawn, t)))
+            
+                    #self.regularizers.append(mask * (self.source_sink_model.node_source +
+                    #                                 self.source_sink_model.node_sink))
+                else:
+                    self.regularizers.append(delta)
         else:
             delta = 0
 
@@ -641,6 +646,7 @@ class FluxRGNN(ForecastModel):
     def _regularizer(self):
 
         if len(self.regularizers) > 0:
+            print(self.regularizers)
             regularizers = torch.cat(self.regularizers, dim=0)
             penalty = regularizers.pow(2).mean()
         else:
@@ -668,7 +674,7 @@ class FluxRGNN(ForecastModel):
                     self.predict_results['node_flux'] = []
                 self.predict_results['node_flux'].append(torch.cat(self.node_flux, dim=-1))
 
-            if len(self.node_flux) > 0:
+            if len(self.node_velocity) > 0:
                 if 'node_velocity' not in self.predict_results:
                     self.predict_results['node_velocity'] = []
                 self.predict_results['node_velocity'].append(torch.cat(self.node_velocity, dim=-1))
@@ -1208,6 +1214,7 @@ class NumericalFluxes(MessagePassing):
 
         n_node_in = sum(self.static_cell_features.values()) + sum(self.dynamic_cell_features.values()) #+ kwargs.get('n_hidden')
         self.use_hidden = kwargs.get('use_hidden', True)
+        self.length_scale = kwargs.get('length_scale', 1.0)
 
         # setup model components
         self.input2hidden = torch.nn.Linear(n_node_in, kwargs.get('n_hidden'), bias=False)
@@ -1313,12 +1320,13 @@ class NumericalFluxes(MessagePassing):
         if not self.training:
             raw_net_flux = self.transformed2raw(net_flux)
             self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
-            self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
+        
+        self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
 
         return net_flux
 
 
-    def message(self, x_j, velocities_i, velocities_j, wind_i, wind_j,
+    def message(self, x_j, velocities_i, velocities_j,
                 edge_normals, reverse_edges, face_length, areas_i):
         """
         Construct message from node j to node i (for all edges in parallel)
@@ -1331,7 +1339,7 @@ class NumericalFluxes(MessagePassing):
         flow = torch.clamp(flow, min=0) # only consider upwind flow
         in_flux = flow.view(-1, 1) * x_j.view(-1, 1) # influx from cell j to cell i [per km]
         out_flux = in_flux[reverse_edges] # outflux from cell i to cell j [per km]
-        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / areas_i.view(-1, 1)) # net flux from j to i
+        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
         print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
         if not self.training:
             # convert to raw quantities
@@ -2910,6 +2918,7 @@ class RecurrentEncoder(torch.nn.Module):
                                           for feature in self.dynamic_cell_features]
             # get radar features and map them to cells
             radar_features = self.radar2cell_model(data, t, self.node_rnn.get_hidden())
+            #print('radar feature min max:', radar_features.min(1), radar_features.max(1))
             
             inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 

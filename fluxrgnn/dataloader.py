@@ -739,6 +739,8 @@ class RadarHeteroData(InMemoryDataset):
         self.data_source = kwargs.get('data_source', 'radar')
         self.env_vars = kwargs.get('env_vars', ['dusk', 'dawn', 'night', 'dayofyear', 'solarpos', 'solarpos_dt'])
 
+        print(self.env_vars)
+
         self.wp_threshold = kwargs.get('wp_threshold', -0.5)
         self.missing_data_threshold = kwargs.get('missing_data_threshold', 0)
 
@@ -942,10 +944,11 @@ class RadarHeteroData(InMemoryDataset):
         
         lonlat_encoding_old = (lonlat_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)
         print(f'lonlat min = {lonlat_encoding_old.min(0)}, lonlat max = {lonlat_encoding_old.max(0)}')
-        lonlat_encoding = lonlat_encoding - lonlat_encoding.mean()
+        lonlat_encoding = lonlat_encoding - lonlat_encoding.mean(0)
         #lonlat_radar_encoding = (lonlat_radar_encoding - lonlat_encoding.mean(0)) / lonlat_encoding.std(0)    
-        lonlat_radar_encoding = lonlat_radar_encoding - lonlat_radar_encoding.mean()
+        lonlat_radar_encoding = lonlat_radar_encoding - lonlat_encoding.mean(0)
 
+        print(f'lonlat min = {lonlat_encoding.min(0)}, lonlat max = {lonlat_encoding.max(0)}')
         # land cover
         # if 'nlcd_maj_c' in cells.columns:
         #     land_cover = torch.tensor(cells.nlcd_maj_c.values, dtype=torch.float)
@@ -955,10 +958,11 @@ class RadarHeteroData(InMemoryDataset):
         else:
             land_cover = torch.zeros(0)
         
-        areas = cells[['area_km2']].apply(lambda col: col / col.max(), axis=0).to_numpy()
-        area_scale = cells['area_km2'].max() # [km^2]
-        length_scale = np.sqrt(area_scale) # [km]
-        length_scale = length_scale * 1e3 # [0.001 km]
+        areas = cells[['area_km2']].to_numpy() #.apply(lambda col: col / col.max(), axis=0).to_numpy()
+        #area_scale = cells['area_km2'].max() # [km^2]
+        #length_scale = np.sqrt(area_scale) # [km]
+        #length_scale = length_scale * 1e3 # [0.001 km]
+        length_scale = 1.0
 
         time_scale = pd.Timedelta(self.t_unit).total_seconds() # number of seconds per time step
 
@@ -988,7 +992,7 @@ class RadarHeteroData(InMemoryDataset):
             n_ij = np.stack([delta_x, delta_y], axis=1)
             n_ij = n_ij / np.linalg.norm(n_ij, ord=2, axis=1).reshape(-1, 1) # normalize to unit vectors
 
-            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / length_scale
+            face_lengths = np.array([data['face_length'] for i, j, data in G.edges(data=True)]) / (length_scale * 1e3)
             print(f'max face length: {face_lengths.max()}, min face length: {face_lengths.min()}')
             print(f'max distance: {distances.max()}, min distance: {distances.min()}')
             print(f'max area: {areas.max()}, min area: {areas.min()}')
@@ -1020,7 +1024,7 @@ class RadarHeteroData(InMemoryDataset):
         time = dynamic_feature_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
-        data = {'env': [], 'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
+        data = {'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
 
         for var in self.env_vars:
             data[var] = []
@@ -1053,10 +1057,11 @@ class RadarHeteroData(InMemoryDataset):
             data['missing'].append(group_df['missing'].to_numpy())
             data['radar_nighttime'].append(group_df.night.to_numpy())
 
-            bird_uv = df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
+            bird_uv = group_df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
             bird_uv = bird_uv * time_scale / 1e3  # in km/[t_unit]
-            bird_uv = bird_uv / length_scale  # in [length_scale]/[t_unit]
+            #bird_uv = 1e3 * bird_uv / length_scale  # in [length_scale]/[t_unit]
             data['bird_uv'].append(bird_uv)
+
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
@@ -1377,7 +1382,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                       data_source=cfg.datasource.name,
                       # test_radars=cfg.datasource.test_radars,
                       normalization=normalization,
-                      env_vars=cfg.datasource.env_vars,
+                      #env_vars=cfg.datasource.env_vars,
                       tidx_start=cfg.datasource.get('tidx_start', 0),
                       tidx_step=cfg.datasource.get('tidx_step', 1),
                       transform=transform
@@ -1436,7 +1441,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,
-                      env_vars=cfg.datasource.env_vars,
+                      #env_vars=cfg.datasource.env_vars,
                       transform=transform
                       )
             for year in years]
