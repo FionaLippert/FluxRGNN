@@ -51,6 +51,8 @@ class Normalization:
             all_measurements.append(measurement_df)
 
         feature_df = pd.concat(all_features)
+
+        print(feature_df.columns)
         measurement_df = pd.concat(all_measurements)
         #self.measurement_df = pd.DataFrame()
 
@@ -751,7 +753,7 @@ class RadarHeteroData(InMemoryDataset):
         self.edge_type = kwargs.get('edge_type', 'voronoi')
         self.t_unit = kwargs.get('t_unit', '1H')
         self.birds_per_km2 = kwargs.get('birds_per_km2', True)
-        #self.exclude = kwargs.get('exclude', [])
+        self.exclude = kwargs.get('exclude', [])
 
         self.use_nights = kwargs.get('fixed_t0', True)
         self.tidx_start = kwargs.get('tidx_start', 0)
@@ -766,6 +768,9 @@ class RadarHeteroData(InMemoryDataset):
         self.cv_fold = kwargs.get('cv_fold', 0)
 
         print(kwargs)
+
+        print(self.normalization)
+        print(transform)
 
         super(RadarHeteroData, self).__init__(self.root, transform, pre_transform)
 
@@ -832,6 +837,8 @@ class RadarHeteroData(InMemoryDataset):
             test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
         print(f'test radars: {test_radars}')
 
+        excluded_radars = test_radars + list(radars[radars.radar.isin(self.exclude)].ID.values)
+        
         # relationship between cells and radars
         if self.edge_type in ['voronoi', 'none']:
             cell_to_radar_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
@@ -866,7 +873,7 @@ class RadarHeteroData(InMemoryDataset):
 
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(test_radars)))
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(excluded_radars)))
             radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
             radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
             radar_to_cell_dist = radar_to_cell_dist[mask]
@@ -1143,8 +1150,10 @@ class RadarHeteroData(InMemoryDataset):
 
         # masks to select train or test radars
         train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
-        train_mask[test_radars] = False
-        test_mask = torch.logical_not(train_mask)
+        train_mask[excluded_radars] = False
+        test_mask = torch.zeros(len(radar_idx), dtype=torch.bool)
+        test_mask[test_radars] = True
+        #test_mask = torch.logical_not(train_mask)
 
         # create graph data objects per sequence
         data_list = []
@@ -1360,11 +1369,13 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
         years = [cfg.datasource.test_year]
         norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
         if osp.isfile(norm_path):
+            print(f'load normalization from {norm_path}')
             with open(norm_path, 'rb') as f:
                 normalization = pickle.load(f)
         else:
-            normalization = None
-
+            #normalization = None
+            years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+            normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
     # load training/validation/test data
     # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
     #                              **cfg, **cfg.model,
