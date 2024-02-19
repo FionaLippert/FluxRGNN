@@ -47,7 +47,7 @@ class Normalization:
             dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'dynamic_cell_features.csv'))
             all_features.append(dynamic_feature_df)
 
-            measurement_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'measurements.csv'))
+            measurement_df = pd.read_csv(osp.join(self.preprocessed_dir(year), 'dynamic_radar_features.csv'))
             all_measurements.append(measurement_df)
 
         feature_df = pd.concat(all_features)
@@ -1339,6 +1339,10 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     preprocessed_dirname += f'_{res_info}'
     #processed_dirname += res_info
 
+    n_excl = len(cfg.datasource.get('excluded_radars', []))
+    if n_excl > 0:
+        processed_dirname += f'_excluded={n_excl}'
+
     print(processed_dirname)
     
     data_dir = osp.join(cfg.device.root, 'data')
@@ -1374,8 +1378,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                 normalization = pickle.load(f)
         else:
             #normalization = None
-            years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-            normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+            norm_years = cfg.datasource.get('train_years', set(cfg.datasource.years) - set([cfg.datasource.test_year]))
+            normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
     # load training/validation/test data
     # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
     #                              **cfg, **cfg.model,
@@ -1393,6 +1397,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                       data_source=cfg.datasource.name,
                       # test_radars=cfg.datasource.test_radars,
                       normalization=normalization,
+                      exclude=cfg.datasource.get('excluded_radars', []),
                       #env_vars=cfg.datasource.env_vars,
                       tidx_start=cfg.datasource.get('tidx_start', 0),
                       tidx_step=cfg.datasource.get('tidx_step', 1),

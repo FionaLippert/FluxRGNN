@@ -6,6 +6,11 @@ years:
   - 2017
   - 2018
   - 2019
+train_years:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
 test_year: 2019
 val_train_split: 0.1
 env_vars:
@@ -33,6 +38,7 @@ interpolation_range: 350000
 n_dummy_radars: 60
 h3_resolution: 3
 excludes: rain_event_list.csv
+excluded_radars: []
 test_radars: []
 
 # settings for generating sequences

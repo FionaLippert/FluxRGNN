@@ -74,7 +74,10 @@ def run(cfg: DictConfig):
         artifact_dir = trainer.logger.download_artifact(cfg.model.load_states_from, artifact_type='model')
         model_path = osp.join(artifact_dir, 'model.ckpt')
 
-        model = eval(cfg.model._target_).load_from_checkpoint(model_path)
+        if torch.cuda.is_available():
+            model = eval(cfg.model._target_).load_from_checkpoint(model_path)
+        else:
+            model = eval(cfg.model._target_).load_from_checkpoint(model_path, map_location=torch.device('cpu'))
 
     
     if 'train' in cfg.task.task_name:

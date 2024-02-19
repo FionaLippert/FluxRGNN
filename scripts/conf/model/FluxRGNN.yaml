@@ -134,8 +134,14 @@ decoder:
   #  env: ${model.n_env}
 
 flux_model:
-  _target_: fluxrgnn.models.Fluxes
+  #_target_: fluxrgnn.models.Fluxes
   #_target_: fluxrgnn.models.NumericalFluxes
+  _target_: fluxrgnn.models.NumericalRadarFluxes
+  radar2cell_model:
+    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+    k: 10
+    radar_variables:
+      bird_uv: 2
   static_cell_features:
     coords: ${model.coord_dim}
   edge_features:
