@@ -25,8 +25,6 @@ def run(cfg: DictConfig):
                               cfg.datasource.name)
         target_dir = osp.join(datasource_dir, cfg.season, str(year))
 
-        print(datasource_dir)
-
         # load all features and organize them into dataframes
         print(f'year {year}: start preprocessing')
         os.makedirs(target_dir, exist_ok=True)

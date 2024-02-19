@@ -924,6 +924,10 @@ class RadarHeteroData(InMemoryDataset):
             # keep original wind velocities
             dynamic_feature_df['wind_u'] = dynamic_feature_df['u']
             dynamic_feature_df['wind_v'] = dynamic_feature_df['v']
+
+        if not 'dayofyear' in dynamic_feature_df:
+            dynamic_feature_df['dayofyear'] = pd.DatetimeIndex(dynamic_feature_df.datetime).dayofyear
+
         if self.normalization is not None:
             dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df)
             measurement_df = self.normalize_dynamic(measurement_df)
@@ -960,10 +964,16 @@ class RadarHeteroData(InMemoryDataset):
         # if 'nlcd_maj_c' in cells.columns:
         #     land_cover = torch.tensor(cells.nlcd_maj_c.values, dtype=torch.float)
         #     land_cover = torch.nn.functional.one_hot(land_cover) # binary tensor of shape [cells, classes]
-        if 'nlcd_hist' in cells.columns:
-            land_cover = torch.tensor(np.stack(cells.nlcd_hist.values), dtype=torch.float) # shape [cells, classes]
+        landcover_cols = [col for col in cells.columns if col.startswith('nlcd_cidx')]
+        if len(landcover_cols) > 0:
+            land_cover = torch.tensor(cells[landcover_cols].values, dtype=torch.float) # shape [cells, classes]
         else:
             land_cover = torch.zeros(0)
+
+        if 'nlcd_water' in cells.columns:
+            water = torch.tensor(cells['nlcd_water'].values, dtype=torch.bool)
+        else:
+            water = torch.zeros(0)
         
         areas = cells[['area_km2']].to_numpy() #.apply(lambda col: col / col.max(), axis=0).to_numpy()
         #area_scale = cells['area_km2'].max() # [km^2]
@@ -1031,7 +1041,8 @@ class RadarHeteroData(InMemoryDataset):
         time = dynamic_feature_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
-        data = {'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [], 'missing': []}
+        data = {'cell_nighttime': [], 'radar_nighttime': [], target_col: [], 'bird_uv': [],
+                'missing_x': [], 'missing_uv': []}
 
         for var in self.env_vars:
             data[var] = []
@@ -1061,7 +1072,8 @@ class RadarHeteroData(InMemoryDataset):
             group_df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data[target_col].append(group_df[target_col].to_numpy())
             # data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
-            data['missing'].append(group_df['missing'].to_numpy())
+            data['missing_x'].append(group_df['missing_birds_km2'].to_numpy())
+            data['missing_uv'].append(group_df['missing_birds_uv'].to_numpy())
             data['radar_nighttime'].append(group_df.night.to_numpy())
 
             bird_uv = group_df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
@@ -1102,7 +1114,7 @@ class RadarHeteroData(InMemoryDataset):
 
 
         # remove sequences with too much missing data
-        perc_missing = data['missing'].reshape(-1, data['missing'].shape[-1]).mean(0)
+        perc_missing = data['missing_x'].reshape(-1, data['missing_x'].shape[-1]).mean(0)
         print(perc_missing)
         valid_idx = perc_missing <= self.missing_data_threshold
         #valid_idx = np.ones(tidx.shape[-1], dtype='int')
@@ -1167,6 +1179,7 @@ class RadarHeteroData(InMemoryDataset):
                 'boundary': torch.tensor(boundary, dtype=torch.bool),
                 'cidx': torch.arange(len(cells), dtype=torch.long),
                 'land_cover': land_cover,
+                'water': water,
 
                 # dynamic cell features
                 # 'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
@@ -1196,7 +1209,8 @@ class RadarHeteroData(InMemoryDataset):
 
                 # dynamic radar features
                 'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
-                'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
+                'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
+                'missing_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': torch.tensor(data['bird_uv'][..., idx], dtype=torch.float),
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
@@ -1221,8 +1235,8 @@ class RadarHeteroData(InMemoryDataset):
 
         info = {
                 'env_vars': self.env_vars,
-                'timepoints': time,
-                'tidx': tidx,
+                #'timepoints': time,
+                #'tidx': tidx,
                 'n_seq_discarded': n_seq_discarded,
                 'length_scale': length_scale,
                 'time_scale': time_scale
@@ -1242,7 +1256,7 @@ class RadarHeteroData(InMemoryDataset):
         cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
                                                  'bird_speed', 'bird_direction', 'wind_u', 'wind_v',
                                                  'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
-                                                 'cc', 'sshf',
+                                                 'cc', 'sshf', 'dayofyear',
                                                  'radar', 'ID', 'night', 'boundary',
                                                  'dusk', 'dawn', 'datetime', 'missing'])
 
