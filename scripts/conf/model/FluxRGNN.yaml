@@ -82,6 +82,7 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
+length_scale: 1.0
 transforms:
 #  - _target_: transforms.LogTransform
 #    feature: x
@@ -89,6 +90,9 @@ transforms:
   - _target_: transforms.Rescaling
     feature: x
     factor: ${model.scale}
+  - _target_: transforms.Rescaling
+    feature: bird_uv
+    factor: ${model.length_scale}
 
 dropout_p: 0.0
 teacher_forcing: 0.0
@@ -112,7 +116,7 @@ observation_model:
   _target_: fluxrgnn.models.ObservationModel
 
 node_rnn:
-  _target_: fluxrgnn.models.NodeGRU
+  _target_: fluxrgnn.models.NodeLSTM
   _partial_: true
 
 decoder:
@@ -138,6 +142,7 @@ flux_model:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
   #  env: ${model.n_env}
+  length_scale: ${model.length_scale}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1
   n_graph_layers: 0
