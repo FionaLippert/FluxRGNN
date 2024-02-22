@@ -740,8 +740,7 @@ class RadarHeteroData(InMemoryDataset):
 
         self.data_source = kwargs.get('data_source', 'radar')
         self.env_vars = kwargs.get('env_vars', ['dusk', 'dawn', 'night', 'dayofyear', 'solarpos', 'solarpos_dt'])
-
-        print(self.env_vars)
+        self.permute_env_vars = set(kwargs.get('permute_env_vars', [])).intersection(set(self.env_vars))
 
         self.wp_threshold = kwargs.get('wp_threshold', -0.5)
         self.missing_data_threshold = kwargs.get('missing_data_threshold', 0)
@@ -1084,7 +1083,20 @@ class RadarHeteroData(InMemoryDataset):
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
-            print(k, data[k].shape)
+
+        # apply perturbations (if applicable)
+        for var in self.permute_env_vars:
+            # data[var] has shape [cells, ..., time]
+
+            # perturb in time
+            random_tidx = np.arange(data[var].shape[-1])
+            random_tidx = self.rng.permutation(random_tidx)
+            data[var] = data[var][..., random_tidx]
+
+            # perturb in space
+            random_cidx = np.arange(data[var].shape[0])
+            random_cidx = self.rng.permutation(random_cidx)
+            data[var] = data[var][random_cidx]
 
         print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
         print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
@@ -1336,7 +1348,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
     seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) \
               + cfg.datasource.get('tidx_step', 1) #- 1
-    seed = cfg.seed + cfg.get('job_id', 0)
+    # seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
     print(preprocessed_dirname)
@@ -1348,7 +1360,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}_' \
-                        f'fold={cfg.task.n_cv_folds}-{cfg.task.cv_fold}'
+                        f'fold={cfg.task.n_cv_folds}-{cfg.task.cv_fold}_seed={cfg.seed}'
     
     preprocessed_dirname += f'_{res_info}'
     #processed_dirname += res_info
@@ -1356,6 +1368,10 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     n_excl = len(cfg.datasource.get('excluded_radars', []))
     if n_excl > 0:
         processed_dirname += f'_excluded={n_excl}'
+
+    perm_vars = cfg.model.get('permute_env_vars', [])
+    if len(perm_vars) > 0:
+        processed_dirname += f'_permuted={"+".join(perm_vars)}'
 
     print(processed_dirname)
     
@@ -1376,7 +1392,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
         # complete config and write it together with normalizer to disk
         # cfg.datasource.bird_scale = float(normalization.max(input_col))
-        cfg.model_seed = seed
+        # cfg.model_seed = seed
         with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
             OmegaConf.save(config=cfg, f=f)
         with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
@@ -1433,24 +1449,25 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     """
 
     seq_len = 'all'
-    seed = cfg.seed + cfg.get('job_id', 0)
+    # seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_none'
 
     model_cfg = dict(cfg.model)
     model_cfg['edge_type'] = 'none'
-    #if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-    #    res_info = f'_res={cfg.datasource.h3_resolution}'
-    #else:
-    res_info = f'_ndummy=0'
+    res_info = f'ndummy=0'
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}' \
-                        f'_fold={cfg.task.cv_fold}-{cfg.task.n_cv_folds}'
+                        f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}' \
+                        f'_fold={cfg.task.cv_fold}-{cfg.task.n_cv_folds}_seed={cfg.seed}'
     
-    preprocessed_dirname += res_info
-    processed_dirname += res_info
+    preprocessed_dirname += f'_{res_info}'
+    # processed_dirname += res_info
+
+    perm_vars = cfg.model.get('permute_env_vars', [])
+    if len(perm_vars) > 0:
+        processed_dirname += f'_permuted={"+".join(perm_vars)}'
     
     data_dir = osp.join(cfg.device.root, 'data')
 
@@ -1459,7 +1476,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
 
     # complete config and write it together with normalizer to disk
-    cfg.model_seed = seed
+    # cfg.model_seed = seed
     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
         OmegaConf.save(config=cfg, f=f)
     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
@@ -1489,9 +1506,9 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, tran
     """
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
     if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-        res_info = f'_h3={cfg.datasource.h3_resolution}'
+        res_info = f'_res={cfg.datasource.h3_resolution}'
     else:
-        res_info = '_ndummy={cfg.datasource.n_dummy_radars}'
+        res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
 
     processed_dirname = f'seasonal_buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_dataperc={cfg.data_perc}'
