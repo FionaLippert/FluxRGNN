@@ -14,11 +14,11 @@ env_vars:
   v10: 1
   cc: 1
   tp: 1
-  sp: 1
-  t2m: 1
+  #sp: 1
+  #t2m: 1
   t: 1
   q: 1
-  sshf: 1
+  #sshf: 1
   night: 1
   dusk: 1
   dawn: 1
@@ -238,6 +238,7 @@ initial_model:
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
   node_rnn: ${model.node_rnn}
+  #_target_: fluxrgnn.models.LSTMEncoder
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1

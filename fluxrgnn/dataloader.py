@@ -1163,7 +1163,7 @@ class RadarHeteroData(InMemoryDataset):
         # masks to select train or test radars
         train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
         train_mask[excluded_radars] = False
-        test_mask = torch.zeros(len(radar_idx), dtype=torch.bool)
+        test_mask = torch.zeros(len(radar_ids), dtype=torch.bool)
         test_mask[test_radars] = True
         #test_mask = torch.logical_not(train_mask)
 
@@ -1258,7 +1258,8 @@ class RadarHeteroData(InMemoryDataset):
                                                  'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
                                                  'cc', 'sshf', 'dayofyear',
                                                  'radar', 'ID', 'night', 'boundary',
-                                                 'dusk', 'dawn', 'datetime', 'missing'])
+                                                 'dusk', 'dawn', 'datetime', 'missing',
+                                                 'missing_birds_km2', 'missing_birds_uv'])
 
 
         # apply to u, v, u10, v10, bird_u, bird_v, t2m, t, sp, cc, q, sshf, tp, acc vars
@@ -1289,7 +1290,7 @@ class RadarHeteroData(InMemoryDataset):
             dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
 
         if 'dayofyear' in dynamic_feature_df:
-            dynamic_feature_df['dayofyear'] /= self.normalization.max('dayofyear')  # always use 365?
+            dynamic_feature_df['dayofyear'] /= 365.0 #self.normalization.max('dayofyear')  # always use 365?
 
         return dynamic_feature_df
 
@@ -1338,7 +1339,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
               + cfg.datasource.get('tidx_step', 1) #- 1
     seed = cfg.seed + cfg.get('job_id', 0)
 
-    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
+    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_{cfg.datasource.buffer}'
     print(preprocessed_dirname)
     if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
         res_info = f'res={cfg.datasource.h3_resolution}'
@@ -1347,7 +1348,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}_' \
+                        f'edges={cfg.model.edge_type}_{cfg.datasource.buffer}_{res_info}_dataperc={cfg.data_perc}_' \
                         f'fold={cfg.task.n_cv_folds}-{cfg.task.cv_fold}'
     
     preprocessed_dirname += f'_{res_info}'
