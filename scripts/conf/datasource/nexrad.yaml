@@ -32,13 +32,24 @@ env_vars:
   - solarpos
   - solarpos_dt
 use_buffers: True
-buffer: 350000
+buffer: 450000
 observation_range: 35000
 interpolation_range: 350000
 n_dummy_radars: 60
 h3_resolution: 3
 excludes: rain_event_list.csv
-excluded_radars: []
+excluded_radars: #[] 
+  - kmtx
+  - krgx
+  - kmsx
+  - ksox
+  - klrx
+  - kgjx
+  - kmux
+  - kbhx
+  - kesx
+  - kicx
+  - kmax
 test_radars: []
 
 # settings for generating sequences
