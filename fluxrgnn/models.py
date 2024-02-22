@@ -164,7 +164,7 @@ class ForecastModel(pl.LightningModule):
         
         # make predictions for all cells
         prediction = self.forecast(batch, self.horizon, t0=t0)
-        print(f'prediction min, max = {prediction.min(), prediction.max()}')
+        #print(f'prediction min, max = {prediction.min(), prediction.max()}')
 
         # apply observation model to forecast
         if self.observation_model is not None:
@@ -588,7 +588,7 @@ class FluxRGNN(ForecastModel):
         if self.flux_model is not None:
 
             # predict fluxes between neighboring cells
-            net_flux = self.flux_model(x, hidden, cell_data, t)
+            net_flux = self.flux_model(x, hidden, data, t)
 
             #print(f'avg net flux = {net_flux.mean()}')
 
@@ -598,8 +598,17 @@ class FluxRGNN(ForecastModel):
                 uv_gt = tidx_select(data['radar'].bird_uv, t)
                 uv_hat = self.observation_model(uv_hat, data['cell', 'radar'])
                 uv_hat = uv_hat[:data['radar'].num_nodes]
-                self.regularizers.append(uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1))
+                
+                mask = tidx_select(torch.logical_not(data['radar'].missing), t)
+                mask = mask.reshape(-1) * data['radar'].train_mask.reshape(-1)
+
+                uv_error = uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1)
+                #uv_error = (uv_error * mask).sum(0) / mask.sum(0)
+                uv_error = uv_error[mask]
+                
+                #self.regularizers.append(uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1))
                 #print(self.regularizers[-1].size())
+                self.regularizers.append(uv_error)
 
             if not self.training and self.store_fluxes:
                 # save model component outputs
@@ -1097,7 +1106,7 @@ class Fluxes(MessagePassing):
         return raw
 
 
-    def forward(self, x, hidden, cell_data, t):
+    def forward(self, x, hidden, graph_data, t):
         """
         Predict fluxes for one time step.
 
@@ -1107,6 +1116,8 @@ class Fluxes(MessagePassing):
         :param t: time index
         """
 
+        cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
+        
         # propagate hidden states through graph to combine spatial information
         hidden_sp = hidden
         for layer in self.graph_layers:
@@ -1200,6 +1211,107 @@ class Fluxes(MessagePassing):
         return net_flux.view(-1, 1)
 
 
+class NumericalRadarFluxes(MessagePassing):
+    """
+    Predicts velocities given previous predictions and hidden states,
+    and computes corresponding numerical fluxes for time step t -> t+1.
+    """
+
+    def __init__(self, radar2cell_model, **kwargs):
+        """
+        Initialize NumericalRadarFluxes.
+        """
+
+        super(NumericalRadarFluxes, self).__init__(aggr='add', node_dim=0)
+
+        self.radar2cell_model = radar2cell_model
+        
+        self.length_scale = kwargs.get('length_scale', 1.0)
+        self.use_log_transform = kwargs.get('use_log_transform', False)
+
+        self.transforms = [t for t in kwargs.get('transforms', []) if t.feature == 'x']
+        self.zero_value = self.apply_forward_transforms(torch.tensor(0))
+
+
+    def apply_backward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in reversed(self.transforms):
+            out = t.tensor_backward(out)
+
+        return out
+
+    def apply_forward_transforms(self, values: torch.Tensor):
+
+        out = values
+        for t in self.transforms:
+            out = t.tensor_forward(out)
+
+        return out
+
+    def transformed2raw(self, values):
+
+        values = torch.clamp(values, min=self.zero_value.to(values.device))
+        raw = self.apply_backward_transforms(values)
+
+        return raw
+
+
+    def forward(self, x, hidden, graph_data, t):
+        """
+        Predict velocities and compute fluxes for one time step.
+
+        :return x: predicted migration intensities for all cells and time points
+        :return hidden: updated hidden states for all cells and time points
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        :param t: time index
+        """
+
+        assert not self.use_log_transform
+
+        cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
+        
+        #velocities = tidx_select(radar_data.get('bird_uv'), t).reshape(x.size(0), -1)
+        velocities = self.radar2cell_model(graph_data, t)
+
+        # message passing through graph
+        net_flux = self.propagate(cell_data.edge_index,
+                                          reverse_edges=cell_data.reverse_edges,
+                                          x=x,
+                                          velocities=velocities,
+                                          areas=cell_data.areas,
+                                          face_length=cell_data.edge_face_lengths,
+                                          edge_normals=cell_data.edge_normals)
+
+        if not self.training:
+            raw_net_flux = self.transformed2raw(net_flux)
+            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+        
+        self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
+        #print('node velocity = ', self.node_velocity)
+        return net_flux
+
+
+    def message(self, x_j, velocities_i, velocities_j,
+                edge_normals, reverse_edges, face_length, areas_i):
+        """
+        Construct message from node j to node i (for all edges in parallel)
+        """
+
+        # compute upwind fluxes from cell j to cell i
+        edge_velocities = (velocities_i + velocities_j) / 2
+        flow = (edge_normals * edge_velocities).sum(1) # velocity in direction of edge (j, i)
+        flow = torch.clamp(flow, min=0) # only consider upwind flow
+        in_flux = flow.view(-1, 1) * x_j.view(-1, 1) # influx from cell j to cell i [per km]
+        out_flux = in_flux[reverse_edges] # outflux from cell i to cell j [per km]
+        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
+        if not self.training:
+            # convert to raw quantities
+            self.edge_fluxes = self.transformed2raw(in_flux - out_flux)
+
+        return net_flux.view(-1, 1)
+
+
 class NumericalFluxes(MessagePassing):
     """
     Predicts velocities given previous predictions and hidden states,
@@ -1274,7 +1386,7 @@ class NumericalFluxes(MessagePassing):
         return raw
 
 
-    def forward(self, x, hidden, cell_data, t):
+    def forward(self, x, hidden, graph_data, t):
         """
         Predict velocities and compute fluxes for one time step.
 
@@ -1286,6 +1398,8 @@ class NumericalFluxes(MessagePassing):
 
         assert not self.use_log_transform
 
+        cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
+        
         # propagate hidden states through graph to combine spatial information
         hidden_sp = hidden
         for layer in self.graph_layers:
@@ -1776,8 +1890,10 @@ class RadarToCellKNNInterpolation(MessagePassing):
         # dynamic features for current time step
         variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
                                for var in self.radar_variables], dim=1)
-
-        radar_mask = graph_data['radar'].train_mask
+        
+        # use only valid training radars for interpolation
+        missing = tidx_select(graph_data['radar'].missing, t).reshape(n_radars)
+        radar_mask = torch.logical_and(graph_data['radar'].train_mask, torch.logical_not(missing))
         n_radars = radar_mask.sum()
 
         variables = variables[radar_mask]
