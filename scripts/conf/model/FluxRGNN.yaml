@@ -26,6 +26,8 @@ env_vars:
   solarpos: 1
   solarpos_dt: 1
 
+permute_env_vars: []
+
 n_hidden: 64
 
 max_t0: ${datasource.tidx_step}
