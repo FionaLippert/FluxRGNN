@@ -4,7 +4,8 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
 from torch_geometric.utils import to_dense_adj, degree, scatter
-from torch_geometric.nn.unpool import knn_interpolate, knn
+from torch_geometric.nn.unpool import knn_interpolate
+from torch_geometric.nn.pool import knn
 from torch_geometric_temporal.nn.recurrent import GConvLSTM, GConvGRU, DCRNN
 import pytorch_lightning as pl
 import numpy as np
@@ -1921,12 +1922,16 @@ class RadarToCellKNNInterpolation(MessagePassing):
         #                               graph_data['cell'].batch, k=self.k)
 
         edge_index = knn(radar_pos, cell_pos, k=self.k, batch_x=radar_batch, batch_y=cell_batch)
-
+        edge_index = torch.flip(edge_index, dims=[0]) # edges go from radars to cells
+        
         dummy_variables = torch.zeros((n_cells - n_radars, variables.size(1)), device=variables.device)
         embedded_variables = torch.cat([variables, dummy_variables], dim=0)
 
-        distance = F.pairwise_distance(radar_pos[edge_index[0]], cell_pos[edge_index[1]], p=2, eps=1e-6)
-        edge_weight = 1. / distance
+        distance = F.pairwise_distance(radar_pos[edge_index[0]], cell_pos[edge_index[1]], p=2)
+        
+        print(f'max distance: {distance.max()}')
+        print(f'min distance: {distance.min()}')
+        edge_weight = 1. / (distance + 1e-6)
 
         weighted_degree = scatter(edge_weight, edge_index[1], dim_size=n_cells, reduce='sum')
 
