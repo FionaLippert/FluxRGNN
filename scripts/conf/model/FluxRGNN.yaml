@@ -14,11 +14,11 @@ env_vars:
   v10: 1
   cc: 1
   tp: 1
-  #sp: 1
-  #t2m: 1
+  sp: 1
+  t2m: 1
   t: 1
   q: 1
-  #sshf: 1
+  sshf: 1
   night: 1
   dusk: 1
   dawn: 1
@@ -105,7 +105,7 @@ increase_horizon_start: 0
 
 force_zeros: false #true
 root_transformed_loss: false
-weight_exponent: 0.75
+weight_exponent: 1.0 #0.75
 edge_type: hexagons # voronoi
 birds_per_km2: true
 
@@ -137,8 +137,8 @@ decoder:
 
 flux_model:
   #_target_: fluxrgnn.models.Fluxes
-  #_target_: fluxrgnn.models.NumericalFluxes
-  _target_: fluxrgnn.models.NumericalRadarFluxes
+  _target_: fluxrgnn.models.NumericalFluxes
+  #_target_: fluxrgnn.models.NumericalRadarFluxes
   radar2cell_model:
     _target_: fluxrgnn.models.RadarToCellKNNInterpolation
     k: 10
@@ -146,6 +146,7 @@ flux_model:
       bird_uv: 2
   static_cell_features:
     coords: ${model.coord_dim}
+    #land_cover: 19
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
@@ -170,6 +171,7 @@ source_sink_model:
     #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
+    #land_cover: 19
   dynamic_cell_features: ${model.env_vars}
   #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}

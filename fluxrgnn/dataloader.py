@@ -963,11 +963,12 @@ class RadarHeteroData(InMemoryDataset):
         # if 'nlcd_maj_c' in cells.columns:
         #     land_cover = torch.tensor(cells.nlcd_maj_c.values, dtype=torch.float)
         #     land_cover = torch.nn.functional.one_hot(land_cover) # binary tensor of shape [cells, classes]
-        landcover_cols = [col for col in cells.columns if col.startswith('nlcd_cidx')]
+        landcover_cols = [col for col in cells.columns if col.startswith('nlcd_c')]
         if len(landcover_cols) > 0:
             land_cover = torch.tensor(cells[landcover_cols].values, dtype=torch.float) # shape [cells, classes]
         else:
             land_cover = torch.zeros(0)
+        print(f'landcover size: {land_cover.size()}')
 
         if 'nlcd_water' in cells.columns:
             water = torch.tensor(cells['nlcd_water'].values, dtype=torch.bool)

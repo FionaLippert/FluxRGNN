@@ -185,6 +185,7 @@ class ForecastModel(pl.LightningModule):
         self.test_results = {
                 'test/mask': [], 
                 'test/train_mask': [],
+                'test/test_mask': [],
                 'test/measurements': [], 
                 'test/predictions': [],
                 #'test/cell_predictions': []
@@ -230,6 +231,7 @@ class ForecastModel(pl.LightningModule):
                 torch.logical_not(batch['radar'].missing_x)[:, t0:t0 +self.t_context + self.horizon]
             )
             self.test_results['test/train_mask'].append(batch['radar'].train_mask)
+            self.test_results['test/test_mask'].append(batch['radar'].test_mask)
             self.test_results['test/measurements'].append(
                 self.transformed2raw(batch['radar'].x)[:, t0:t0 + self.t_context + self.horizon]
             )
@@ -265,6 +267,7 @@ class ForecastModel(pl.LightningModule):
                 'predict/env_sp': [],
                 'predict/env_u10': [],
                 'predict/env_v10': [],
+                'predict/env_sshf': []
                 }
 
     def on_predict_epoch_end(self):
@@ -312,6 +315,7 @@ class ForecastModel(pl.LightningModule):
             self.predict_results['predict/env_t'].append(batch['cell'].t[..., t0: t0 + self.t_context + self.horizon])
             self.predict_results['predict/env_t2m'].append(batch['cell'].t2m[..., t0: t0 + self.t_context + self.horizon])
             self.predict_results['predict/env_sp'].append(batch['cell'].sp[..., t0: t0 + self.t_context + self.horizon])
+            self.predict_results['predict/env_sshf'].append(batch['cell'].sshf[..., t0: t0 + self.t_context + self.horizon])
             self.add_additional_predict_results()
 
     
@@ -1929,8 +1933,8 @@ class RadarToCellKNNInterpolation(MessagePassing):
 
         distance = F.pairwise_distance(radar_pos[edge_index[0]], cell_pos[edge_index[1]], p=2)
         
-        print(f'max distance: {distance.max()}')
-        print(f'min distance: {distance.min()}')
+        #print(f'max distance: {distance.max()}')
+        #print(f'min distance: {distance.min()}')
         edge_weight = 1. / (distance + 1e-6)
 
         weighted_degree = scatter(edge_weight, edge_index[1], dim_size=n_cells, reduce='sum')
