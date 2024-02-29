@@ -86,13 +86,13 @@ log_offset: 0.1
 scale: 0.001
 length_scale: 1.0
 transforms:
-#  - _target_: transforms.LogTransform
+#  - _target_: fluxrgnn.transforms.LogTransform
 #    feature: x
 #    offset: ${model.log_offset}
-  - _target_: transforms.Rescaling
+  - _target_: fluxrgnn.transforms.Rescaling
     feature: x
     factor: ${model.scale}
-  - _target_: transforms.Rescaling
+  - _target_: fluxrgnn.transforms.Rescaling
     feature: bird_uv
     factor: ${model.length_scale}
 

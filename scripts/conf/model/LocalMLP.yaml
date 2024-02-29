@@ -36,13 +36,13 @@ log_offset: 0.1
 pow_exponent: 1.0 #0.33333
 scale: 0.001 #0.1
 transforms:
-  #- _target_: transforms.LogTransform
+  #- _target_: fluxrgnn.transforms.LogTransform
   #  feature: x
   #  offset: ${model.log_offset}
-  - _target_: transforms.PowerTransform
+  - _target_: fluxrgnn.transforms.PowerTransform
     feature: x
     exponent: ${model.pow_exponent} 
-  - _target_: transforms.Rescaling
+  - _target_: fluxrgnn.transforms.Rescaling
     feature: x
     factor: ${model.scale}
 

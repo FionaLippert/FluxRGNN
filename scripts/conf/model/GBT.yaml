@@ -41,10 +41,10 @@ scale: 0.1 #1.0 #0.1 #0.001
 
 
 transforms:
-  - _target_: transforms.PowerTransform
+  - _target_: fluxrgnn.transforms.PowerTransform
     feature: x
     exponent: ${model.pow_exponent}
-  - _target_: transforms.Rescaling
+  - _target_: fluxrgnn.transforms.Rescaling
     feature: x
     factor: ${model.scale}
 
