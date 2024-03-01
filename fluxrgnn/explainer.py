@@ -72,7 +72,8 @@ class ForecastExplainer():
         for fidx in indices:
             name = self.feature_names[fidx]
             fbg = self.background[sample_idx, fidx] # [n_cells, T]
-            data[self.node_store][name] = torch.tensor(fbg, dtype=torch.float)
+            data[self.node_store][name] = torch.tensor(fbg, dtype=data[self.node_store][name].dtype,
+                                                            device=data[self.node_store][name].device)
 
             #print(f'original {name}: {input_graph[self.node_store][name]}')
             #print(f'masked {name}: {data[self.node_store][name]}')
@@ -91,6 +92,9 @@ class ForecastExplainer():
         """
 
         assert isinstance(input_graph, dataloader.SensorHeteroData)
+
+        # make sure model and data are on the same device
+        input_graph = input_graph.to(self.forecast_model.device)
 
         def f(binary_masks):
             # maps feature masks to model outputs and averages over background samples
