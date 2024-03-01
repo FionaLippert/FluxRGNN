@@ -2,6 +2,7 @@ from fluxrgnn import models, dataloader
 import torch
 from torch.utils.data import random_split
 from torch_geometric.data import Batch
+from torch_geometric.utils import unbatch
 import shap
 import numpy as np
 import copy
@@ -64,25 +65,30 @@ class ForecastExplainer():
         # out = np.tile(features, (self.n_samples, 1, 1))
         # out[:, background_mask, :] = self.background[:, background_mask, :]
 
-        # apply changes to copy of original input data
-        data = copy.copy(input_graph)
+        # apply changes to copies of original input data
+        input_batch = Batch.from_data_list([copy.copy(input_graph) for _ in range(self.n_samples)])
 
-        #input_batch = Batch.from_data_list([data] * self.n_samples)
+        print(input_batch[self.node_store].batch.reshape(self.n_samples, self.n_cells))
 
         indices = np.where(np.logical_not(binary_mask))[0]
 
         for fidx in indices:
             name = self.feature_names[fidx]
-            fbg = self.background[sample_idx, fidx] # [n_cells, T]
-            data[self.node_store][name] = torch.tensor(fbg, dtype=data[self.node_store][name].dtype,
-                                                            device=data[self.node_store][name].device)
+            # fbg = self.background[sample_idx, fidx] # [n_cells, T]
+            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, self.horizon)
+
+            input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
+                                                       device=input_batch[self.node_store][name].device)
+
+            # data[self.node_store][name] = torch.tensor(fbg, dtype=data[self.node_store][name].dtype,
+            #                                                 device=data[self.node_store][name].device)
 
             #print(f'original {name}: {input_graph[self.node_store][name]}')
             #print(f'masked {name}: {data[self.node_store][name]}')
 
             #assert not torch.allclose(data[self.node_store][name], input_graph[self.node_store][name])
 
-        return data
+        return input_batch
 
 
     def explain(self, input_graph, n_samples=1000):
@@ -101,16 +107,24 @@ class ForecastExplainer():
         def f(binary_masks):
             # maps feature masks to model outputs and averages over background samples
             n_masks = binary_masks.shape[0]
-            out = np.zeros((n_masks, self.n_samples, self.n_cells * self.horizon))
+            # out = np.zeros((n_masks, self.n_samples, self.n_cells * self.horizon))
+            out = np.zeros((n_masks, self.n_cells * self.horizon))
             for i in range(n_masks):
                 print(f'retain {binary_masks[i].sum()} features')
-                for j in range(self.n_samples):
-                    masked_input = self.mask_features(binary_masks[i], input_graph, sample_idx=j)
-                    pred = self.predict(masked_input)
-                    out[i, j] = pred
+                # TODO: push all samples through model in parallel
+                masked_input = self.mask_features(binary_masks[i], input_graph)
+                pred = self.predict(masked_input) # [n_samples * n_cells * horizon]
+                out[i] = pred.reshape(self.n_samples, -1).mean()
+                # out[i] = unbatch(pred, masked_input[self.node_store].batch, dim=0) # [n_samples, n_cells * horizon]
+                # for j in range(self.n_samples):
+                #     masked_input = self.mask_features(binary_masks[i], input_graph, sample_idx=j)
+                #     pred = self.predict(masked_input)
+                #     out[i, j] = pred
+                # TODO: get batch for each node and reshape to size [samples, cells * time] (use ptg.utils.unbatch)
+
             #out /= self.n_samples
-            print(f'std over predictions = {out.std(1)}')
-            out = out.mean(1) # take sample mean
+            # print(f'std over predictions = {out.std(1)}')
+            # out = out.mean(1) # take sample mean
 
             return out # shape [n_masks, N]
 
