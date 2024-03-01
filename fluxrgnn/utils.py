@@ -4,6 +4,7 @@ import os
 import os.path as osp
 import torch
 import warnings
+import pickle
 import pandas as pd
 #import ruamel.yaml
 from omegaconf import OmegaConf
@@ -28,9 +29,19 @@ def val_test_split(dataloader, val_ratio):
 def dump_outputs(output_dict, dir):
 
     for k, v in output_dict.items():
-        fp = osp.join(dir, f'{k}.pt')
-        os.makedirs(osp.dirname(fp), exist_ok=True)
-        torch.save(v.cpu(), fp)
+        if isinstance(v, torch.Tensor):
+            fp = osp.join(dir, f'{k}.pt')
+            os.makedirs(osp.dirname(fp), exist_ok=True)
+            torch.save(v.cpu(), fp)
+        elif isinstance(v, np.ndarray):
+            fp = osp.join(dir, f'{k}.np')
+            os.makedirs(osp.dirname(fp), exist_ok=True)
+            np.save(v, fp)
+        else:
+            fp = osp.join(dir, f'{k}.pickle')
+            os.makedirs(osp.dirname(fp), exist_ok=True)
+            with open(fp, 'wb') as f:
+                pickle.dump(v, f)
 
 def SMAPE(output, gt, mask):
     # compute symmetric mean absolute percentage error
