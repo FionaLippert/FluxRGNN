@@ -1919,8 +1919,13 @@ class RadarToCellKNNInterpolation(MessagePassing):
         variables = variables[radar_mask]
         radar_pos = graph_data['radar'].pos[radar_mask]
         cell_pos = graph_data['cell'].pos
-        radar_batch = graph_data['radar'].batch[radar_mask]
-        cell_batch = graph_data['cell'].batch
+
+        if hasattr(graph_data, 'batch'):
+            radar_batch = graph_data['radar'].batch[radar_mask]
+            cell_batch = graph_data['cell'].batch
+        else:
+            radar_batch = None
+            cell_batch = None
 
         # cell_states = knn_interpolate(variables[radar_mask], radar_pos[radar_mask], cell_pos, graph_data['radar'].batch[radar_mask],
         #                               graph_data['cell'].batch, k=self.k)

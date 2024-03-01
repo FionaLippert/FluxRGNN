@@ -61,12 +61,12 @@ def get_transform(cfg):
     return transform
 
 
-def load_background_data(cfg):
+def load_background_data(cfg, feature_names, reduction='sampling', n_samples=100):
     transform = get_transform(cfg)
     data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, transform=transform)[0]
 
     data = torch.utils.data.ConcatDataset(data)
-    background = explainer.construct_background(data, cfg.model.env_vars.keys(), reduction='sampling', n_samples=100)
+    background = explainer.construct_background(data, feature_names, reduction=reduction, n_samples=n_samples)
 
     return background
 
@@ -85,18 +85,24 @@ def explain(trainer, model, cfg: DictConfig):
     model.horizon = cfg.model.test_horizon
     # model.store_fluxes = cfg.model.store_fluxes
 
+    feature_names = list(cfg.model.env_vars.keys()) #[:4]
+    
     idx = 0
     input_graph = test_data[idx]
-    background = load_background_data(cfg)
-    feature_names = cfg.model.env_vars.keys()
+    background = load_background_data(cfg, feature_names, reduction='mean', n_samples=100)
 
     expl = explainer.ForecastExplainer(model, background, feature_names)
-    shapley_values = expl.explain(input_graph, n_samples=100)
+    explanation = expl.explain(input_graph, n_samples=100)
 
-    print(shapley_values)
+    shapley_values = explanation['shapley_values']
+    if isinstance(shapley_values, list):
+        shapley_values = np.stack(shapley_values, axis=-1)
+
+    print(shapley_values.shape)
+    print(shapley_values.sum(-1))
 
     expl_path = osp.join(cfg.output_dir, 'explanation')
-    utils.dump_outputs(shapley_values, expl_path)
+    utils.dump_outputs(explanation, expl_path)
 
     if isinstance(trainer.logger, WandbLogger):
         artifact = wandb.Artifact(f'explanation-{trainer.logger.version}', type='explanation')

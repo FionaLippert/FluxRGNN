@@ -25,7 +25,7 @@ trainer:
   _target_: pytorch_lightning.Trainer
   logger: ${logger}
   log_every_n_steps: 100
-  check_val_every_n_epoch: 100 # 10
+  check_val_every_n_epoch: 10
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       #- _target_: pytorch_lightning.callbacks.EarlyStopping
