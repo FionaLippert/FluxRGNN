@@ -94,12 +94,12 @@ def explain(trainer, model, cfg: DictConfig):
     expl = explainer.ForecastExplainer(model, background, feature_names)
     explanation = expl.explain(input_graph, n_samples=100)
 
-    shapley_values = explanation['shapley_values']
-    if isinstance(shapley_values, list):
-        shapley_values = np.stack(shapley_values, axis=-1)
+    shap_values = explanation['shap_values']
+    if isinstance(shap_values, list):
+        shap_values = np.stack(shap_values, axis=-1)
 
-    print(shapley_values.shape)
-    print(shapley_values.sum(-1))
+    print(shap_values.shape)
+    print(shap_values.sum(-1))
 
     expl_path = osp.join(cfg.output_dir, 'explanation')
     utils.dump_outputs(explanation, expl_path)
