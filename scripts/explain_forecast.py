@@ -44,7 +44,7 @@ def run(cfg: DictConfig):
         model_path = osp.join(artifact_dir, 'model.ckpt')
 
         if torch.cuda.is_available():
-            model = eval(cfg.model._target_).load_from_checkpoint(model_path)
+            model = eval(cfg.model._target_).load_from_checkpoint(model_path, map_location=torch.device('cuda'))
         else:
             model = eval(cfg.model._target_).load_from_checkpoint(model_path, map_location=torch.device('cpu'))
 
