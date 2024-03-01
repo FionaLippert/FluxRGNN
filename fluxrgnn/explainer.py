@@ -1,7 +1,7 @@
 from fluxrgnn import models, dataloader
 import torch
 from torch.utils.data import random_split
-# from torch_geometric.data import Batch
+from torch_geometric.data import Batch
 import shap
 import numpy as np
 import copy
@@ -66,6 +66,8 @@ class ForecastExplainer():
 
         # apply changes to copy of original input data
         data = copy.copy(input_graph)
+
+        #input_batch = Batch.from_data_list([data] * self.n_samples)
 
         indices = np.where(np.logical_not(binary_mask))[0]
 

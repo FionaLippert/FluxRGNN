@@ -36,7 +36,7 @@ def dump_outputs(output_dict, dir):
         elif isinstance(v, np.ndarray):
             fp = osp.join(dir, f'{k}.np')
             os.makedirs(osp.dirname(fp), exist_ok=True)
-            np.save(v, fp)
+            np.save(fp, v)
         else:
             fp = osp.join(dir, f'{k}.pickle')
             os.makedirs(osp.dirname(fp), exist_ok=True)
