@@ -85,23 +85,22 @@ def explain(trainer, model, cfg: DictConfig):
     model.horizon = cfg.model.test_horizon
     # model.store_fluxes = cfg.model.store_fluxes
 
-    feature_names = list(cfg.model.env_vars.keys()) #[:4]
+    #feature_names = list(cfg.model.env_vars.keys()) #[:4]
+
+    feature_names = ['u10', 'v10', 't2m', 'cc', 'q', 'sp', 'tp']
     
-    idx = 0
+    idx = 18
     input_graph = test_data[idx]
-    background = load_background_data(cfg, feature_names, reduction='mean', n_samples=100)
+    background = load_background_data(cfg, feature_names, reduction='sampling', n_samples=10)
 
     expl = explainer.ForecastExplainer(model, background, feature_names)
-    explanation = expl.explain(input_graph, n_samples=100)
+    explanation = expl.explain(input_graph, n_samples=1000)
 
     shap_values = explanation['shap_values']
     if isinstance(shap_values, list):
         shap_values = np.stack(shap_values, axis=-1)
 
-    print(shap_values.shape)
-    print(shap_values.sum(-1))
-
-    expl_path = osp.join(cfg.output_dir, 'explanation')
+    expl_path = osp.join(cfg.output_dir, f'explanation_{idx}')
     utils.dump_outputs(explanation, expl_path)
 
     if isinstance(trainer.logger, WandbLogger):

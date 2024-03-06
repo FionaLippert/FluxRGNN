@@ -34,7 +34,7 @@ def dump_outputs(output_dict, dir):
             os.makedirs(osp.dirname(fp), exist_ok=True)
             torch.save(v.cpu(), fp)
         elif isinstance(v, np.ndarray):
-            fp = osp.join(dir, f'{k}.np')
+            fp = osp.join(dir, f'{k}.npy')
             os.makedirs(osp.dirname(fp), exist_ok=True)
             np.save(fp, v)
         else:

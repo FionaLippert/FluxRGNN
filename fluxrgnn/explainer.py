@@ -75,7 +75,7 @@ class ForecastExplainer():
         for fidx in indices:
             name = self.feature_names[fidx]
             # fbg = self.background[sample_idx, fidx] # [n_cells, T]
-            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, self.horizon)
+            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, self.T)
 
             input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
                                                        device=input_batch[self.node_store][name].device)
@@ -114,7 +114,7 @@ class ForecastExplainer():
                 # TODO: push all samples through model in parallel
                 masked_input = self.mask_features(binary_masks[i], input_graph)
                 pred = self.predict(masked_input) # [n_samples * n_cells * horizon]
-                out[i] = pred.reshape(self.n_samples, -1).mean()
+                out[i] = pred.reshape(self.n_samples, -1).mean(0)
                 # out[i] = unbatch(pred, masked_input[self.node_store].batch, dim=0) # [n_samples, n_cells * horizon]
                 # for j in range(self.n_samples):
                 #     masked_input = self.mask_features(binary_masks[i], input_graph, sample_idx=j)
@@ -136,9 +136,11 @@ class ForecastExplainer():
         # compute SHAP values
         mask_none = np.ones((1, self.n_features)) # mask for actual prediction
         shap_values = explainer.shap_values(mask_none, nsamples=n_samples)
+        shap_values = np.stack(shap_values, axis=0)
 
         return {'shap_values': shap_values, 
                 'expected_values': explainer.expected_value,
+                'actual_values': explainer.fx,
                 'feature_names': self.feature_names}
 
 
