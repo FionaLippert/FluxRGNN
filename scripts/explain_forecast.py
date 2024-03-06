@@ -48,7 +48,8 @@ def run(cfg: DictConfig):
         else:
             model = eval(cfg.model._target_).load_from_checkpoint(model_path, map_location=torch.device('cpu'))
 
-    explain(trainer, model, cfg)
+    with torch.no_grad():
+        explain(trainer, model, cfg)
 
     if isinstance(trainer.logger, WandbLogger):
         wandb.finish()
