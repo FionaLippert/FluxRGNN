@@ -3,6 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import *
 from torch_geometric.nn import MessagePassing, inits
+from torch_geometric.nn.models import GAT
 from torch_geometric.utils import to_dense_adj, degree, scatter
 from torch_geometric.nn.unpool import knn_interpolate
 from torch_geometric.nn.pool import knn
@@ -483,7 +484,8 @@ class FluxRGNN(ForecastModel):
     """
 
     def __init__(self, decoder, flux_model=None, source_sink_model=None,
-                 encoder=None, boundary_model=None, initial_model=None, ground_model=None, **kwargs):
+                 encoder=None, boundary_model=None, initial_model=None,
+                 ground_model=None, **kwargs):
         """
         Initialize FluxRGNN and all its components.
 
@@ -491,6 +493,7 @@ class FluxRGNN(ForecastModel):
         :param encoder: encoder model (e.g. RecurrentEncoder)
         :param boundary_model: model handling boundary cells (e.g. Extrapolation)
         :param initial_model: model predicting the initial state
+        :param location_encoder: model mapping static cell features to postitional embeddings
         """
 
         super(FluxRGNN, self).__init__(**kwargs)
@@ -501,6 +504,7 @@ class FluxRGNN(ForecastModel):
         self.source_sink_model = source_sink_model
         self.boundary_model = boundary_model
         self.initial_model = initial_model
+        # self.location_encoder = location_encoder
         #self.ground_model = ground_model
 
         self.n_hidden = kwargs.get('n_hidden')
@@ -511,12 +515,17 @@ class FluxRGNN(ForecastModel):
 
         # TODO: use separate topographical / location embedding model whose output is fed to all other model components?
 
-        cell_data = graph_data['cell']
-        cell_edges = graph_data['cell', 'cell']
+        cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
+
+        # if self.location_encoder is not None:
+        #     # get cell embeddings
+        #     self.cell_embeddings = self.location_encoder(cell_data)
+        # else:
+        #     self.cell_embeddings = None
 
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            rnn_states = self.encoder(graph_data, t0)
+            rnn_states = self.encoder(graph_data, t0) #, embeddings=self.cell_embeddings)
             self.decoder.initialize(rnn_states)
             #h_t, c_t = self.encoder(graph_data, t0)
             #hidden = h_t[-1]
@@ -542,7 +551,7 @@ class FluxRGNN(ForecastModel):
 
         # setup model components
         if self.boundary_model is not None:
-            self.boundary_model.initialize(cell_edges)
+            self.boundary_model.initialize(cell_data)
 
         # relevant info for later
         if not self.training and self.store_fluxes:
@@ -554,7 +563,7 @@ class FluxRGNN(ForecastModel):
 
         # predict initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, self.t_context + t0, hidden)
+            x = self.initial_model(graph_data, self.t_context + t0, hidden) #, embeddings=self.cell_embeddings)
             #x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
@@ -598,7 +607,7 @@ class FluxRGNN(ForecastModel):
 
         # update hidden states
         #if self.decoder is not None:
-        hidden = self.decoder(x, cell_data, t)
+        hidden = self.decoder(x, cell_data, t) #, embeddings=self.cell_embeddings)
 
         if self.boundary_model is not None:
             h_boundary = self.boundary_model(hidden)
@@ -608,7 +617,7 @@ class FluxRGNN(ForecastModel):
         if self.flux_model is not None:
 
             # predict fluxes between neighboring cells
-            net_flux = self.flux_model(x, hidden, data, t)
+            net_flux = self.flux_model(x, hidden, data, t) #, embeddings=self.cell_embeddings)
 
             #print(f'avg net flux = {net_flux.mean()}')
 
@@ -645,7 +654,8 @@ class FluxRGNN(ForecastModel):
 
             # predict local source/sink terms
             delta, _ = self.source_sink_model(x, hidden, cell_data, t,
-                                           ground_states=None)
+                                              ground_states=None) #,
+                                              #embeddings=self.cell_embeddings)
 
             if not self.training and self.store_fluxes:
                 # save model component outputs
@@ -1658,6 +1668,7 @@ class SourceSink(torch.nn.Module):
         return delta, ground_states
 
 
+
 class DeltaMLP(torch.nn.Module):
     """
     Predict delta for time step t -> t+1, given previous predictions and hidden states.
@@ -1710,6 +1721,54 @@ class DeltaMLP(torch.nn.Module):
         delta = self.delta_mlp(inputs)
 
         return delta, None
+
+
+class LocationEncoder(torch.nn.Module):
+    """
+    Encodes geographical locations and other static cell features such as land cover into hidden representations,
+    taking the spatial structure of the tessellation into account.
+    """
+
+    def __init__(self, static_cell_features, out_channels, **kwargs):
+        """
+        Initialize LocationEncoder module.
+
+        :param static_cell_features: mapping from names of static cell features to their dimensionality
+        """
+
+        super(LocationEncoder, self).__init__()
+
+        self.static_cell_features = static_cell_features
+        self.embedding_dim = out_channels
+
+        n_node_in = sum(self.static_cell_features.values())
+        # n_hidden = location_encoder.n_hidden #kwargs.get('n_hidden')
+
+        # setup model components
+        # self.input_embedding = torch.nn.Linear(n_node_in, n_hidden, bias=False)
+
+        # self.location_encoder = location_encoder
+        self.location_encoder = GAT(n_node_in, out_channels,
+                                    num_layers=kwargs.get('n_layers', 1),
+                                    dropout=kwargs.get('dropout_p', 0.0))
+
+    def forward(self, cell_data):
+        """
+        Encode static cell features with GNN.
+
+        :return hidden: hidden representation for all cells
+        :param graph_data: SensorData instance containing information on static and dynamic features
+        """
+
+        # collect static graph features
+        input = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
+                                          feature in self.static_cell_features], dim=1)
+
+        # input = self.input_embedding(input)
+
+        embedding = self.location_encoder(input, cell_data.edge_index, cell_data.edge_attr) # [n_cells, n_hidden]
+
+        return embedding
 
 
 class ObservationModel(MessagePassing):
@@ -3005,8 +3064,8 @@ class Extrapolation(MessagePassing):
 
         self.edge_index = edge_index
 
-    def initialize(self, cell_edges):
-        self.edge_index = cell_edges.edge_index[:, torch.logical_not(cell_edges.boundary2boundary_edges)]
+    def initialize(self, cell_data):
+        self.edge_index = cell_data.edge_index[:, torch.logical_not(cell_data.boundary2boundary_edges)]
 
     def forward(self, var):
         var = self.propagate(self.edge_index, var=var)
@@ -3020,7 +3079,8 @@ class Extrapolation(MessagePassing):
 class RecurrentEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, node_rnn, radar2cell_model, static_cell_features=None, dynamic_cell_features=None, **kwargs):
+    def __init__(self, node_rnn, radar2cell_model, location_encoder=None,
+                 static_cell_features=None, dynamic_cell_features=None, **kwargs):
         super(RecurrentEncoder, self).__init__()
 
         self.t_context = kwargs.get('context', 24)
@@ -3030,15 +3090,18 @@ class RecurrentEncoder(torch.nn.Module):
 
         self.radar2cell_model = radar2cell_model
 
+        self.location_encoder = location_encoder
+
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         #print(static_cell_features)
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        # TODO: treat radar features separately
-
         n_inputs = sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
                     self.radar2cell_model.n_features
+
+        if self.location_encoder is not None:
+            n_inputs += self.location_encoder.embedding_dim
 
         # self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
         # self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
@@ -3065,15 +3128,11 @@ class RecurrentEncoder(torch.nn.Module):
 
         self.node_rnn.setup_zero_states(cell_data.num_nodes, device=cell_data.coords.device)
 
-        # # initialize lstm variables
-        # h_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
-        #        for _ in range(self.n_lstm_layers)]
-        # c_t = [torch.zeros(cell_data.num_nodes, self.n_hidden, device=cell_data.coords.device)
-        #        for _ in range(self.n_lstm_layers)]
-
         static_cell_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1)
                                    for feature in self.static_cell_features]
-        # TODO: push node_features through GNN or MLP to extract spatial representations?
+
+        if self.location_encoder is not None:
+            static_cell_features.append(self.location_encoder(cell_data))
 
         # process all context time steps and the first forecasting time step
         for tidx in range(self.t_context + 1):
@@ -3085,18 +3144,10 @@ class RecurrentEncoder(torch.nn.Module):
                                           for feature in self.dynamic_cell_features]
             # get radar features and map them to cells
             radar_features = self.radar2cell_model(data, t, self.node_rnn.get_hidden())
-            #print('radar feature min max:', radar_features.min(1), radar_features.max(1))
             
             inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 
             rnn_states = self.node_rnn(inputs, edge_index=cell_data.edge_index, edge_weight=None) # TODO use weights
-            # h_t, c_t = self.update(inputs, h_t, c_t)
-
-            del radar_features
-            del dynamic_cell_features
-
-        del cell_data
-        del static_cell_features
 
         return rnn_states
 
