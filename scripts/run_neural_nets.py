@@ -1,5 +1,5 @@
 import fluxrgnn
-from fluxrgnn import dataloader, utils
+from fluxrgnn import dataloader, utils, transforms
 from fluxrgnn.models import *
 import torch
 from torch.utils.data import random_split, Subset
@@ -22,7 +22,7 @@ import yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
-import transforms
+#import transforms
 
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
