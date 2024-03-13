@@ -83,23 +83,57 @@ def explain(trainer, model, cfg: DictConfig):
     test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
     test_data = test_data[0]
 
+    normalization = test_data.normalization
+
     model.horizon = cfg.model.test_horizon
     # model.store_fluxes = cfg.model.store_fluxes
 
     #feature_names = list(cfg.model.env_vars.keys()) #[:4]
 
-    feature_names = ['u10', 'v10', 't2m', 'cc', 'q', 'sp', 'tp']
-    
-    idx = 18
+    feature_names = list(cfg.task.get('feature_names', ['u10', 'v10', 't2m', 'cc', 'q', 'sp', 'tp']))
+    print(feature_names, type(feature_names))
+
+    feature_names = cfg.task.feature_names
+    print(type(feature_names))
+
+    feature_names = OmegaConf.to_object(cfg.task)['feature_names']
+
+    n_bg_samples = cfg.task.get('n_bg_samples', 10)
+    n_shap_samples = cfg.task.get('n_shap_samples', 1000)
+    idx = cfg.task.seqID
+
+    print(f'Explain sequence {idx}')
+    print(f'Consider features {feature_names}')
+
     input_graph = test_data[idx]
-    background = load_background_data(cfg, feature_names, reduction='sampling', n_samples=10)
+    background = load_background_data(cfg, feature_names, reduction='sampling', n_samples=n_bg_samples)
 
     expl = explainer.ForecastExplainer(model, background, feature_names)
-    explanation = expl.explain(input_graph, n_samples=1000)
+    explanation = expl.explain(input_graph, n_samples=n_shap_samples) #0)
 
-    shap_values = explanation['shap_values']
-    if isinstance(shap_values, list):
-        shap_values = np.stack(shap_values, axis=-1)
+    explanation['local_night'] = input_graph[expl.node_store]['local_night'][:, expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
+
+    for name in feature_names:
+        values = input_graph[expl.node_store][name][..., expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
+
+        # reverse normalization
+        if name in ['u', 'v']:
+            uv_scale = max(normalization.absmax('u'), normalization.absmax('v'))
+            explanation[name] = values * uv_scale
+
+        elif name in ['u10', 'v10']:
+            uv_scale = max(normalization.absmax('u10'), normalization.absmax('v10'))
+            explanation[name] = values * uv_scale
+
+        elif name in ['sshf']:
+            explanation[name] = values * normalization.absmax('sshf')
+
+        else:
+            values = values + 1
+            values = values / 2.0
+            values = values * (normalization.max(name) - normalization.min(name))
+            values = values + normalization.min(name)
+            explanation[name] = values
 
     expl_path = osp.join(cfg.output_dir, f'explanation_{idx}')
     utils.dump_outputs(explanation, expl_path)

@@ -38,20 +38,20 @@ interpolation_range: 350000
 n_dummy_radars: 60
 h3_resolution: 3
 excludes: rain_event_list.csv
-excluded_radars: #[] 
-  - kjax
-  - kbbx
-  - kmtx
-  - krgx
-  - kmsx
-  - ksox
-  - klrx
-  - kgjx
-  - kmux
-  - kbhx
-  - kesx
-  - kicx
-  - kmax
+excluded_radars: [] 
+#  - kjax
+#  - kbbx
+#  - kmtx
+#  - krgx
+#  - kmsx
+#  - ksox
+#  - klrx
+#  - kgjx
+#  - kmux
+#  - kbhx
+#  - kesx
+#  - kicx
+#  - kmax
 test_radars: []
 
 # settings for generating sequences

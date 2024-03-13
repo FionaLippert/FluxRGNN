@@ -6,6 +6,7 @@ from torch_geometric.utils import unbatch
 from scipy.special import binom
 import shap
 import numpy as np
+from math import prod
 import copy
 import itertools
 import warnings
@@ -37,12 +38,17 @@ class ForecastExplainer():
 
         self.t0 = kwargs.get('t0', 0)
         self.horizon = kwargs.get('horizon', 48)
+        self.context = self.forecast_model.t_context
         self.node_store = kwargs.get('node_store', 'cell')
 
+        self.explain_processes = kwargs.get('explain_processes', True)
+        if self.explain_processes:
+            self.output_shape = (self.n_cells, 5, self.horizon - 1) 
+            self.forecast_model.store_fluxes = True
+        else:
+            self.output_shape = (self.n_cells, 1, self.horizon)
+        self.output_dim = prod(self.output_shape)
 
-    def convert_outputs(self, prediction):
-
-        return prediction.detach().cpu().reshape(-1) #.numpy()
 
 
     def predict(self, input_graph):
@@ -52,12 +58,20 @@ class ForecastExplainer():
         :return: prediction: np.ndarray of shape [n_samples, N]
         """
 
-        prediction = self.forecast_model.forecast(input_graph, self.horizon, t0=self.t0)
+        prediction = self.forecast_model.forecast(input_graph, self.horizon, t0=self.t0) # [cells, horizon]
 
-        return self.convert_outputs(prediction)
+        if self.explain_processes:
+            source = torch.stack(self.forecast_model.node_sink, dim=-1)
+            sink = torch.stack(self.forecast_model.node_source, dim=-1) # [cells, 1, horizon]
+
+            velocities = torch.stack(self.forecast_model.node_velocity, dim=-1) # [cells, 2, horizon]
+
+            prediction = torch.cat([prediction[..., 1:].unsqueeze(1), source, sink, velocities], dim=1)
+
+        return prediction.reshape(-1)
 
 
-    def mask_features(self, binary_mask, input_graph, sample_idx=0):
+    def mask_features(self, binary_mask, input_batch, sample_idx=0):
         """
         Replace masked features with corresponding background samples
         :param binary_mask: np.ndarray of shape [n_features] containing 0's for features that should be replaced
@@ -70,17 +84,16 @@ class ForecastExplainer():
         # out[:, background_mask, :] = self.background[:, background_mask, :]
 
         # apply changes to copies of original input data
-        input_batch = Batch.from_data_list([copy.copy(input_graph) for _ in range(self.n_samples)])
-
-        # indices = np.where(np.logical_not(binary_mask))[0]
-        indices = torch.logical_not(binary_mask).nonzero()
+        masked_input_batch = copy.copy(input_batch)
+        indices = np.where(np.logical_not(binary_mask))[0]
+        # indices = torch.logical_not(binary_mask).nonzero().view(-1)
 
         for fidx in indices:
             name = self.feature_names[fidx]
             # fbg = self.background[sample_idx, fidx] # [n_cells, T]
-            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, self.T)
+            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, -1, self.T)
 
-            input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
+            masked_input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
                                                        device=input_batch[self.node_store][name].device)
 
             # data[self.node_store][name] = torch.tensor(fbg, dtype=data[self.node_store][name].dtype,
@@ -91,7 +104,7 @@ class ForecastExplainer():
 
             #assert not torch.allclose(data[self.node_store][name], input_graph[self.node_store][name])
 
-        return input_batch
+        return masked_input_batch
 
 
     def explain(self, input_graph, n_samples=1000):
@@ -107,15 +120,19 @@ class ForecastExplainer():
         # make sure model and data are on the same device
         input_graph = input_graph.to(self.forecast_model.device)
 
+        input_batch = Batch.from_data_list([copy.copy(input_graph) for _ in range(self.n_samples)])
+        
+        print('model device', self.forecast_model.device)
+
         def f(binary_masks):
             # maps feature masks to model outputs and averages over background samples
             n_masks = binary_masks.shape[0]
             # out = np.zeros((n_masks, self.n_cells * self.horizon))
-            out = torch.zeros((n_masks, self.n_cells * self.horizon))
+            out = torch.zeros((n_masks, self.output_dim), device=self.forecast_model.device)
             for i in range(n_masks):
-                print(f'retain {binary_masks[i].sum()} features')
+                print(f'retain {binary_masks[i].sum()} features: {binary_masks[i]}')
                 # TODO: push all samples through model in parallel
-                masked_input = self.mask_features(binary_masks[i], input_graph)
+                masked_input = self.mask_features(binary_masks[i], input_batch)
                 pred = self.predict(masked_input) # [n_samples * n_cells * horizon]
                 out[i] = pred.reshape(self.n_samples, -1).mean(0)
                 # out[i] = unbatch(pred, masked_input[self.node_store].batch, dim=0) # [n_samples, n_cells * horizon]
@@ -129,27 +146,36 @@ class ForecastExplainer():
             # print(f'std over predictions = {out.std(1)}')
             # out = out.mean(1) # take sample mean
 
-            return out # shape [n_masks, N]
+            #return out # shape [n_masks, N]
+            return out.cpu().numpy()
 
 
         # setup explainer (compute expectation over background)
-        # mask_all = np.zeros((1, self.n_features)) # mask for overall background
-        # explainer = shap.KernelExplainer(f, mask_all)
+        mask_all = np.zeros((1, self.n_features)) # mask for overall background
+        explainer = shap.KernelExplainer(f, mask_all)
 
-        explainer = KernelExplainer(f, self.n_features, self.forecast_model.device)
+        #explainer = KernelExplainer(f, self.n_features, self.forecast_model.device)
 
         # compute SHAP values
-        # mask_none = np.ones((1, self.n_features)) # mask for actual prediction
-        # shap_values = explainer.shap_values(mask_none, nsamples=n_samples)
-        shap_values = explainer.shap_values(nsamples=n_samples)
-        #shap_values = np.stack(shap_values, axis=0)
+        mask_none = np.ones((1, self.n_features)) # mask for actual prediction
+        shap_values = explainer.shap_values(mask_none, nsamples=n_samples)
+        #shap_values = explainer.shap_values(nsamples=n_samples)
+        shap_values = np.stack(shap_values, axis=0)
 
-        return {'shap_values': shap_values,
-                # 'expected_values': explainer.expected_value,
-                'expected_values': explainer.pred_null,
-                'actual_values': explainer.pred_orig, #explainer.fx
-                'feature_names': self.feature_names}
+        result = {'shap_values': shap_values.reshape(*self.output_shape, self.n_features),
+                 'expected_values': explainer.expected_value.reshape(self.output_shape),
+                # 'expected_values': explainer.pred_null,
+                # 'actual_values': explainer.pred_orig, 
+                'actual_values': explainer.fx.reshape(self.output_shape),
+                'permuted_values': explainer.ey.reshape(-1, *self.output_shape),
+                'feature_names': self.feature_names,
+                #'local_night': input_graph[self.node_store].local_night[:, self.t0 + self.context: self.t0 + self.context + self.horizon]
+                }
+        
+        #for name in self.feature_names:
+        #    result[name] = input_graph[self.node_store][name][:, self.t0 + self.context: self.t0 + self.context + self.horizon]
 
+        return result
 
     # def explain(self, features, background):
     #     """
@@ -209,7 +235,7 @@ class KernelExplainer():
         self.reset()
 
         # average model prediction
-        self.pred_null = self.model_f(torch.zeros(n_features, device=device)) # shape [n_cells * horizon]
+        self.pred_null = self.model_f(torch.zeros(1, n_features, device=device)).squeeze() # shape [n_cells * horizon]
         self.pred_dim = self.pred_null.numel()
 
     def reset(self):
@@ -223,11 +249,13 @@ class KernelExplainer():
     def shap_values(self, **kwargs):
         # background_mask is boolean tensor, with 1's for features that should be fixed,
         # and 0's for features that should be randomized
-        fidx = torch.arange(self.n_features)
+        use_regularization = kwargs.get('use_regularization', False)
+        
+        fidx = torch.arange(self.n_features, device=self.device)
 
         # get actual prediction
         feature_mask = torch.ones(self.n_features, device=self.device)
-        self.pred_orig = self.model_f(feature_mask)
+        self.pred_orig = self.model_f(feature_mask.unsqueeze(0)).squeeze()
 
         self.reset()
 
@@ -241,7 +269,7 @@ class KernelExplainer():
             phi[fidx[0], :] = diff
         else:
             # check all possible feature coalitions
-            n_samples = kwargs.get('n_samples', 2 * self.n_features + 2**11)
+            n_samples = kwargs.get('nsamples', 2 * self.n_features + 2**11)
             if self.n_features <= 30:
                 # enumerate all subsets
                 self.max_samples = 2**self.n_features - 2
@@ -253,20 +281,23 @@ class KernelExplainer():
             max_subset_size = int(np.ceil((self.n_features - 1) / 2.0))
             n_paired_subset_sizes = int(np.floor((self.n_features - 1) / 2.0))
 
-            self.kernel_weights = torch.zeros(self.n_samples)
+            self.kernel_weights = torch.zeros(self.n_samples, device=self.device)
+            print(f'n_samples = {self.n_samples}')
+            print(f'max_subset_size = {max_subset_size}')
 
             weights = torch.tensor([(self.n_features - 1) / (i * (self.n_features - i))
-                                    for i in range(1, max_subset_size + 1)])
+                                    for i in range(1, max_subset_size + 1)], device=self.device)
             weights[:n_paired_subset_sizes] *= 2
             weights /= weights.sum()
 
             remaining_weights = copy.copy(weights)
 
-            n_full_subsets = 0
+            n_full_subset_sizes = 0
 
             # fill out all subset sizes that can be enumerated completely given the available samples
             n_samples_left = self.n_samples
             for subset_size in range(1, max_subset_size + 1):
+                print(f'processing subsets of size {subset_size}')
                 coef = binom(self.n_features, subset_size)
                 if subset_size <= n_paired_subset_sizes:
                     n_subsets = coef * 2
@@ -275,7 +306,7 @@ class KernelExplainer():
 
                 if n_samples_left * remaining_weights[subset_size - 1] / n_subsets >= 1.0 - 1e-8:
                     # enough samples left to enumerate all subsets of this size
-                    n_full_subsets += 1
+                    n_full_subset_sizes += 1
                     n_samples_left -= n_subsets
 
                     if remaining_weights[subset_size - 1] < 1.0:
@@ -286,7 +317,7 @@ class KernelExplainer():
                     w = weights[subset_size - 1] / coef
                     if subset_size <= n_paired_subset_sizes:
                         w /= 2.0
-                    for indices in itertools.combinations(fidx, subset_size):
+                    for indices in torch.combinations(fidx, subset_size):
                         feature_mask[:] = 1
                         feature_mask[indices] = 0
 
@@ -301,26 +332,31 @@ class KernelExplainer():
                     # not enough samples left for subset size
                     break
 
-
+            print(f'added {self.n_samples_added}. Start sampling random subsets')
             # add random samples from remaining subset space
             n_fixed_samples = self.n_samples_added
             n_samples_left = self.n_samples - self.n_samples_added
-            if n_full_subsets != n_subsets:
+            print(f'full subsets = {n_full_subset_sizes}, max subset size = {max_subset_size}')
+            if n_full_subset_sizes != max_subset_size and n_samples_left > 0:
                 remaining_weights = copy.copy(weights)
                 remaining_weights[:n_paired_subset_sizes] /= 2
-                remaining_weights = remaining_weights[n_full_subsets:]
+                remaining_weights = remaining_weights[n_full_subset_sizes:]
                 remaining_weights /= remaining_weights.sum()
 
-                random_sets = np.random.choice(len(remaining_weights), 4 * n_samples_left, p=remaining_weights)
+                print(remaining_weights.sum(), remaining_weights)
+
+                #random_sets = np.random.choice(len(remaining_weights), 4 * n_samples_left, p=remaining_weights)
+                random_sets = torch.multinomial(remaining_weights, num_samples=4*n_samples_left, replacement=True)
+                
                 set_idx = 0
                 used_masks = {}
 
                 while n_samples_left > 0 and set_idx < len(random_sets):
                     feature_mask[:] = 0
-                    indices = random_sets[set_idx]
+                    #indices = random_sets[set_idx]
                     set_idx += 1
-                    subset_size = indices + n_full_subsets + 1
-                    feature_mask[np.random.permutation(self.n_features)[:subset_size]] = 1
+                    subset_size = random_sets[set_idx] + n_full_subset_sizes + 1
+                    feature_mask[torch.randperm(self.n_features)[:subset_size]] = 1
 
                     # only add sample if we haven't seed it before, otherwise increase the weight of that sample
                     mask_tuple = tuple(feature_mask)
@@ -336,7 +372,7 @@ class KernelExplainer():
                     # add compliment sample
                     if n_samples_left > 0 and subset_size <= n_paired_subset_sizes:
                         feature_mask[:] = 1
-                        feature_mask[indices] = 0
+                        feature_mask[random_sets[set_idx]] = 0
 
                         if new_sample:
                             n_samples_left -= 1
@@ -345,7 +381,7 @@ class KernelExplainer():
                             self.kernel_weights[used_masks[mask_tuple] + 1] += 1.0
 
             # normalize weights for random samples to equal the weight left after fixed samples
-            weight_left = weights[n_full_subsets:].sum()
+            weight_left = weights[n_full_subset_sizes:].sum()
             self.kernel_weights[n_fixed_samples:] *= weight_left / self.kernel_weights[n_fixed_samples:].sum()
 
 
@@ -354,14 +390,14 @@ class KernelExplainer():
             self.masks = torch.stack(self.masks, dim=0) # [n_samples, n_features]
 
             # get shap value for each feature and pred_dim
-            phi = torch.zeros(self.n_features, self.pred_dim)
+            phi = torch.zeros(self.n_features, self.pred_dim, device=self.device)
 
-            diff = torch.stack(self.ey, dim=0) - self.pred_null.unsqueeze(0) # [n_samples, pred_dim]
+            diff = self.ey - self.pred_null.unsqueeze(0) # [n_samples, pred_dim]
             n_fixed = torch.stack(self.n_fixed, dim=0)
 
 
             frac_sampled = self.n_samples / self.max_samples
-            if self.use_regularization and frac_sampled < 0.2:
+            if use_regularization and frac_sampled < 0.2:
                 print('Use regularization')
                 aug_weights = torch.cat([self.kernel_weights * (self.n_features - n_fixed),
                                          self.kernel_weights * n_fixed], dim=0) # [n_samples * 2]
@@ -378,34 +414,46 @@ class KernelExplainer():
                 for dim in range(self.pred_dim):
                     reg_indices = (sklearn.linear_models.lars_path(aug_mask, aug_diff_elim[:, dim], max_iter=10)[1])
                     reg_mask[reg_indices, dim] = 1
+                n_selected_features = 10
             else:
                 reg_mask = torch.ones(self.n_features, self.pred_dim, dtype=torch.bool, device=self.device)
-
+                n_selected_features = self.n_features
             # eliminate one variable with the constraint that all features sum to the output difference
-            mask = self.masks.unsqueeze(-1).repeat(self.pred_dim)[:, reg_mask] # [n_samples, n_selected_features, pred_dim]
+            
+            print(self.masks.size())
+            mask = self.masks.unsqueeze(-1).repeat(1, 1, self.pred_dim)[:, reg_mask].reshape(self.n_samples, n_selected_features, self.pred_dim) # [n_samples, n_selected_features, pred_dim]
+            print(mask.size())
             mask_elim = mask[:, -1, :] # [n_samples, pred_dim]
             mask_keep = mask[:, :-1, :] # [n_samples, n_selected_features - 1, pred_dim]
+            print(diff.size(), mask_elim.size(), self.pred_orig.size(), self.pred_null.size())
             diff_elim = diff - (mask_elim * (self.pred_orig - self.pred_null).unsqueeze(0))  # [n_samples, pred_dim]
-            etmp = mask_keep - mask_elim.unsqueeze(1)  # [n_samples, n_selected_features - 1]
+            etmp = mask_keep - mask_elim.unsqueeze(1)  # [n_samples, n_selected_features - 1, pred_dim]
+            # use pred_dim as batch dimension
+            X = etmp.permute(2, 0, 1) # [pred_dim, n_samples, n_selected_features - 1]
+            print(diff_elim.size())
+            Y = diff_elim.permute(1, 0).unsqueeze(-1) # [pred_dim, n_samples, 1]
 
             # compute weighted masks
-            WX = self.kernel_weights.unsqueeze(1) * etmp # [n_samples, n_selected_features - 1]
+            print(self.kernel_weights.size(), etmp.size(), Y.size())
+            WX = self.kernel_weights.view(1, -1, 1) * X # [pred_dim, n_samples, n_selected_features - 1]
 
             # solve linear system Ax = B for all columns in B (i.e. all pred dims)
-            A = etmp.T @ WX # [n_selected_features - 1, n_selected_features - 1]
-            B = WX.T @ diff_elim # [n_selected_features - 1, pred_dim]
+            A = X.transpose(1, 2) @ WX # [pred_dim, n_selected_features - 1, n_selected_features - 1]
+            B = WX.transpose(1, 2) @ Y # [pred_dim, n_selected_features - 1, 1]
 
             try:
-                w = torch.linalg.solve(A, B) # [n_selected_features - 1, pred_dim]
+                w = torch.linalg.solve(A, B) # [pred_dim, n_selected_features - 1, 1]
             except Exception:
                 warnings.warn('Linear regression is singular! Use least squares solutions instead.')
-                sqrt_weights = torch.sqrt(self.kernel_weights).unsqueeze(1)
-                w = torch.linalg.lstsq(sqrt_weights * etmp, sqrt_weights * diff_elim)
+                sqrt_weights = torch.sqrt(self.kernel_weights).view(1, -1, 1)
+                w = torch.linalg.lstsq(sqrt_weights * X, sqrt_weights * Y)
 
+            w = w.squeeze(-1) # [pred_dim, n_selected_features - 1]
+            
             # non-selected feature importance is 0
-            w_elim = (self.pred_orig - self.pred_null - w.sum(0)).unsqueeze(0)
-            w = torch.stack([w, w_elim], dim=0) # [n_selected_features, pred_dim
-            phi[reg_mask] = w
+            w_elim = (self.pred_orig - self.pred_null) - w.sum(1) # [pred_dim, 1]
+            w = torch.cat([w, w_elim.unsqueeze(-1)], dim=1) # [pred_dim, n_selected_features]
+            phi[reg_mask] = w.T.reshape(-1)
 
 
         # clean up rounding errors:
@@ -417,8 +465,8 @@ class KernelExplainer():
 
     def add_sample(self, feature_mask, w):
 
-        self.n_samples_added += 1
         self.kernel_weights[self.n_samples_added] = w
-        self.ey.append(self.model_f(feature_mask))
+        self.ey.append(self.model_f(feature_mask.unsqueeze(0)).squeeze())
         self.n_fixed.append(feature_mask.sum())
         self.masks.append(feature_mask)
+        self.n_samples_added += 1
