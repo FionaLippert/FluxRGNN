@@ -176,3 +176,65 @@ class Rescaling(BaseTransform):
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(feature={self.feature}, offset={self.offset}, factor={self.factor})'
+
+
+class Transforms:
+
+    def __init__(self, transforms: list, **kwargs):
+
+        self.transforms = {}
+
+        for t in transforms:
+            var = t.feature
+
+            if var not in self.transforms:
+                self.transforms[var] = []
+
+            self.transforms[var].append(t)
+
+        self.zero_value = {var: self.apply_forward_transforms(torch.tensor(0), var) for var in self.transforms}
+
+        self.log_offset = kwargs.get('log_offset', 1e-8)
+        self.pow_exponent = kwargs.get('pow_exponent', 0.3333)
+
+    def apply_forward_transforms(self, values: torch.Tensor, var: str = 'x'):
+
+        out = values
+        if var in self.transforms:
+            for t in self.transforms[var]:
+                out = t.tensor_forward(out)
+
+        return out
+
+    def apply_backward_transforms(self, values: torch.Tensor, var: str = 'x'):
+
+        out = values
+        if var in self.transforms:
+            for t in reversed(self.transforms[var]):
+                out = t.tensor_backward(out)
+
+        return out
+
+    def transformed2raw(self, values: torch.Tensor, var: str = 'x'):
+
+        out = values
+        if var in self.transforms:
+            out = torch.clamp(out, min=self.zero_value[var].to(values.device))
+            out = self.apply_backward_transforms(out, var)
+
+        return out
+
+    # def to_log(self, values):
+    def raw2log(self, values: torch.Tensor):
+
+        log = torch.clamp(values, min=0)
+        log = torch.log(log + self.log_offset)
+
+        return log
+
+    def raw2pow(self, values):
+
+        pow = torch.pow(values, 1 / 3)
+
+        return pow
+
