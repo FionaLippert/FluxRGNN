@@ -1349,7 +1349,6 @@ class NumericalFluxes(MessagePassing):
         # static graph features
         node_features = [cell_data.get(feature).reshape(x.size(0), -1) for
                                    feature in self.static_cell_features]
-
         # dynamic features for current and previous time step
         dynamic_features_t0 = [tidx_select(cell_data.get(feature), t).reshape(x.size(0), -1) for
                                          feature in self.dynamic_cell_features]

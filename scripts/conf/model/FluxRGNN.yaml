@@ -29,7 +29,7 @@ env_vars:
 
 permute_env_vars: []
 
-n_hidden: 64
+n_hidden: 128 
 
 max_t0: ${datasource.tidx_step}
 context: 24
@@ -85,7 +85,7 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 1.0
+length_scale: 0.01 #1.0
 transforms:
 #  - _target_: fluxrgnn.transforms.LogTransform
 #    feature: x
@@ -110,7 +110,7 @@ weight_exponent: 1.0 #0.75
 edge_type: hexagons # voronoi
 birds_per_km2: true
 
-regularizer_weight: 0.0
+regularizer_weight: 0.01
 
 activation:
   _target_: torch.nn.ReLU #LeakyReLU
@@ -156,7 +156,7 @@ flux_model:
       bird_uv: 2
   static_cell_features:
     coords: ${model.coord_dim}
-    #land_cover: 19
+    land_cover: 19
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
@@ -181,7 +181,7 @@ source_sink_model:
     #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
-    #land_cover: 19
+    land_cover: 19
   dynamic_cell_features: ${model.env_vars}
   #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}

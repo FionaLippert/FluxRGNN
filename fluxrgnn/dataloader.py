@@ -1359,10 +1359,13 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     else:
         res_info = f'ndummy={cfg.datasource.n_dummy_radars}'
 
+    n_cv_folds = cfg.task.get('n_cv_folds', 0)
+    cv_fold = cfg.task.get('cv_fold', 0)
+
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_{cfg.datasource.buffer}_{res_info}_dataperc={cfg.data_perc}_' \
-                        f'fold={cfg.task.n_cv_folds}-{cfg.task.cv_fold}_seed={cfg.seed}'
+                        f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
     
     preprocessed_dirname += f'_{res_info}'
     #processed_dirname += res_info
@@ -1412,6 +1415,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
             #normalization = None
             norm_years = cfg.datasource.get('train_years', set(cfg.datasource.years) - set([cfg.datasource.test_year]))
             normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+            with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+                pickle.dump(normalization, f)
     # load training/validation/test data
     # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
     #                              **cfg, **cfg.model,
