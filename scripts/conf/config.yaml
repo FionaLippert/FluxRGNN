@@ -38,7 +38,7 @@ trainer:
 #    - _target_: callbacks.PredictionCallback
   accelerator: ${device.accelerator}
   devices: ${device.devices}
-  deterministic: True
+  #  deterministic: True
   gradient_clip_algorithm: value
   gradient_clip_val: 0
   max_epochs: 500

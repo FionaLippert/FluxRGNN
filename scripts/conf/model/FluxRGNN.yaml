@@ -128,7 +128,7 @@ location_encoder:
     coords: ${model.coord_dim}
     land_cover: 19
   out_channels: ${model.embedding_dim}
-  n_layers: 2
+  n_layers: 2 
   dropout_p: ${model.dropout_p}
 
 decoder:
@@ -156,7 +156,7 @@ flux_model:
       bird_uv: 2
   static_cell_features:
     coords: ${model.coord_dim}
-    land_cover: 19
+    #land_cover: 19
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
@@ -181,7 +181,7 @@ source_sink_model:
     #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
-    land_cover: 19
+    #land_cover: 19
   dynamic_cell_features: ${model.env_vars}
   #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}

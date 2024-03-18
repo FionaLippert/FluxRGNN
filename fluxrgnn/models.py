@@ -1760,14 +1760,14 @@ class LocationEncoder(torch.nn.Module):
         """
 
         # collect static graph features
-        input = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
+        inputs = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
                                           feature in self.static_cell_features], dim=1)
 
         # input = self.input_embedding(input)
 
-        embedding = self.location_encoder(input, cell_data.edge_index, cell_data.edge_attr) # [n_cells, n_hidden]
+        embeddings = self.location_encoder(inputs, edge_index=cell_data.edge_index, edge_attr=cell_data.edge_attr) # [n_cells, n_hidden]
 
-        return embedding
+        return embeddings
 
 
 class ObservationModel(MessagePassing):

@@ -1268,7 +1268,8 @@ class RadarHeteroData(InMemoryDataset):
 
         cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
                                                  'bird_speed', 'bird_direction', 'wind_u', 'wind_v',
-                                                 'bird_u', 'bird_v', 'u', 'v', 'u10', 'v10',
+                                                 'bird_u', 'bird_v', 
+                                                 'u', 'v', 'u10', 'v10',
                                                  'cc', 'sshf', 'dayofyear',
                                                  'radar', 'ID', 'night', 'boundary',
                                                  'dusk', 'dawn', 'datetime', 'missing',
