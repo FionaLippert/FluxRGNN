@@ -4,27 +4,34 @@ channels:
   - pyg
   - anaconda
   - conda-forge
+  - nvidia
 dependencies:
-   - python>=3.8.3
-   - numpy
-   - scipy
-   - networkx
-   - torchvision
-   - cudatoolkit=10.2
-   - pytorch
-   - pyg
-   - scikit-learn
-   - pygam
-   - ruamel.yaml
-   - yaml
-   - hydra-core
-   - pandas
-   - matplotlib
-   - ipykernel
-     #- notebook
-     #- seaborn
-     #- geopandas
-     #- cartopy
-     #- geoplot
-     #- shapely
+  - python=3.9
+  - pip
+  - numpy
+  - scipy
+  - networkx
+  - torchvision
+  - torchaudio
+  - cudatoolkit
+  - pytorch=2.0
+  - pytorch-cuda
+  - pytorch-lightning
+  - pyg
+  - scikit-learn
+  - pygam
+  - yaml
+  - hydra-core
+  - wandb
+  - pandas
+  - matplotlib
+  - ipykernel
+  - pip:
+    - torch-geometric-temporal
+  #- notebook
+  #- seaborn
+  #- geopandas
+  #- cartopy
+  #- geoplot
+  #- shapely
 
