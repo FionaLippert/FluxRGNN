@@ -8,7 +8,7 @@ mechanistic description of population-level movements on the Voronoi tessellatio
 Unlike previous approaches, this hybrid model capitalises on local associations between environmental conditions and migration 
 intensity as well as on spatio-temporal dependencies inherent to the movement process. 
 
-Please note that a refactored and extended version of FluxRGNN is available on the branch [nexrad_data](https://github.com/FionaLippert/tree/nexrad_data), which will be merged soon into the main code base.
+Please note that a refactored and extended version of FluxRGNN is available on the branch [nexrad_data](https://github.com/FionaLippert/FluxRGNN/tree/nexrad_data), which will be merged soon into the main code base.
 
 ## Requirements and setup
 First, make sure you have [conda](https://docs.conda.io/en/latest/) installed.
