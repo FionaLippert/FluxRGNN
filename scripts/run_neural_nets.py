@@ -59,14 +59,9 @@ def run(cfg: DictConfig):
         cfg_resolved = OmegaConf.to_container(cfg, resolve=True)
         wandb.config.update(cfg_resolved)
 
-    #if cfg.device.accelerator == 'gpu' and torch.cuda.is_available():
-    #    print('Use GPU')
-    #    # all newly created tensors go to GPU
-    #    torch.set_default_tensor_type(torch.cuda.FloatTensor)
-
     utils.seed_all(cfg.seed + cfg.get('job_id', 0))
 
-    model = instantiate(cfg.model)#, n_env=len(cfg.datasource.env_vars))
+    model = instantiate(cfg.model)
     
     if (cfg.model.load_states_from is not None) and isinstance(trainer.logger, WandbLogger):
         # load model checkpoint
@@ -82,13 +77,8 @@ def run(cfg: DictConfig):
     
     if 'train' in cfg.task.task_name:
         training(trainer, model, cfg)
-    if 'eval' in cfg.task.task_name:
-        # if hasattr(cfg, 'importance_sampling'):
-        #     cfg.importance_sampling = False
 
-        # cfg['fixed_t0'] = True
-        # testing(trainer, model, cfg, ext='_fixedT0')
-        # cfg['fixed_t0'] = False
+    if 'eval' in cfg.task.task_name:
         testing(trainer, model, cfg)
 
     if 'predict' in cfg.task.task_name:
