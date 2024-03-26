@@ -1223,7 +1223,7 @@ class RadarHeteroData(InMemoryDataset):
                 # dynamic radar features
                 'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
                 'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
-                'missing_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
+                'missing_bird_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': torch.tensor(data['bird_uv'][..., idx], dtype=torch.float),
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)

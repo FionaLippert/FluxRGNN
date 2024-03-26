@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --job-name=preprocessing
-#SBATCH --time=14:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate birds
