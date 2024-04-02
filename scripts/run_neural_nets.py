@@ -146,7 +146,6 @@ def training(trainer, model, cfg: DictConfig):
     if cfg.verbose:
         print('initialized model')
         print(f'number of model parameters: {n_params}')
-        print(f'environmental variables: {cfg.datasource.env_vars}')
 
     trainer.fit(model, dl_train, dl_val)
 
