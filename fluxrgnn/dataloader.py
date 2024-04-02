@@ -348,7 +348,8 @@ class RadarHeteroData(InMemoryDataset):
         measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_radar_features.csv'))
         cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
         radars = pd.read_csv(osp.join(self.preprocessed_dir, 'static_radar_features.csv'))
-
+        
+        
         # define test radars
         if self.n_cv_folds == 0:
             test_radars = []
@@ -442,10 +443,10 @@ class RadarHeteroData(InMemoryDataset):
         print(f'target col = {target_col}')
 
         # normalize dynamic features
-        if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
-            # keep original wind velocities
-            dynamic_feature_df['wind_u'] = dynamic_feature_df['u']
-            dynamic_feature_df['wind_v'] = dynamic_feature_df['v']
+        #if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
+        #    # keep original wind velocities
+        #    dynamic_feature_df['wind_u'] = dynamic_feature_df['u']
+        #    dynamic_feature_df['wind_v'] = dynamic_feature_df['v']
 
         if not 'dayofyear' in dynamic_feature_df:
             dynamic_feature_df['dayofyear'] = pd.DatetimeIndex(dynamic_feature_df.datetime).dayofyear
@@ -570,8 +571,8 @@ class RadarHeteroData(InMemoryDataset):
         for var in self.env_vars:
             data[var] = []
 
-        if 'wind_u' in dynamic_feature_df and 'wind_v' in dynamic_feature_df:
-            data['wind'] = []
+        #if 'wind_u' in dynamic_feature_df and 'wind_v' in dynamic_feature_df:
+        #    data['wind'] = []
 
         # process dynamic cell features
         for cid, group_df in dynamic_feature_df.groupby('ID'):
@@ -582,11 +583,11 @@ class RadarHeteroData(InMemoryDataset):
             for var in self.env_vars:
                 data[var].append(df[var].to_numpy())
 
-            if 'wind' in data:
-                wind = df[['wind_u', 'wind_v']].to_numpy().T # in m/s
-                wind = wind * time_scale / 1e3 # in km/[t_unit]
-                wind = wind / length_scale # in [length_scale]/[t_unit]
-                data['wind'].append(wind)
+            #if 'wind' in data:
+            #    wind = df[['wind_u', 'wind_v']].to_numpy().T # in m/s
+            #    wind = wind * time_scale / 1e3 # in km/[t_unit]
+            #    wind = wind / length_scale # in [length_scale]/[t_unit]
+            #    data['wind'].append(wind)
 
 
         # process radar measurements
@@ -622,7 +623,7 @@ class RadarHeteroData(InMemoryDataset):
             random_cidx = self.rng.permutation(random_cidx)
             data[var] = data[var][random_cidx]
 
-        print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
+        #print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
         print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
 
 
@@ -727,13 +728,16 @@ class RadarHeteroData(InMemoryDataset):
             for var in self.env_vars:
                 cell_data[var] = torch.tensor(data[var][..., idx], dtype=torch.float)
 
-            if 'wind' in data:
-                cell_data['wind'] = torch.tensor(data['wind'][..., idx], dtype=torch.float)
+            #if 'wind' in data:
+            #    cell_data['wind'] = torch.tensor(data['wind'][..., idx], dtype=torch.float)
 
             if self.edge_type in ['voronoi', 'none']:
                 cell_data['x'] = torch.tensor(data[target_col][..., idx], dtype=torch.float)
                 cell_data['bird_uv'] = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
 
+            assert (data[target_col][..., idx].shape[0] == 143)
+            assert (data['bird_uv'][..., idx].shape[0] == 143)
+            
             radar_data = {
                 # static radar features
                 'ridx': torch.arange(len(radar_ids), dtype=torch.long),

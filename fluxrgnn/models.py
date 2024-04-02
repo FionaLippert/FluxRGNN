@@ -112,6 +112,7 @@ class ForecastModel(pl.LightningModule):
         for tidx in forecast_horizon:
 
             t = t0 + tidx
+            x = states['x']
 
             # use gt data instead of model output with probability 'teacher_forcing'
             r = torch.rand(1)
@@ -316,7 +317,7 @@ class ForecastModel(pl.LightningModule):
                 }
 
         for var in self.predict_vars:
-            self.predict_results[f'predict/prediction/{var}'] = []
+            self.predict_results[f'predict/predictions/{var}'] = []
 
     def on_predict_epoch_end(self):
 
@@ -389,7 +390,7 @@ class ForecastModel(pl.LightningModule):
                 loss = utils.MSE(output, gt, local_mask, weights)
             else:
                 loss = utils.MSE(output, gt, local_mask)
-        
+
             # if self.training:
             #     loss = loss + self.config.get('regularizer_weight', 1.0) * self._regularizer()
             #     eval_dict = {f'{prefix}/{var}/loss': loss.detach(),
@@ -618,19 +619,19 @@ class FluxRGNN(ForecastModel):
             #if self.training and hasattr(self.flux_model, 'node_velocity'):
             #    #print('add velocity regularizer')
             #    uv_cells = self.flux_model.node_velocity
-            #    output['bird_uv'] = uv_cells
+            #    # output['bird_uv'] = uv_cells
 
 
             #    uv_gt = tidx_select(data['radar'].bird_uv, t)
             #    uv_hat = self.observation_model(uv_cells, data['cell', 'radar'], data['radar'].num_nodes)
             #    # uv_hat = uv_hat[:data['radar'].num_nodes]
                 
-            #    mask = tidx_select(torch.logical_not(data['radar'].missing_uv), t)
+            #    mask = tidx_select(torch.logical_not(data['radar'].missing_bird_uv), t)
             #    mask = mask.reshape(-1) * data['radar'].train_mask.reshape(-1)
 
             #    uv_error = uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1)
-                #uv_error = (uv_error * mask).sum(0) / mask.sum(0)
-            #    uv_error = uv_error[mask]
+            #    uv_error = (uv_error * mask.view(-1, 1)).sum(0) / mask.sum(0)
+                #uv_error = uv_error[mask]
                 
             #    #self.regularizers.append(uv_hat.view(data['radar'].num_nodes, -1) - uv_gt.view(data['radar'].num_nodes, -1))
             #    #print(self.regularizers[-1].size())
@@ -1847,7 +1848,7 @@ class RadarToCellKNNInterpolation(MessagePassing):
 
         n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
-
+        
         # dynamic features for current time step
         variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
                                for var in self.radar_variables], dim=1)
@@ -3424,7 +3425,6 @@ def encode_position(pos):
 def tidx_select(features, indices, steps=0):
         
     shape = torch.tensor(features.size()) # [graphs * nodes, ..., time steps]
-    
     if indices.size(0) == 1:
         full_indices = indices.repeat(shape[0], 1) # [graphs * nodes, 1)
     else:
@@ -3435,8 +3435,7 @@ def tidx_select(features, indices, steps=0):
     #full_indices = full_indices.view(-1)
 
     tidx = torch.arange(shape[-1], device=features.device).view(1, -1).repeat(shape[0], 1)
-   
-    #print(tidx.device, features.device, full_indices.device)
+
     mask = torch.logical_and(tidx >= full_indices, tidx <= full_indices + steps)
 
     if len(shape) > 2:
