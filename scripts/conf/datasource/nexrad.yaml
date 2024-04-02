@@ -31,6 +31,9 @@ env_vars:
   - dayofyear
   - solarpos
   - solarpos_dt
+env_files:
+  - model_levels.nc
+  - surface.nc
 use_buffers: True
 buffer: 450000
 observation_range: 35000
