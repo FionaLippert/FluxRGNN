@@ -21,8 +21,15 @@ from pytorch_lightning.loggers import WandbLogger
 
 import transforms
 
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
 
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"

@@ -64,9 +64,9 @@ def get_transform(cfg):
 
 def load_background_data(cfg, feature_names, reduction='sampling', n_samples=100):
     transform = get_transform(cfg)
-    data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, transform=transform)[0]
-
+    data = dataloader.load_dataset(cfg, cfg.output_dir, split='train', transform=transform)[0]
     data = torch.utils.data.ConcatDataset(data)
+
     background = explainer.construct_background(data, feature_names, reduction=reduction, n_samples=n_samples)
 
     return background
@@ -80,8 +80,9 @@ def explain(trainer, model, cfg: DictConfig):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
-    test_data = test_data[0]
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     normalization = test_data.normalization
 

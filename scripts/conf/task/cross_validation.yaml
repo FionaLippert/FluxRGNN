@@ -2,4 +2,5 @@
 name: cv
 n_cv_folds: 10
 cv_fold: 0
+store_test_results: true
 
