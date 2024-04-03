@@ -4,11 +4,21 @@ import hydra
 import os.path as osp
 import os
 
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
+OmegaConf.register_new_resolver("sum", sum)
+OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
+
 
 @hydra.main(config_path="conf", config_name="config")
 def run(cfg: DictConfig):
 
-    years = cfg.datasource.years
+    years = set(cfg.datasource.years)
     print('preprocess data for years', years)
     data_root = osp.join(cfg.device.root, 'data')
     raw_data_root = cfg.get('raw_data_dir', osp.join(data_root, 'raw'))
