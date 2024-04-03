@@ -1964,7 +1964,7 @@ class CorrectedRadarToCellInterpolation(MessagePassing):
 class RadarToCellGNN(MessagePassing):
 
     def __init__(self, static_radar_features=None, dynamic_radar_features=None,
-                 static_cell_features=None, dynamic_cell_features=None, **kwargs):
+                 static_cell_features=None, dynamic_cell_features=None, location_encoder=None, **kwargs):
 
         super(RadarToCellGNN, self).__init__(aggr='sum', node_dim=0)
 
@@ -1976,17 +1976,22 @@ class RadarToCellGNN(MessagePassing):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
+        self.location_encoder = location_encoder
+
         n_edge_in = sum(self.static_radar_features.values()) + \
                     sum(self.dynamic_radar_features.values()) + \
                     sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
                     kwargs.get('radar2cell_edge_attr')
 
+        if self.location_encoder is not None:
+            n_edge_in += self.location_encoder.embedding_dim
+
         self.edge_mlp = MLP(n_edge_in, kwargs.get('n_hidden'), **kwargs)
         self.node_mlp = MLP(kwargs.get('n_hidden'), kwargs.get('n_hidden'), **kwargs)
 
     def forward(self, graph_data, t, hidden, *args, **kwargs):
-        radars_to_cells = graph_data['radar', 'cell']
+        # radars_to_cells = graph_data['radar', 'cell']
         n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
 
@@ -1998,13 +2003,12 @@ class RadarToCellGNN(MessagePassing):
         dynamic_radar_features = [tidx_select(graph_data['radar'].get(feature), t).reshape(n_radars, -1)
                                for feature in self.dynamic_radar_features]
 
-        all_radar_features = torch.cat(static_radar_features + dynamic_radar_features, dim=1)
-        dummy_features = torch.zeros((n_cells - n_radars, all_radar_features.size(1)), device=all_radar_features.device)
-        embedded_radar_features = torch.cat([all_radar_features, dummy_features], dim=0)
-
         # static cell features
         static_cell_features = [graph_data['cell'].get(feature).reshape(n_cells, -1)
                                  for feature in self.static_cell_features]
+
+        if self.location_encoder is not None:
+            static_cell_features.append(self.location_encoder(graph_data['cell']))
 
         # dynamic cell features for current time step
         dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
@@ -2012,20 +2016,55 @@ class RadarToCellGNN(MessagePassing):
 
         all_cell_features = torch.cat(static_cell_features + dynamic_cell_features, dim=1)
 
-        cell_states = self.propagate(radars_to_cells.edge_index,
+        # use only valid training radars for interpolation
+        missing = tidx_select(graph_data['radar'].missing_x, t).reshape(n_radars)
+        radar_mask = torch.logical_and(graph_data['radar'].train_mask,
+                                       torch.logical_not(missing))  # size [n_radars, time_steps]
+        n_radars = radar_mask.sum()
+
+        static_radar_features = static_radar_features[radar_mask]
+        dynamic_radar_features = dynamic_radar_features[radar_mask]
+
+        all_radar_features = torch.cat(static_radar_features + dynamic_radar_features, dim=1)
+        dummy_features = torch.zeros((n_cells - n_radars, all_radar_features.size(1)), device=all_radar_features.device)
+        embedded_radar_features = torch.cat([all_radar_features, dummy_features], dim=0)
+
+        radar_pos = graph_data['radar'].pos[radar_mask]
+        cell_pos = graph_data['cell'].pos
+
+        if hasattr(graph_data, 'batch'):
+            radar_batch = graph_data['radar'].batch[radar_mask]
+            cell_batch = graph_data['cell'].batch
+        else:
+            radar_batch = None
+            cell_batch = None
+
+        edge_index = knn(radar_pos, cell_pos, k=self.k, batch_x=radar_batch, batch_y=cell_batch)
+        edge_index = torch.flip(edge_index, dims=[0])  # edges go from radars to cells
+
+        distance = F.pairwise_distance(radar_pos[edge_index[0]], cell_pos[edge_index[1]], p=2)
+        edge_weight = 1. / (distance + 1e-6)
+
+        weighted_degree = scatter(edge_weight, edge_index[1], dim_size=n_cells, reduce='sum')
+
+        cell_states = self.propagate(edge_index,
                                      x_radar=embedded_radar_features,
                                      x_cell=all_cell_features,
-                                     edge_attr=radars_to_cells.edge_attr)
+                                     weighted_degree=weighted_degree,
+                                     edge_weight=edge_weight)
 
         cell_states = self.node_mlp(cell_states)
 
         return cell_states
 
-    def message(self, x_radar_j, x_cell_i, edge_attr):
+    def message(self, x_radar_j, x_cell_i, edge_weight, weighted_degree_i):
         # message from radar j to cell i
 
-        edge_inputs = torch.cat([x_radar_j, x_cell_i, edge_attr], dim=1)
+        edge_inputs = torch.cat([x_radar_j, x_cell_i, edge_weight.unsqueeze(1), weighted_degree_i.unsqueeze(1)], dim=1)
         msg = self.edge_mlp(edge_inputs)
+
+        # w_ij = (edge_weight / weighted_degree_i)
+        # return torch.einsum('i,i...->i...', w_ij, msg)
 
         return msg
 
