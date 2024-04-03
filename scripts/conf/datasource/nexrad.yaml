@@ -16,12 +16,12 @@ train_years:
   - 2015
   - 2016
   - 2017
-  - 2018
+  #- 2018
 val_years:
-  - 2019
+  - 2018
 test_years:
-  - 2019
-years: ${merge:${train_years},${val_years},${test_years}}
+  - 2018
+years: ${merge:${datasource.train_years},${datasource.val_years},${datasource.test_years}}
 #val_train_split: 0.1
 env_files:
   - model_levels.nc
