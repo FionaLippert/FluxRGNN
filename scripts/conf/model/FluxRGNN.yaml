@@ -19,12 +19,12 @@ predict_vars:
   - source_sink
 
 env_vars:
-  u_q10: 1
-  u_q50: 1
-  u_q90: 1
-  v_q10: 1
-  v_q50: 1
-  v_q90: 1
+  #u_q10: 1
+  #u_q50: 1
+  #u_q90: 1
+  #v_q10: 1
+  #v_q50: 1
+  #v_q90: 1
   #u10: 1
   #v10: 1
   tcc: 1
@@ -32,12 +32,12 @@ env_vars:
   sp: 1
   msl: 1
   #t2m: 1
-  t_q10: 1
-  t_q50: 1
-  t_q90: 1
-  q_q10: 1
-  q_q50: 1
-  q_q90: 1
+  #t_q10: 1
+  #t_q50: 1
+  #t_q90: 1
+  #q_q10: 1
+  #q_q50: 1
+  #q_q90: 1
   #sshf: 1
   night: 1
   dusk: 1
