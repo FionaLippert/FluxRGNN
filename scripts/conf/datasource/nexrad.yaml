@@ -20,6 +20,9 @@ train_years:
   #- 2019
 test_year: 2019
 val_train_split: 0.1
+env_files:
+  - model_levels.nc
+  - surface.nc
 #env_vars:
 #  - u
 #  - v
