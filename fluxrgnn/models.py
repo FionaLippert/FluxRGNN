@@ -312,7 +312,7 @@ class ForecastModel(pl.LightningModule):
     def on_predict_epoch_start(self):
 
         self.predict_results = {
-                # 'predict/cell_predictions': [],
+                'predict/t_q50': [],
                 'predict/tidx': [],
                 }
 
@@ -337,7 +337,10 @@ class ForecastModel(pl.LightningModule):
                         self.transforms.transformed2raw(forecast[var], var)
                     )
             self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
+            #self.predict_results['predict/t_q50'].append(batch['cell'].t_q50[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
 
+            print(batch['cell'])
+            
             self.add_additional_predict_results()
 
     
