@@ -24,8 +24,15 @@ from pytorch_lightning.loggers import WandbLogger
 
 #import transforms
 
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
 
 
 # map model name to implementation
@@ -103,26 +110,33 @@ def get_transform(cfg):
 def load_training_data(cfg):
 
     transform = get_transform(cfg)
-    data = dataloader.load_dataset(cfg, cfg.output_dir, training=True, 
-                                   transform=transform)[0]
-    
-    data = torch.utils.data.ConcatDataset(data)
-    n_data = len(data)
+    # data = dataloader.load_dataset(cfg, cfg.output_dir, training=True,
+    #                                transform=transform)[0]
+    #
+    # data = torch.utils.data.ConcatDataset(data)
+    # n_data = len(data)
+    #
+    # # split data into training and validation set
+    # n_val = max(1, int(cfg.datasource.val_train_split * n_data))
+    # n_train = n_data - n_val
+    #
+    # if cfg.verbose:
+    #     print('------------------------------------------------------')
+    #     print('-------------------- data sets -----------------------')
+    #     print(f'total number of sequences = {n_data}')
+    #     print(f'number of training sequences = {n_train}')
+    #     print(f'number of validation sequences = {n_val}')
+    #
+    # # TODO: use a consecutive chunk as validation data instead of random sequences?
+    #
+    # train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
 
-    # split data into training and validation set
-    n_val = max(1, int(cfg.datasource.val_train_split * n_data))
-    n_train = n_data - n_val
+    train_data = dataloader.load_dataset(cfg, cfg.output_dir, split='train', transform=transform)[0]
+    train_data = torch.utils.data.ConcatDataset(train_data)
 
-    if cfg.verbose:
-        print('------------------------------------------------------')
-        print('-------------------- data sets -----------------------')
-        print(f'total number of sequences = {n_data}')
-        print(f'number of training sequences = {n_train}')
-        print(f'number of validation sequences = {n_val}')
+    val_data = dataloader.load_dataset(cfg, cfg.output_dir, split='val', transform=transform)[0]
+    val_data = torch.utils.data.ConcatDataset(val_data)
 
-    # TODO: use a consecutive chunk as validation data instead of random sequences?
-
-    train_data, val_data = random_split(data, (n_train, n_val), generator=torch.Generator().manual_seed(cfg.seed))
     train_loader = instantiate(cfg.dataloader, train_data)
     val_loader = instantiate(cfg.dataloader, val_data, batch_size=1)
 
@@ -160,8 +174,9 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
-    test_data = test_data[0]
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
@@ -204,8 +219,9 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
-    test_data = test_data[0]
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 

@@ -170,8 +170,9 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     transform = get_transform(cfg)
     print('######### testing #########')
     print(cfg.model.edge_type)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
-    test_data = test_data[0]
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
@@ -212,8 +213,9 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)
-    test_data = test_data[0]
+    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 

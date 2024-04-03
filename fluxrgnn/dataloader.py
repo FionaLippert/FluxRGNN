@@ -863,7 +863,7 @@ class SensorHeteroData(HeteroData):
             return super().__inc__(key, value, store, *args, **kwargs)
 
 
-def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):
+def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     """
     Load training or testing data, initialize normalizer, setup and save configuration
 
@@ -872,16 +872,14 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     :return: pytorch Dataset
     """
     context = cfg.model.get('context', 0)
-    if context == 0 and not training:
+    if (context == 0) and not (split == 'test'):
         context = cfg.model.get('test_context', 0)
 
-    # seq_len = context + (cfg.model.horizon if training else cfg.model.test_horizon)
     seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) \
               + cfg.datasource.get('tidx_step', 1) #- 1
-    # seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_{cfg.datasource.buffer}'
-    print(preprocessed_dirname)
+
     if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
         res_info = f'res={cfg.datasource.h3_resolution}'
     else:
@@ -896,55 +894,51 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
                         f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
     
     preprocessed_dirname += f'_{res_info}'
-    #processed_dirname += res_info
 
     n_excl = len(cfg.datasource.get('excluded_radars', []))
     if n_excl > 0:
         processed_dirname += f'_excluded={n_excl}'
 
-    perm_vars = cfg.model.get('permute_env_vars', [])
-    if len(perm_vars) > 0:
-        processed_dirname += f'_permuted={"+".join(perm_vars)}'
-
-    print(processed_dirname)
+    # perm_vars = cfg.model.get('permute_env_vars', [])
+    # if len(perm_vars) > 0:
+    #     processed_dirname += f'_permuted={"+".join(perm_vars)}'
     
     data_dir = osp.join(cfg.device.root, 'data')
 
-    # if cfg.model.birds_per_km2:
-    #     input_col = 'birds_km2'
+    norm_years = cfg.datasource['train_years']
+    normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+        OmegaConf.save(config=cfg, f=f)
+    with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+        pickle.dump(normalization, f)
+
+    # if split == 'train':
+    #     # initialize normalizer
+    #     years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    #     normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    #
+    #     # complete config and write it together with normalizer to disk
+    #     # cfg.datasource.bird_scale = float(normalization.max(input_col))
+    #     # cfg.model_seed = seed
+    #     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+    #         OmegaConf.save(config=cfg, f=f)
+    #     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+    #         pickle.dump(normalization, f)
+    #
+    #
     # else:
-    #     if cfg.datasource.use_buffers:
-    #         input_col = 'birds_from_buffer'
+    #     years = [cfg.datasource.test_year]
+    #     norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
+    #     if osp.isfile(norm_path):
+    #         print(f'load normalization from {norm_path}')
+    #         with open(norm_path, 'rb') as f:
+    #             normalization = pickle.load(f)
     #     else:
-    #         input_col = 'birds'
-
-    if training:
-        # initialize normalizer
-        years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-        normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
-
-        # complete config and write it together with normalizer to disk
-        # cfg.datasource.bird_scale = float(normalization.max(input_col))
-        # cfg.model_seed = seed
-        with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
-            OmegaConf.save(config=cfg, f=f)
-        with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
-            pickle.dump(normalization, f)
-
-
-    else:
-        years = [cfg.datasource.test_year]
-        norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
-        if osp.isfile(norm_path):
-            print(f'load normalization from {norm_path}')
-            with open(norm_path, 'rb') as f:
-                normalization = pickle.load(f)
-        else:
-            #normalization = None
-            norm_years = cfg.datasource.get('train_years', set(cfg.datasource.years) - set([cfg.datasource.test_year]))
-            normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
-            with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
-                pickle.dump(normalization, f)
+    #         #normalization = None
+    #         norm_years = cfg.datasource.get('train_years', set(cfg.datasource.years) - set([cfg.datasource.test_year]))
+    #         normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    #         with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
+    #             pickle.dump(normalization, f)
     # load training/validation/test data
     # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
     #                              **cfg, **cfg.model,
@@ -956,21 +950,20 @@ def load_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=Non
     #                              )
     #         for year in years]
 
+    years = cfg.datasource[f'{split}_years']
+
     data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
                       **cfg, **cfg.model, **cfg.task,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
-                      # test_radars=cfg.datasource.test_radars,
                       normalization=normalization,
                       exclude=cfg.datasource.get('excluded_radars', []),
-                      #env_vars=cfg.datasource.env_vars,
                       tidx_start=cfg.datasource.get('tidx_start', 0),
                       tidx_step=cfg.datasource.get('tidx_step', 1),
                       transform=transform
                       )
             for year in years]
 
-    # return data, input_col, context, seq_len
     return data, context, seq_len
 
 
@@ -1000,14 +993,15 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     preprocessed_dirname += f'_{res_info}'
     # processed_dirname += res_info
 
-    perm_vars = cfg.model.get('permute_env_vars', [])
-    if len(perm_vars) > 0:
-        processed_dirname += f'_permuted={"+".join(perm_vars)}'
+    # perm_vars = cfg.model.get('permute_env_vars', [])
+    # if len(perm_vars) > 0:
+    #     processed_dirname += f'_permuted={"+".join(perm_vars)}'
     
     data_dir = osp.join(cfg.device.root, 'data')
 
     # initialize normalizer
-    years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    # years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    years = cfg.datasource.train_years
     normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
 
     # complete config and write it together with normalizer to disk
@@ -1031,7 +1025,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     return data
 
 
-def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, transform=None):
+def load_seasonal_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     """
     Load seasonal data, initialize normalizer, setup and save configuration
 
@@ -1053,14 +1047,19 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, training: bool, tran
     
     data_dir = osp.join(cfg.device.root, 'data')
 
-    if training:
-        # initialize normalizer
-        years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    # if training:
+    #     # initialize normalizer
+    #     years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
+    #
+    #     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+    #         OmegaConf.save(config=cfg, f=f)
+    # else:
+    #     years = [cfg.datasource.test_year]
 
-        with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
-            OmegaConf.save(config=cfg, f=f)
-    else:
-        years = [cfg.datasource.test_year]
+    with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
+        OmegaConf.save(config=cfg, f=f)
+
+    years = cfg.datasource[f'{split}_years']
 
     # load training and validation data
     data = [SeasonalData(year, preprocessed_dirname, processed_dirname,
