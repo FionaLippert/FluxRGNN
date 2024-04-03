@@ -4,3 +4,4 @@ n_cv_folds: 0
 cv_fold: 0
 slurm_job: scripts/run_eval_slurm.job
 local_job: scripts/run_eval_local.job
+store_test_results: true

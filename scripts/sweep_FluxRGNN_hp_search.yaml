@@ -7,24 +7,22 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=FluxRGNN
-  - trainer.max_epochs=400
-  - dataloader.batch_size=64
+  - trainer.max_epochs=300
+  - dataloader.batch_size=32
+  - task=cross_validation
   - task.store_test_results=false
+  - task.n_cv_folds=10
 method: grid
 metric:
   name: test/observed/raw/RMSE
   goal: minimize
 parameters:
-#  seed:
-#    values: [0, 1, 2, 3, 4]
+  task.cv_fold:
+    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   model.n_hidden:
     values: [32, 64, 128]
   model.lr:
     values: [3e-4, 1e-4, 3e-5, 1e-5, 3e-6]
-  model.node_rnn._target_:
-    values:
-      - fluxrgnn.models.NodeLSTM
-      - fluxrgnn.models.NodeGRU
   model.flux_model.n_fc_layers:
     values: [1, 2]
   model.source_sink_model.n_fc_layers:

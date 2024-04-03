@@ -20,8 +20,15 @@ from pytorch_lightning.loggers import WandbLogger
 
 import transforms
 
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
 
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -86,8 +93,9 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data = dataloader.load_dataset(cfg, cfg.output_dir, training=False, transform=transform)[0]
-    test_data = test_data[0]
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
+    # test_data = test_data[0]
+    test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 

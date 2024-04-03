@@ -217,9 +217,21 @@ class ForecastModel(pl.LightningModule):
         # evaluate forecast
         for var, coef in self.training_coefs.items():
             if var in forecast:
-                loss_var, eval_dict = self._eval_step(batch, forecast,
-                                                      radar_mask=batch['radar'].train_mask,
-                                                      prefix='val', t0=t0, var=var)
+                # loss_var, eval_dict = self._eval_step(batch, forecast,
+                #                                       radar_mask=batch['radar'].train_mask,
+                #                                       prefix='val', t0=t0, var=var)
+                # self.log_dict(eval_dict, batch_size=batch.num_graphs)
+
+                # compute evaluation metrics for radars used during training
+                _, eval_dict = self._eval_step(batch, forecast,
+                                               radar_mask=batch['radar'].train_mask,
+                                               prefix='val/observed', t0=t0, var=var)
+                self.log_dict(eval_dict, batch_size=batch.num_graphs)
+
+                # compute evaluation metrics for held-out radars
+                _, eval_dict = self._eval_step(batch, forecast,
+                                               radar_mask=batch['radar'].test_mask,
+                                               prefix='val/unobserved', t0=t0, var=var)
                 self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
         # # evaluate forecast
