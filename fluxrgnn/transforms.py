@@ -219,7 +219,7 @@ class Transforms:
 
         out = values
         if var in self.transforms:
-            out = torch.clamp(out, min=self.zero_value[var].to(values.device))
+            #out = torch.clamp(out, min=self.zero_value[var].to(values.device))
             out = self.apply_backward_transforms(out, var)
 
         return out

@@ -649,9 +649,9 @@ class RadarHeteroData(InMemoryDataset):
             tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
                            self.tidx_start, self.tidx_step)
 
-
         # remove sequences with too much missing data
-        perc_missing = data['missing_x'].reshape(-1, data['missing_x'].shape[-1]).mean(0)
+        data['missing'] = np.logical_and(data['missing_x'], data['missing_uv'])
+        perc_missing = data['missing'].reshape(-1, data['missing'].shape[-1]).mean(0)
         print(perc_missing)
         valid_idx = perc_missing <= self.missing_data_threshold
         #valid_idx = np.ones(tidx.shape[-1], dtype='int')
@@ -738,6 +738,10 @@ class RadarHeteroData(InMemoryDataset):
             assert (data[target_col][..., idx].shape[0] == 143)
             assert (data['bird_uv'][..., idx].shape[0] == 143)
             
+            x = torch.tensor(data[target_col][..., idx], dtype=torch.float)
+            bird_uv = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
+            fluxes = x.unsqueeze(1) * bird_uv
+
             radar_data = {
                 # static radar features
                 'ridx': torch.arange(len(radar_ids), dtype=torch.long),
@@ -748,11 +752,13 @@ class RadarHeteroData(InMemoryDataset):
                 # TODO: add radar sun elevation and other dynamic features?
 
                 # dynamic radar features
-                'x': torch.tensor(data[target_col][..., idx], dtype=torch.float),
+                'x': x,
                 'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
                 'missing_bird_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
+                'missing_fluxes': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
-                'bird_uv': torch.tensor(data['bird_uv'][..., idx], dtype=torch.float),
+                'bird_uv': bird_uv,
+                'fluxes': fluxes,
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
             }
 

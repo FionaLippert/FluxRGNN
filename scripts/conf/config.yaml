@@ -32,7 +32,7 @@ trainer:
       #monitor: val/loss
       #patience: 10
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-      monitor: val/x/loss
+      monitor: val/fluxes/loss
       mode: min
     - _target_: callbacks.GradNormCallback
 #    - _target_: callbacks.PredictionCallback

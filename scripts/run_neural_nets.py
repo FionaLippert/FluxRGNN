@@ -27,6 +27,7 @@ from pytorch_lightning.loggers import WandbLogger
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
 
+OmegaConf.register_new_resolver("eval", eval)
 
 # map model name to implementation
 MODEL_MAPPING = {'LocalMLP': LocalMLP,
