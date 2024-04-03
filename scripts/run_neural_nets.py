@@ -34,6 +34,7 @@ OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
 OmegaConf.register_new_resolver("merge", merge_lists)
 
+OmegaConf.register_new_resolver("eval", eval)
 
 # map model name to implementation
 MODEL_MAPPING = {'LocalMLP': LocalMLP,

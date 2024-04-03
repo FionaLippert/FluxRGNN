@@ -215,7 +215,7 @@ class ForecastModel(pl.LightningModule):
         forecast = self.forecast(batch, self.horizon, t0=t0)
 
         # evaluate forecast
-        for var, coef in self.training_coefs.items():
+        for var in (list(self.training_coefs.keys()) + self.test_vars):
             if var in forecast:
                 # loss_var, eval_dict = self._eval_step(batch, forecast,
                 #                                       radar_mask=batch['radar'].train_mask,
@@ -291,8 +291,8 @@ class ForecastModel(pl.LightningModule):
                     measured = self.transforms.transformed2raw(batch['radar'][var], var)
                     measured = measured[..., t0 + self.t_context: t0 + self.t_context + t_steps]
                     
-                    self.test_results[f'test/predictions/{var}'].append(predicted)
-                    self.test_results[f'test/measurements/{var}'].append(measured)
+                    self.test_results[f'test/predictions/{var}'].append(predicted.detach())
+                    self.test_results[f'test/measurements/{var}'].append(measured.detach())
             
             # # compute evaluation metrics as a function of the forecasting horizon
             # eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False, t0=t0)
@@ -304,10 +304,10 @@ class ForecastModel(pl.LightningModule):
             #         self.test_metrics[m] = [values]
 
             self.test_results['test/mask'].append(
-                torch.logical_not(batch['radar'].missing_x)[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)]
+                torch.logical_not(batch['radar'].missing_x)[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)].detach()
             )
-            self.test_results['test/train_mask'].append(batch['radar'].train_mask)
-            self.test_results['test/test_mask'].append(batch['radar'].test_mask)
+            self.test_results['test/train_mask'].append(batch['radar'].train_mask.detach())
+            self.test_results['test/test_mask'].append(batch['radar'].test_mask.detach())
 
 
 
@@ -324,7 +324,7 @@ class ForecastModel(pl.LightningModule):
     def on_predict_epoch_start(self):
 
         self.predict_results = {
-                'predict/t_q50': [],
+                #'predict/t_q50': [],
                 'predict/tidx': [],
                 }
 
@@ -346,13 +346,11 @@ class ForecastModel(pl.LightningModule):
             for var in self.predict_vars:
                 if var in forecast:
                     self.predict_results[f'predict/predictions/{var}'].append(
-                        self.transforms.transformed2raw(forecast[var], var)
+                        self.transforms.transformed2raw(forecast[var], var).detach()
                     )
-            self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
+            self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)].detach())
             #self.predict_results['predict/t_q50'].append(batch['cell'].t_q50[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
 
-            print(batch['cell'])
-            
             self.add_additional_predict_results()
 
     
@@ -630,7 +628,7 @@ class FluxRGNN(ForecastModel):
             if hasattr(self.flux_model, 'node_velocity'):
 
                 output['bird_uv'] = self.flux_model.node_velocity
-
+                output['fluxes'] = output['bird_uv'] * x
             #if self.training and hasattr(self.flux_model, 'node_velocity'):
             #    #print('add velocity regularizer')
             #    uv_cells = self.flux_model.node_velocity
@@ -1984,6 +1982,7 @@ class RadarToCellGNN(MessagePassing):
         super(RadarToCellGNN, self).__init__(aggr='sum', node_dim=0)
 
         self.n_features = kwargs.get('n_hidden')
+        self.k = kwargs.get('k', 10)
 
         self.static_radar_features = {} if static_radar_features is None else static_radar_features
         self.dynamic_radar_features = {} if dynamic_radar_features is None else dynamic_radar_features
@@ -1996,8 +1995,8 @@ class RadarToCellGNN(MessagePassing):
         n_edge_in = sum(self.static_radar_features.values()) + \
                     sum(self.dynamic_radar_features.values()) + \
                     sum(self.static_cell_features.values()) + \
-                    sum(self.dynamic_cell_features.values()) + \
-                    kwargs.get('radar2cell_edge_attr')
+                    sum(self.dynamic_cell_features.values()) + 2 #\
+                    #kwargs.get('radar2cell_edge_attr')
 
         if self.location_encoder is not None:
             n_edge_in += self.location_encoder.embedding_dim
@@ -2036,11 +2035,9 @@ class RadarToCellGNN(MessagePassing):
         radar_mask = torch.logical_and(graph_data['radar'].train_mask,
                                        torch.logical_not(missing))  # size [n_radars, time_steps]
         n_radars = radar_mask.sum()
-
-        static_radar_features = static_radar_features[radar_mask]
-        dynamic_radar_features = dynamic_radar_features[radar_mask]
-
+        
         all_radar_features = torch.cat(static_radar_features + dynamic_radar_features, dim=1)
+        all_radar_features = all_radar_features[radar_mask]
         dummy_features = torch.zeros((n_cells - n_radars, all_radar_features.size(1)), device=all_radar_features.device)
         embedded_radar_features = torch.cat([all_radar_features, dummy_features], dim=0)
 
