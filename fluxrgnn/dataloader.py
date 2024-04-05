@@ -12,6 +12,7 @@ import itertools as it
 from omegaconf import DictConfig, OmegaConf
 import warnings
 import datetime
+from typing import Any, List, Optional, Sequence, Union
 warnings.filterwarnings("ignore")
 
 
@@ -303,6 +304,9 @@ class RadarHeteroData(InMemoryDataset):
         with open(osp.join(self.processed_dir, self.info_file_name), 'rb') as f:
             self.info = pickle.load(f)
 
+        # TODO: add test_radar info only when loading already processed data
+        #  (to prevent storing different data for all CV folds)
+
         print(f'processed data can be found here: {self.processed_dir}')
 
     @property
@@ -350,17 +354,18 @@ class RadarHeteroData(InMemoryDataset):
         radars = pd.read_csv(osp.join(self.preprocessed_dir, 'static_radar_features.csv'))
         
         
-        # define test radars
-        if self.n_cv_folds == 0:
-            test_radars = []
-        else:
-            radar_idx = np.arange(len(radars))
-            shuffled_radars = self.rng.permutation(radar_idx)
-            n_test = int(np.ceil(len(radars) / self.n_cv_folds))
-            test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
-        print(f'test radars: {test_radars}')
+        # # define test radars
+        # if self.n_cv_folds == 0:
+        #     test_radars = []
+        # else:
+        #     radar_idx = np.arange(len(radars))
+        #     shuffled_radars = self.rng.permutation(radar_idx)
+        #     n_test = int(np.ceil(len(radars) / self.n_cv_folds))
+        #     test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
+        # print(f'test radars: {test_radars}')
 
-        excluded_radars = np.concatenate([test_radars, radars[radars.radar.isin(self.exclude)].ID.values], axis=0)
+        # excluded_radars = np.concatenate([test_radars, radars[radars.radar.isin(self.exclude)].ID.values], axis=0)
+        excluded_radars = radars[radars.radar.isin(self.exclude)].ID.values
         excluded_radars = torch.tensor(excluded_radars, dtype=torch.long)
 
         # relationship between cells and radars
@@ -368,9 +373,9 @@ class RadarHeteroData(InMemoryDataset):
             cell_to_radar_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
             cell_to_radar_weights = torch.ones(len(cells))
             
-            radar_to_cell_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
-            radar_to_cell_weights = torch.ones(len(cells))
-            radar_to_cell_dist = torch.zeros(len(cells))
+            # radar_to_cell_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
+            # radar_to_cell_weights = torch.ones(len(cells))
+            # radar_to_cell_dist = torch.zeros(len(cells))
         else:
             cell_to_radar_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'cell_to_radar_edges.csv'))
             radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
@@ -396,12 +401,12 @@ class RadarHeteroData(InMemoryDataset):
             # print(radar_to_cell_edge_index)
 
 
-            radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], excluded_radars))
-            radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
-            radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
-            radar_to_cell_dist = radar_to_cell_dist[mask]
-            radar_to_cell_weights = 1 / radar_to_cell_dist**2
+            # radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
+            # mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], excluded_radars))
+            # radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
+            # radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
+            # radar_to_cell_dist = radar_to_cell_dist[mask]
+            # radar_to_cell_weights = 1 / radar_to_cell_dist**2
 
 
         graph_file = osp.join(self.preprocessed_dir, 'delaunay.graphml')
@@ -551,16 +556,16 @@ class RadarHeteroData(InMemoryDataset):
 
 
             # radar-cell edge features
-            radar_to_cell_delta_x = np.array([local_pos[j, 0] - local_radar_pos[i, 0]
-                                              for i, j in radar_to_cell_edge_index.T])
-            radar_to_cell_delta_y = np.array([local_pos[j, 1] - local_radar_pos[i, 1]
-                                              for i, j in radar_to_cell_edge_index.T])
-
-            radar_to_cell_edge_attr = torch.stack([
-                torch.tensor(rescale(radar_to_cell_dist, min=0), dtype=torch.float),
-                torch.tensor(radar_to_cell_delta_x, dtype=torch.float),
-                torch.tensor(radar_to_cell_delta_y, dtype=torch.float)
-            ], dim=1)
+            # radar_to_cell_delta_x = np.array([local_pos[j, 0] - local_radar_pos[i, 0]
+            #                                   for i, j in radar_to_cell_edge_index.T])
+            # radar_to_cell_delta_y = np.array([local_pos[j, 1] - local_radar_pos[i, 1]
+            #                                   for i, j in radar_to_cell_edge_index.T])
+            #
+            # radar_to_cell_edge_attr = torch.stack([
+            #     torch.tensor(rescale(radar_to_cell_dist, min=0), dtype=torch.float),
+            #     torch.tensor(radar_to_cell_delta_x, dtype=torch.float),
+            #     torch.tensor(radar_to_cell_delta_y, dtype=torch.float)
+            # ], dim=1)
 
 
         time = dynamic_feature_df.datetime.sort_values().unique()
@@ -691,22 +696,22 @@ class RadarHeteroData(InMemoryDataset):
             'edge_weight': cell_to_radar_weights
         }
 
-        # interpolation model structure
-        radar2cell_edges = {
-            'edge_index': radar_to_cell_edge_index,
-            'edge_weight': radar_to_cell_weights,
-            'edge_attr': radar_to_cell_edge_attr
-        }
+        # # interpolation model structure
+        # radar2cell_edges = {
+        #     'edge_index': radar_to_cell_edge_index,
+        #     'edge_weight': radar_to_cell_weights,
+        #     'edge_attr': radar_to_cell_edge_attr
+        # }
 
         # masks to select train or test radars
-        train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
-        train_mask[excluded_radars] = False
-        test_mask = torch.zeros(len(radar_ids), dtype=torch.bool)
-        test_mask[test_radars] = True
-        #test_mask = torch.logical_not(train_mask)
+        # train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
+        # train_mask[excluded_radars] = False
+        # test_mask = torch.zeros(len(radar_ids), dtype=torch.bool)
+        # test_mask[test_radars] = True
 
-        print(list(data.keys()))
-        print(self.env_vars)
+        # ignore excluded radars during both training and testing
+        radar_mask = torch.ones(len(radar_ids), dtype=torch.bool)
+        radar_mask[excluded_radars] = False
 
         # create graph data objects per sequence
         data_list = []
@@ -751,9 +756,8 @@ class RadarHeteroData(InMemoryDataset):
                 'ridx': torch.arange(len(radar_ids), dtype=torch.long),
                 'pos': torch.tensor(local_radar_pos, dtype=torch.float),
                 'coords': torch.tensor(lonlat_radar_encoding, dtype=torch.float),
-                'train_mask': train_mask,
-                'test_mask': test_mask,
-                # TODO: add radar sun elevation and other dynamic features?
+                'train_mask': radar_mask,
+                'test_mask': radar_mask,
 
                 # dynamic radar features
                 'x': x,
@@ -772,7 +776,7 @@ class RadarHeteroData(InMemoryDataset):
                 radar = radar_data,
                 cell__to__cell = cell2cell_edges,
                 cell__to__radar = cell2radar_edges,
-                radar__to__cell = radar2cell_edges
+                # radar__to__cell = radar2cell_edges
             ))
 
 
@@ -874,6 +878,8 @@ class SensorHeteroData(HeteroData):
             return super().__inc__(key, value, store, *args, **kwargs)
 
 
+
+
 def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     """
     Load training or testing data, initialize normalizer, setup and save configuration
@@ -896,13 +902,14 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     else:
         res_info = f'ndummy={cfg.datasource.n_dummy_radars}'
 
-    n_cv_folds = cfg.task.get('n_cv_folds', 0)
-    cv_fold = cfg.task.get('cv_fold', 0)
+    # n_cv_folds = cfg.task.get('n_cv_folds', 0)
+    # cv_fold = cfg.task.get('cv_fold', 0)
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_{cfg.datasource.buffer}_{res_info}_dataperc={cfg.data_perc}_' \
-                        f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
+                        f'seed={cfg.seed}'
+                        #f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
     
     preprocessed_dirname += f'_{res_info}'
 

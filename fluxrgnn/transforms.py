@@ -1,6 +1,9 @@
 from typing import List, Optional, Union
 import copy
 import torch
+import numpy as np
+
+from fluxrgnn.dataloader import SensorHeteroData
 
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.datapipes import functional_transform
@@ -178,6 +181,57 @@ class Rescaling(BaseTransform):
         return f'{self.__class__.__name__}(feature={self.feature}, offset={self.offset}, factor={self.factor})'
 
 
+class CVMasks(BaseTransform):
+    r"""Adjusts train and test masks for a given cross validation fold.
+
+    Args:
+        n_cv_folds (int, optional): number of cross validation folds
+        cv_fold (int, optional): index of current cross validation fold
+        seed (int, optional): random seed for train-test-split
+    """
+    def __init__(
+        self,
+        n_cv_folds: int = 0,
+        cv_fold: int = 0,
+        seed: int = 1234,
+    ):
+        self.n_cv_folds = n_cv_folds
+        self.cv_fold = cv_fold
+        self.seed = seed
+
+
+    def __call__(self, data: SensorHeteroData) -> SensorHeteroData:
+
+        return self.forward(copy.copy(data))
+
+    def forward(self, data: SensorHeteroData) -> SensorHeteroData:
+
+        # define test radars
+        if self.n_cv_folds > 0:
+
+            ridx = data['radar'].ridx.unique(sorted=True)
+            n_radars = ridx.numel()
+            n_test = int(np.ceil(n_radars / self.n_cv_folds))
+
+            shuffled_idx = torch.randperm(n_radars,
+                                          generator=torch.Generator().manual_seed(self.seed),
+                                          device=data.device)
+            shuffled_ridx = ridx[shuffled_idx]
+
+            test_radars = shuffled_ridx[n_test * self.cv_fold: n_test * (self.cv_fold + 1)]
+            train_radars = torch.cat([shuffled_ridx[:(n_test * self.cv_fold)],
+                                      shuffled_ridx[(n_test * (self.cv_fold + 1)):]], dim=0)
+
+            train_mask = torch.isin(data['radar'].ridx, train_radars)
+            test_mask = torch.isin(data['radar'].ridx, test_radars)
+
+            data['radar'].train_mask[test_mask] = False
+            data['radar'].test_mask[train_mask] = False
+
+        return data
+
+
+
 class Transforms:
 
     def __init__(self, transforms: list, **kwargs):
@@ -185,12 +239,13 @@ class Transforms:
         self.transforms = {}
 
         for t in transforms:
-            var = t.feature
+            if hasattr(t, 'feature'):
+                var = t.feature
 
-            if var not in self.transforms:
-                self.transforms[var] = []
+                if var not in self.transforms:
+                    self.transforms[var] = []
 
-            self.transforms[var].append(t)
+                self.transforms[var].append(t)
 
         self.zero_value = {var: self.apply_forward_transforms(torch.tensor(0), var) for var in self.transforms}
 

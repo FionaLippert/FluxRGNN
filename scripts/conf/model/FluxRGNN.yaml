@@ -126,6 +126,10 @@ transforms:
   - _target_: fluxrgnn.transforms.Rescaling
     feature: source_sink
     factor: ${model.scale}
+  - _target_: fluxrgnn.transforms.CVMasks
+    n_cv_folds: ${task.n_cv_folds}
+    cv_fold: ${task.cv_fold}
+    seed: ${seed}
 
 dropout_p: 0.0
 teacher_forcing: 0.0
