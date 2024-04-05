@@ -90,7 +90,6 @@ class ForecastModel(pl.LightningModule):
         :param teacher_forcing: teacher forcing probability
         :return: predicted migration intensities for all cells and time points
         """
-
         
         # make sure t0 is tensor of dimension 2
         if not isinstance(t0, torch.Tensor):
@@ -372,9 +371,10 @@ class ForecastModel(pl.LightningModule):
 
         # map cell predictions to radar locations
         output = self.observation_model(forecast[var], graph_data['cell', 'radar'], radar_data.num_nodes)
-        output = output[radar_mask].reshape(radar_data.num_nodes, -1, output.size(-1))
+        output = output.reshape(radar_data.num_nodes, -1, output.size(-1))
         var_dim = output.size(1)
         horizon = output.size(-1) - 1
+        output = output[radar_mask]
         
         missing = radar_data.get(f'missing_{var}', torch.zeros(radar_data.local_night.size(), device=self.device))
         if self.config.get('force_zeros', False):

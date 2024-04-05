@@ -360,8 +360,9 @@ class RadarHeteroData(InMemoryDataset):
             test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
         print(f'test radars: {test_radars}')
 
-        excluded_radars = test_radars + list(radars[radars.radar.isin(self.exclude)].ID.values)
-        
+        excluded_radars = np.concatenate([test_radars, radars[radars.radar.isin(self.exclude)].ID.values], axis=0)
+        excluded_radars = torch.tensor(excluded_radars, dtype=torch.long)
+
         # relationship between cells and radars
         if self.edge_type in ['voronoi', 'none']:
             cell_to_radar_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
@@ -396,7 +397,7 @@ class RadarHeteroData(InMemoryDataset):
 
 
             radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], torch.tensor(excluded_radars)))
+            mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], excluded_radars))
             radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
             radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
             radar_to_cell_dist = radar_to_cell_dist[mask]
@@ -455,7 +456,7 @@ class RadarHeteroData(InMemoryDataset):
             dynamic_feature_df = self.normalize_dynamic(dynamic_feature_df)
             measurement_df = self.normalize_dynamic(measurement_df)
 
-        print(dynamic_feature_df[self.env_vars].describe())
+        print(dynamic_feature_df.columns)
 
         # normalize static features
         coord_cols = ['x', 'y']
@@ -704,6 +705,9 @@ class RadarHeteroData(InMemoryDataset):
         test_mask[test_radars] = True
         #test_mask = torch.logical_not(train_mask)
 
+        print(list(data.keys()))
+        print(self.env_vars)
+
         # create graph data objects per sequence
         data_list = []
         for idx in seq_index:
@@ -740,7 +744,7 @@ class RadarHeteroData(InMemoryDataset):
             
             x = torch.tensor(data[target_col][..., idx], dtype=torch.float)
             bird_uv = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
-            fluxes = x.unsqueeze(1) * bird_uv
+            #fluxes = x.unsqueeze(1) * bird_uv
 
             radar_data = {
                 # static radar features
@@ -755,10 +759,10 @@ class RadarHeteroData(InMemoryDataset):
                 'x': x,
                 'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
                 'missing_bird_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
-                'missing_fluxes': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
+                #'missing_fluxes': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': bird_uv,
-                'fluxes': fluxes,
+                #'fluxes': fluxes,
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
             }
 
@@ -802,8 +806,9 @@ class RadarHeteroData(InMemoryDataset):
         cidx = ~dynamic_feature_df.columns.isin(['birds', 'birds_km2', 'birds_km2_from_buffer',
                                                  'bird_speed', 'bird_direction', 'wind_u', 'wind_v',
                                                  'bird_u', 'bird_v', 
-                                                 'u', 'v', 'u10', 'v10',
-                                                 'cc', 'sshf', 'dayofyear',
+                                                 #'u', 'v', 'u10', 'v10',
+                                                 #'cc', 'sshf', 
+                                                 'dayofyear',
                                                  'radar', 'ID', 'night', 'boundary',
                                                  'dusk', 'dawn', 'datetime', 'missing',
                                                  'missing_birds_km2', 'missing_birds_uv'])
@@ -821,20 +826,20 @@ class RadarHeteroData(InMemoryDataset):
         #    dynamic_feature_df['tp'] = dynamic_feature_df['tp'] / self.normalization.max('tp')
         
         #
-        if 'sshf' in dynamic_feature_df:
-            dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
+        #if 'sshf' in dynamic_feature_df:
+        #    dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
 
         # if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
         #     uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
         #     dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
         
-        if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
-            uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))
-            dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
+        #if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
+        #    uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))
+        #    dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
         
-        if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
-            uv_scale = max(self.normalization.absmax('u10'), self.normalization.absmax('v10'))
-            dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
+        #if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
+        #    uv_scale = max(self.normalization.absmax('u10'), self.normalization.absmax('v10'))
+        #    dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
 
         if 'dayofyear' in dynamic_feature_df:
             dynamic_feature_df['dayofyear'] /= 365.0 #self.normalization.max('dayofyear')  # always use 365?

@@ -234,8 +234,8 @@ class Transforms:
 
     def raw2pow(self, values):
 
-        pow = torch.clamp(values, min=0)
-        pow = torch.pow(values, 1 / 3)
+        v_pow = torch.clamp(values, min=0)
+        v_pow = torch.pow(v_pow, 1 / 3)
 
-        return pow
+        return v_pow
 

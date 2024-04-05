@@ -9,9 +9,9 @@ radar_embedding_dim: 8
 n_edge_attr: 6
 
 training_coefs:
-  fluxes: 1.0
-  #x: 1.0
-  #bird_uv: 0.1
+  #fluxes: 1.0
+  x: 1.0
+  bird_uv: 0.01
 test_vars:
   - x
   - bird_uv
@@ -21,25 +21,25 @@ predict_vars:
   - source_sink
 
 env_vars:
-  #u_q10: 1
-  #u_q50: 1
-  #u_q90: 1
-  #v_q10: 1
-  #v_q50: 1
-  #v_q90: 1
-  #u10: 1
-  #v10: 1
+  u_q10: 1
+  u_q50: 1
+  u_q90: 1
+  v_q10: 1
+  v_q50: 1
+  v_q90: 1
+  u10: 1
+  v10: 1
   tcc: 1
   tp: 1
   sp: 1
   msl: 1
   #t2m: 1
-  #t_q10: 1
-  #t_q50: 1
-  #t_q90: 1
-  #q_q10: 1
-  #q_q50: 1
-  #q_q90: 1
+  t_q10: 1
+  t_q50: 1
+  t_q90: 1
+  q_q10: 1
+  q_q50: 1
+  q_q90: 1
   #sshf: 1
   night: 1
   dusk: 1
@@ -47,8 +47,8 @@ env_vars:
   dayofyear: 1
   solarpos: 1
   solarpos_dt: 1
-  frac_night_fw: 1
-  frac_night_bw: 1
+  #frac_night_fw: 1
+  #frac_night_bw: 1
 
 permute_env_vars: []
 
@@ -228,15 +228,14 @@ source_sink_model:
 #  _target_: fluxrgnn.models.InitialStateMLP
 #  node_features:
 #    coords: ${model.coord_dim}
-#  dynamic_features:
-#    env: ${model.n_env}
+#  dynamic_cell_features: ${model.env_vars}
+#  static_cell_features:
+#    coords: ${model.coord_dim}
 #  n_hidden: ${model.n_hidden}
 #  n_fc_layers: 1
 #  activation:
 #    _target_: torch.nn.ReLU
 #  use_log_transform: ${model.use_log_transform}
-#  log_offset: ${model.log_offset}
-#  scale: ${model.scale}
 #  dropout_p: ${model.dropout_p}
 #  transforms: ${model.transforms}
 
@@ -249,18 +248,10 @@ source_sink_model:
 #  transforms: ${model.transforms}
 
 initial_model:
-  #_target_: fluxrgnn.models.RadarToCellInterpolation
   _target_: fluxrgnn.models.RadarToCellKNNInterpolation
   k: 10
   radar_variables:
     x: 1
-#  dynamic_cell_features:
-#    env: ${model.n_env}
-#  n_hidden: ${model.n_hidden}
-#  n_fc_layers: 1
-#  activation:
-#    _target_: torch.nn.ReLU # LeakyReLU
-#  dropout_p: ${model.dropout_p}
 
 #ground_model:
 #  _target_: fluxrgnn.models.InitialStateMLP
@@ -297,6 +288,7 @@ encoder:
     #n_hidden: ${model.radar_embedding_dim}
     #n_fc_layers: 2
     #activation: ${model.activation}
+    #dropout_p: ${model.dropout_p}
     #dynamic_radar_features:
     #  x: 1
     #  bird_uv: 2
@@ -310,15 +302,6 @@ encoder:
     radar_variables:
       x: 1
       bird_uv: 2
-#   #location_encoder: ${model.location_encoder}
-#    dynamic_cell_features:
-#      env: ${model.n_env}
-#    radar2cell_edge_attr: 3
-#    n_hidden: ${model.n_hidden}
-#    n_fc_layers: 1
-#    activation:
-#      _target_: torch.nn.ReLU # LeakyReLU
-#    dropout_p: ${model.dropout_p}
 
 
 boundary_model:

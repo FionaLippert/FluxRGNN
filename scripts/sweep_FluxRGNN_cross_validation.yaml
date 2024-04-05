@@ -10,13 +10,13 @@ command:
   - trainer.max_epochs=300
   - dataloader.batch_size=32
   - task=cross_validation
-  - task.store_test_results=true
+  - task.store_test_results=false
   - task.n_cv_folds=10
   - model.n_hidden=128
   - model.lr=3e-5
 method: grid
 metric:
-  name: test/observed/x/raw/RMSE
+  name: test/unobserved/x/raw/RMSE
   goal: minimize
 parameters:
   task.cv_fold:
