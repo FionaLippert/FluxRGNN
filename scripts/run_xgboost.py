@@ -23,8 +23,17 @@ from pytorch_lightning.loggers import WandbLogger
 
 import transforms
 
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
 OmegaConf.register_new_resolver("sum", sum)
 OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
+
+OmegaConf.register_new_resolver("eval", eval)
 
 # trade precision for performance
 torch.set_float32_matmul_precision('medium')
@@ -92,13 +101,11 @@ def load_training_data(cfg):
     transform = get_transform(cfg)
 
     data = dataloader.load_xgboost_dataset(cfg, cfg.output_dir, transform=transform)
-    
     data = torch.utils.data.ConcatDataset(data)
 
     dynamic_cell_features = cfg.model.get('dynamic_cell_features', {})
     static_cell_features = cfg.model.get('static_cell_features', {})
 
-    # TODO: join all years into one big input matrix X and one big output vector y
     X = []
     y = []
     print(f'number of sequences in training dataset: {len(data)}')
@@ -114,8 +121,7 @@ def load_training_data(cfg):
         print(f'num nodes = {cell_data.num_nodes}')
 
         assert cell_data.num_nodes == radar_data.num_nodes
-        #print(dynamic_features)
-        #print(cell_data)
+
         # dynamic features for current and previous time step
         dynamic_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1, T) for
                                       feature in dynamic_cell_features]
@@ -127,16 +133,26 @@ def load_training_data(cfg):
         # combined features
         inputs = torch.cat(node_features + dynamic_features, dim=1) #.detach().numpy()
         inputs = inputs.permute(0, 2, 1) # [nodes, time, features]
-        inputs = inputs.reshape(cell_data.num_nodes * T, -1) # [num_nodes * T, features]
 
-        # mask
-        mask = torch.logical_not(radar_data.missing.reshape(-1))
+        # masks
+        missing = radar_data.missing_x
+        radar_mask = radar_data.train_mask
+
+        if cfg.get('force_zeros', False):
+            local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(missing))
+        else:
+            local_mask = torch.logical_not(missing)
+
+        local_mask = local_mask[radar_mask].reshape(-1)
 
         # ground truth
-        gt = radar_data.x.reshape(-1) # [num_nodes * T]
+        gt = radar_data.x[radar_mask].reshape(-1)
 
-        X.append(inputs[mask])
-        y.append(gt[mask])
+        # features
+        inputs = inputs[radar_mask].reshape(radar_mask.sum() * T, -1)
+
+        X.append(inputs[local_mask])
+        y.append(gt[local_mask])
 
     X = torch.cat(X, dim=0).detach().numpy()
     y = torch.cat(y, dim=0).detach().numpy()
@@ -169,9 +185,8 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     # load test data
     transform = get_transform(cfg)
     print('######### testing #########')
-    print(cfg.model.edge_type)
+
     test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
-    # test_data = test_data[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
@@ -183,7 +198,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     utils.dump_outputs(model.test_metrics, eval_path)
     utils.dump_outputs(model.test_results, eval_path)
 
-    if isinstance(trainer.logger, WandbLogger):
+    if cfg.task.get('store_test_results', True):
         print('add evaluation artifact')
         artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
         artifact.add_dir(eval_path)
@@ -214,7 +229,6 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
     # load test data
     transform = get_transform(cfg)
     test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
-    # test_data = test_data[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)

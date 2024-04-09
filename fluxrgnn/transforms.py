@@ -10,7 +10,7 @@ from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
 
 
-@functional_transform('log_transform')
+#@functional_transform('log_transform')
 class LogTransform(BaseTransform):
     r"""Applies a log-transformation to each node feature :obs:`feature`.
 
@@ -65,7 +65,7 @@ class LogTransform(BaseTransform):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(feature={self.feature}, offset={self.offset})'
 
-@functional_transform('pow_transform')
+#@functional_transform('pow_transform')
 class PowerTransform(BaseTransform):
     r"""Applies a power-transformation to each node feature :obs:`feature`.
 
@@ -120,7 +120,7 @@ class PowerTransform(BaseTransform):
 
 
 
-@functional_transform('rescale')
+#@functional_transform('rescale')
 class Rescaling(BaseTransform):
     r"""Rescales node feature :obs:`feature` by adding :obs:`offset` and mutliplying with :obs:`factor`.
 
