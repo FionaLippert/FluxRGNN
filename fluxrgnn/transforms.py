@@ -215,7 +215,7 @@ class CVMasks(BaseTransform):
 
             shuffled_idx = torch.randperm(n_radars,
                                           generator=torch.Generator().manual_seed(self.seed),
-                                          device=data.device)
+                                          device=ridx.device)
             shuffled_ridx = ridx[shuffled_idx]
 
             test_radars = shuffled_ridx[n_test * self.cv_fold: n_test * (self.cv_fold + 1)]

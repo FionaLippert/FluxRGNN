@@ -1,0 +1,20 @@
+program: run_neural_nets.py
+name: sweep_FluxRGNN
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - seed=1234
+  - model=FluxRGNN
+  - model.n_hidden=128
+  - trainer.max_epochs=500
+  - dataloader.batch_size=32
+  - task=train
+method: grid
+metric:
+  name: val/observed/x/raw/RMSE
+  goal: minimize
+parameters:
+  model.lr:
+    values: [3e-4, 1e-4, 3e-5]
