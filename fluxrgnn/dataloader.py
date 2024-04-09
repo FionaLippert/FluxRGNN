@@ -1006,7 +1006,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}' \
-                        f'_fold={cfg.task.cv_fold}-{cfg.task.n_cv_folds}_seed={cfg.seed}'
+                        f'_seed={cfg.seed}'
     
     preprocessed_dirname += f'_{res_info}'
     # processed_dirname += res_info
@@ -1035,7 +1035,6 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
                       normalization=normalization,
-                      #env_vars=cfg.datasource.env_vars,
                       transform=transform
                       )
             for year in years]

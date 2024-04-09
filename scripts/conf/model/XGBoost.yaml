@@ -1,0 +1,86 @@
+# @package model
+_target_: fluxrgnn.models.XGBoostForecast
+
+coord_dim: 4
+
+test_vars:
+  - x
+predict_vars:
+  - x
+
+env_vars:
+  u_q10: 1
+  u_q50: 1
+  u_q90: 1
+  v_q10: 1
+  v_q50: 1
+  v_q90: 1
+  u10: 1
+  v10: 1
+  tcc: 1
+  tp: 1
+  sp: 1
+  msl: 1
+  #t2m: 1
+  t_q10: 1
+  t_q50: 1
+  t_q90: 1
+  q_q10: 1
+  q_q50: 1
+  q_q90: 1
+  #sshf: 1
+  night: 1
+  dusk: 1
+  dawn: 1
+  dayofyear: 1
+  solarpos: 1
+  solarpos_dt: 1
+  #frac_night_fw: 1
+  #frac_night_bw: 1
+
+
+xgboost:
+  _target_: xgboost.XGBRegressor
+  n_estimators: 200
+  learning_rate: 0.05
+  max_depth: 10
+  tol: 1e-8
+  n_iter_no_change: 10
+  random_state: ${seed}
+
+observation_model:
+  _target_: fluxrgnn.models.ObservationModel
+  
+max_t0: ${datasource.tidx_step}
+test_horizon: 72
+test_context: 24
+
+use_acc_vars: false
+edge_type: none #hexagons
+birds_per_km2: true
+
+static_cell_features:
+  coords: ${model.coord_dim}
+#  pos: ${model.coord_dim}
+dynamic_cell_features: ${model.env_vars}
+
+force_zeros: true
+
+use_log_transform: false
+log_offset: 0.1
+pow_exponent: 0.3333
+scale: 0.1 #1.0 #0.1 #0.001
+
+
+transforms:
+  - _target_: fluxrgnn.transforms.PowerTransform
+    feature: x
+    exponent: ${model.pow_exponent}
+  - _target_: fluxrgnn.transforms.Rescaling
+    feature: x
+    factor: ${model.scale}
+  - _target_: fluxrgnn.transforms.CVMasks
+    n_cv_folds: ${task.n_cv_folds}
+    cv_fold: ${task.cv_fold}
+    seed: ${seed}
+
