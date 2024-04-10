@@ -9,15 +9,12 @@ radar_embedding_dim: 8
 n_edge_attr: 6
 
 training_coefs:
-  #fluxes: 1.0
   x: 1.0
-  bird_uv: 0.01
 test_vars:
   - x
-  - bird_uv
 predict_vars:
   - x
-  - bird_uv
+  - node_fluxes
   - source_sink
 
 env_vars:
@@ -108,12 +105,10 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 0.01 #1.0
-flux_scale: ${eval:'${model.scale} * ${model.length_scale}'} #0.00001
+length_scale: 0.01
+flux_scale: ${eval:'${model.scale} * ${model.length_scale}'}
+
 transforms:
-#  - _target_: fluxrgnn.transforms.LogTransform
-#    feature: x
-#    offset: ${model.log_offset}
   - _target_: fluxrgnn.transforms.Rescaling
     feature: x
     factor: ${model.scale}
@@ -141,7 +136,7 @@ increase_horizon_start: 0
 force_zeros: false #true
 root_transformed_loss: false
 weight_exponent: 1.0 #0.75
-edge_type: hexagons
+edge_type: voronoi
 birds_per_km2: true
 
 regularizer_weight: 0.0 #0.01
@@ -156,15 +151,6 @@ node_rnn:
   _target_: fluxrgnn.models.NodeLSTM
   _partial_: true
 
-location_encoder:
-  _target_: fluxrgnn.models.LocationEncoder
-  static_cell_features:
-    coords: ${model.coord_dim}
-    land_cover: 19
-  out_channels: ${model.embedding_dim}
-  n_layers: 2 
-  dropout_p: ${model.dropout_p}
-
 decoder:
   _target_: fluxrgnn.models.RecurrentDecoder
   node_rnn: ${model.node_rnn}
@@ -177,24 +163,14 @@ decoder:
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
-  #  env: ${model.n_env}
 
 flux_model:
-  #_target_: fluxrgnn.models.Fluxes
-  _target_: fluxrgnn.models.NumericalFluxes
-  #_target_: fluxrgnn.models.NumericalRadarFluxes
-  radar2cell_model:
-    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-    k: 10
-    radar_variables:
-      bird_uv: 2
+  _target_: fluxrgnn.models.Fluxes
   static_cell_features:
     coords: ${model.coord_dim}
-    #land_cover: 19
   edge_features:
     edge_attr: ${model.n_edge_attr}
   dynamic_cell_features: ${model.env_vars}
-  #  env: ${model.n_env}
   length_scale: ${model.length_scale}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1
@@ -209,15 +185,9 @@ flux_model:
 
 source_sink_model:
   _target_: fluxrgnn.models.SourceSink
-  #_target_: fluxrgnn.models.DeltaMLP
-  #model_inputs: []
-    #x: 1
-    #ground_states: 1
   static_cell_features:
     coords: ${model.coord_dim}
-    #land_cover: 19
   dynamic_cell_features: ${model.env_vars}
-  #  env: ${model.n_env}
   n_hidden: ${model.n_hidden}
   n_fc_layers: 1 
   activation: ${model.activation}
@@ -228,56 +198,16 @@ source_sink_model:
   transforms: ${model.transforms}
 
 
-#initial_model:
-#  _target_: fluxrgnn.models.InitialStateMLP
-#  node_features:
-#    coords: ${model.coord_dim}
-#  dynamic_cell_features: ${model.env_vars}
-#  static_cell_features:
-#    coords: ${model.coord_dim}
-#  n_hidden: ${model.n_hidden}
-#  n_fc_layers: 1
-#  activation:
-#    _target_: torch.nn.ReLU
-#  use_log_transform: ${model.use_log_transform}
-#  dropout_p: ${model.dropout_p}
-#  transforms: ${model.transforms}
-
-#initial_model:
-#  _target_: fluxrgnn.models.ObservationCopy
-#  use_log_transform: ${model.use_log_transform}
-#  log_offset: ${model.log_offset}
-#  scale: ${model.scale}
-#  dropout_p: ${model.dropout_p}
-#  transforms: ${model.transforms}
-
 initial_model:
   _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-  k: 10
+  k: 1
   radar_variables:
     x: 1
-
-#ground_model:
-#  _target_: fluxrgnn.models.InitialStateMLP
-#  static_cell_features:
-#    coords: ${model.coord_dim}
-#  #dynamic_cell_features:
-#  #  env: ${model.n_env}
-#  n_hidden: ${model.n_hidden}
-#  n_fc_layers: 1
-#  activation:
-#    _target_: torch.nn.ReLU
-#  use_log_transform: ${model.use_log_transform}
-#  log_offset: ${model.log_offset}
-#  scale: ${model.scale}
-#  dropout_p: ${model.dropout_p}
-#  transforms: ${model.transforms}
 
   
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
   node_rnn: ${model.node_rnn}
-  #_target_: fluxrgnn.models.LSTMEncoder
   context: ${model.context}
   n_hidden: ${model.n_hidden}
   n_rnn_layers: 1
@@ -285,24 +215,9 @@ encoder:
   static_cell_features:
       coords: ${model.coord_dim}
   dynamic_cell_features: ${model.env_vars}
-  #  env: ${model.n_env}
   radar2cell_model:
-    #_target_: fluxrgnn.models.RadarToCellGNN
-    #k: 10
-    #n_hidden: ${model.radar_embedding_dim}
-    #n_fc_layers: 2
-    #activation: ${model.activation}
-    #dropout_p: ${model.dropout_p}
-    #dynamic_radar_features:
-    #  x: 1
-    #  bird_uv: 2
-    #static_cell_features:
-    #  coords: ${model.coord_dim}
-    #static_radar_features:
-    #  coords: ${model.coord_dim}
-    #location_encoder: ${model.location_encoder}
     _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-    k: 10
+    k: 1
     radar_variables:
       x: 1
       bird_uv: 2

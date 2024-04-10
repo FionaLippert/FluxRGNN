@@ -23,7 +23,7 @@ test_horizon: 72
 test_context: 24
 
 use_acc_vars: false
-edge_type: hexagons
+edge_type: none
 birds_per_km2: true
 
 static_cell_features:

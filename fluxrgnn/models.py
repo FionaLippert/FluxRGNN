@@ -257,7 +257,6 @@ class ForecastModel(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
 
-
         for t0 in range(self.config.get('max_t0', 1)):
 
             # make predictions for all cells
@@ -1020,20 +1019,20 @@ class XGBoostForecast(ForecastModel):
 
         self.xgboost = xgboost
 
-    def fit_xgboost(self, X, y):
+    def fit_xgboost(self, X, y, **kwargs):
 
-        self.xgboost.fit(X, y)
+        self.xgboost.fit(X, y, **kwargs)
 
     def forecast_step(self, x, data, t, *args, **kwargs):
 
-        cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
+        cell_data = data['cell']
 
         # static graph features
-        node_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1) for
+        node_features = [cell_data[feature].reshape(cell_data.num_nodes, -1) for
                                    feature in self.static_cell_features]
 
         # dynamic features for current and previous time step
-        dynamic_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.coords.size(0), -1) for
+        dynamic_features = [tidx_select(cell_data[feature], t).reshape(cell_data.num_nodes, -1) for
                                          feature in self.dynamic_cell_features]
 
         # combined features
@@ -2137,25 +2136,39 @@ class InitialStateMLP(InitialState):
         return x0
 
 
-class ObservationCopy(InitialState):
+class ObservationCopy(torch.nn.Module):
     """
     Copies observations to cells.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, radar_variables, **kwargs):
         """
         Initialize ObservationCopy.
         """
 
         super(ObservationCopy, self).__init__(**kwargs)
 
+        self.radar_variables = radar_variables
 
-    def initial_state(self, graph_data, t, *args, **kwargs):
+        self.n_features = sum(self.radar_variables.values())
 
-        cell_data = graph_data['cell']
-        assert hasattr(cell_data, 'x')
+    def forward(self, graph_data, t, *args, **kwargs):
 
-        return tidx_select(cell_data.x, t).view(-1, 1)
+        n_radars = graph_data['radar'].num_nodes
+        assert (graph_data['cell'].num_nodes == n_radars)
+
+        # radar measurements for current time step
+        radar_data = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
+                               for var in self.radar_variables], dim=1)
+
+        return radar_data
+
+    #
+    # def initial_state(self, graph_data, t, *args, **kwargs):
+    #
+    #     assert (graph_data['cell'].num_nodes == graph_data['radar'].num_nodes)
+    #
+    #     return tidx_select(graph_data['radar'].x, t).view(-1, 1)
 
 
 class GraphInterpolation(InitialState):

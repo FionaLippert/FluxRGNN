@@ -20,6 +20,7 @@ import numpy as np
 #import ruamel.yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
+import xgboost
 
 import transforms
 
@@ -96,11 +97,11 @@ def get_transform(cfg):
     return transform
     
 
-def load_training_data(cfg):
+def load_training_data(cfg, split='train'):
 
     transform = get_transform(cfg)
 
-    data = dataloader.load_xgboost_dataset(cfg, cfg.output_dir, transform=transform)
+    data = dataloader.load_xgboost_dataset(cfg, cfg.output_dir, transform=transform, split=split)
     data = torch.utils.data.ConcatDataset(data)
 
     dynamic_cell_features = cfg.model.get('dynamic_cell_features', {})
@@ -122,12 +123,12 @@ def load_training_data(cfg):
 
         assert cell_data.num_nodes == radar_data.num_nodes
 
-        # dynamic features for current and previous time step
-        dynamic_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1, T) for
+        # dynamic features for all time points
+        dynamic_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1, T) for
                                       feature in dynamic_cell_features]
 
         # static graph features
-        node_features = [cell_data.get(feature).reshape(cell_data.coords.size(0), -1, 1).repeat(1, 1, T) for
+        node_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1, 1).repeat(1, 1, T) for
                                    feature in static_cell_features]
 
         # combined features
@@ -136,7 +137,10 @@ def load_training_data(cfg):
 
         # masks
         missing = radar_data.missing_x
-        radar_mask = radar_data.train_mask
+        if split == 'train':
+            radar_mask = radar_data.train_mask
+        else:
+            radar_mask = radar_data.test_mask
 
         if cfg.get('force_zeros', False):
             local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(missing))
@@ -167,11 +171,12 @@ def training(model, cfg: DictConfig):
     :param cfg: DictConfig specifying model, data and training details
     """
 
-    X, y = load_training_data(cfg)
+    X_train, y_train = load_training_data(cfg, split='train')
+    X_val, y_val = load_training_data(cfg, split='val')
 
-    print(f'min birds = {np.min(y)}, max birds = {np.max(y)}, mean birds = {np.mean(y)}')
+    # early_stop = xgboost.callback.EarlyStopping(tolerance=cfg.model.xgboost.tol)
 
-    model.fit_xgboost(X, y)
+    model.fit_xgboost(X_train, y_train, eval_set=[(X_val, y_val)], **cfg.model.train_settings)
 
 
 def testing(trainer, model, cfg: DictConfig, ext=''):
@@ -195,7 +200,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
-    utils.dump_outputs(model.test_metrics, eval_path)
+    # utils.dump_outputs(model.test_metrics, eval_path)
     utils.dump_outputs(model.test_results, eval_path)
 
     if cfg.task.get('store_test_results', True):

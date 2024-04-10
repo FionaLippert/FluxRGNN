@@ -42,11 +42,17 @@ env_vars:
 xgboost:
   _target_: xgboost.XGBRegressor
   n_estimators: 200
+  booster: gbtree
   learning_rate: 0.05
   max_depth: 10
-  tol: 1e-8
-  n_iter_no_change: 10
   random_state: ${seed}
+  min_child_weight: 1
+  subsample: 1.0
+  gamma: 0
+
+train_settings:
+  early_stopping_rounds: 10 #100
+  eval_metric: rmse
 
 observation_model:
   _target_: fluxrgnn.models.ObservationModel
@@ -56,7 +62,7 @@ test_horizon: 72
 test_context: 24
 
 use_acc_vars: false
-edge_type: none #hexagons
+edge_type: none
 birds_per_km2: true
 
 static_cell_features:

@@ -27,12 +27,16 @@ def run(cfg: DictConfig):
     cfg['datasource']['bird_scale'] = 1
 
     for year in years:
-        res_info = f'_res={cfg.datasource.h3_resolution}' if cfg.model.edge_type == 'hexagons' \
-            else f'_ndummy={cfg.datasource.n_dummy_radars}'
+        if cfg.model.edge_type == 'hexagons':
+            res_info = f'_{cfg.datasource.buffer}_res={cfg.datasource.h3_resolution}'
+        elif cfg.model.edge_type == 'voronoi':
+            res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
+        else:
+            res_info = ''
 
         datasource_dir = osp.join(data_root, 'preprocessed',
-                              f'{cfg.t_unit}_{cfg.model.edge_type}_{cfg.datasource.buffer}' + res_info,
-                              cfg.datasource.name)
+                                  f'{cfg.t_unit}_{cfg.model.edge_type}' + res_info,
+                                  cfg.datasource.name)
         target_dir = osp.join(datasource_dir, cfg.season, str(year))
 
         # load all features and organize them into dataframes

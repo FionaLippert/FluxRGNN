@@ -24,7 +24,7 @@ force_zeros: false
 use_encoder: true
 use_uv: false
 root_transformed_loss: false
-edge_type: voronoi
+edge_type: none
 coord_dim: 2
 n_edge_attr: 5 # or 4?
 

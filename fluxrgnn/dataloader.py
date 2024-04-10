@@ -378,7 +378,7 @@ class RadarHeteroData(InMemoryDataset):
             # radar_to_cell_dist = torch.zeros(len(cells))
         else:
             cell_to_radar_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'cell_to_radar_edges.csv'))
-            radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
+            # radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
             
             cell_to_radar_edge_index = torch.tensor(cell_to_radar_edges[['cidx', 'ridx']].values, dtype=torch.long)
             cell_to_radar_edge_index = cell_to_radar_edge_index.t().contiguous()
@@ -889,29 +889,26 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     :return: pytorch Dataset
     """
     context = cfg.model.get('context', 0)
-    if (context == 0) and not (split == 'test'):
+    if (context == 0) and (split == 'test'):
         context = cfg.model.get('test_context', 0)
 
     seq_len = context + max(cfg.model.get('horizon', 1), cfg.model.get('test_horizon')) \
               + cfg.datasource.get('tidx_step', 1) #- 1
 
-    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}_{cfg.datasource.buffer}'
-
-    if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-        res_info = f'res={cfg.datasource.h3_resolution}'
+    if cfg.model.edge_type == 'hexagons':
+        res_info = f'_buffer={cfg.datasource.buffer}_res={cfg.datasource.h3_resolution}'
+    elif cfg.model.edge_type == 'voronoi':
+        res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
     else:
-        res_info = f'ndummy={cfg.datasource.n_dummy_radars}'
+        res_info = ''
 
-    # n_cv_folds = cfg.task.get('n_cv_folds', 0)
-    # cv_fold = cfg.task.get('cv_fold', 0)
+    preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}' + res_info
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_{cfg.datasource.buffer}_{res_info}_dataperc={cfg.data_perc}_' \
-                        f'seed={cfg.seed}'
+                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}_' \
+                        f'seed={cfg.seed}' + res_info
                         #f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
-    
-    preprocessed_dirname += f'_{res_info}'
 
     n_excl = len(cfg.datasource.get('excluded_radars', []))
     if n_excl > 0:
@@ -985,7 +982,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     return data, context, seq_len
 
 
-def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
+def load_xgboost_dataset(cfg: DictConfig, output_dir: str, split: str = 'train', transform=None):
     """
     Load training data for XGBoost model, for which no time sequences are needed.
 
@@ -1001,15 +998,11 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
 
     model_cfg = dict(cfg.model)
     model_cfg['edge_type'] = 'none'
-    res_info = f'ndummy=0'
 
     processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
-                        f'edges={cfg.model.edge_type}_{res_info}_dataperc={cfg.data_perc}' \
+                        f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}' \
                         f'_seed={cfg.seed}'
-    
-    preprocessed_dirname += f'_{res_info}'
-    # processed_dirname += res_info
 
     # perm_vars = cfg.model.get('permute_env_vars', [])
     # if len(perm_vars) > 0:
@@ -1019,8 +1012,8 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
 
     # initialize normalizer
     # years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-    years = cfg.datasource.train_years
-    normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    normalization = Normalization(cfg.datasource.train_years, cfg.datasource.name,
+                                  data_dir, preprocessed_dirname, **cfg)
 
     # complete config and write it together with normalizer to disk
     # cfg.model_seed = seed
@@ -1037,7 +1030,7 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, transform=None):
                       normalization=normalization,
                       transform=transform
                       )
-            for year in years]
+            for year in cfg.datasource[f'{split}_years']]
 
     return data
 
@@ -1051,10 +1044,13 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, split: str, transfor
     :return: pytorch Dataset
     """
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}'
-    if cfg.model.edge_type == 'hexagons' and 'h3_resolution' in cfg.datasource:
-        res_info = f'_res={cfg.datasource.h3_resolution}'
-    else:
+
+    if cfg.model.edge_type == 'hexagons':
+        res_info = f'_{cfg.datasource.buffer}_res={cfg.datasource.h3_resolution}'
+    elif cfg.model.edge_type == 'voronoi':
         res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
+    else:
+        res_info = ''
 
     processed_dirname = f'seasonal_buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_dataperc={cfg.data_perc}'
