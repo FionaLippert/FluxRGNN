@@ -2020,8 +2020,10 @@ class RadarToCellGNN(MessagePassing):
         static_cell_features = [graph_data['cell'].get(feature).reshape(n_cells, -1)
                                  for feature in self.static_cell_features]
 
+        cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
+
         if self.location_encoder is not None:
-            static_cell_features.append(self.location_encoder(graph_data['cell']))
+            static_cell_features.append(self.location_encoder(cell_data))
 
         # dynamic cell features for current time step
         dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
