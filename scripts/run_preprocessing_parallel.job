@@ -2,8 +2,9 @@
 
 YEAR_MIN=$1
 YEAR_MAX=$2
-DIR=$3
+MODEL=$3
+DIR=$4
 
 for YEAR in $(seq $YEAR_MIN $YEAR_MAX); do
-	sbatch run_preprocessing.job "datasource=nexrad device=cluster +raw_data_dir=${DIR} model=FluxRGNN +process_dynamic=true datasource.years=[${YEAR}]"
+	sbatch run_preprocessing.job "datasource=nexrad device=cluster +raw_data_dir=${DIR} model=${MODEL} +process_dynamic=true datasource.years=[${YEAR}]"
 done
