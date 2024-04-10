@@ -109,11 +109,11 @@ class PowerTransform(BaseTransform):
 
     def tensor_forward(self, x: torch.Tensor):
 
-        return torch.pow(x, self.exponent)
+        return torch.pow(x.abs(), self.exponent)
 
     def tensor_backward(self, x: torch.Tensor):
 
-        return torch.pow(x, 1/self.exponent)
+        return torch.pow(x.abs(), 1/self.exponent)
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(feature={self.feature}, exponent={self.exponent})'
@@ -225,8 +225,8 @@ class CVMasks(BaseTransform):
             train_mask = torch.isin(data['radar'].ridx, train_radars)
             test_mask = torch.isin(data['radar'].ridx, test_radars)
 
-            data['radar'].train_mask[test_mask] = False
-            data['radar'].test_mask[train_mask] = False
+            data['radar'].train_mask = torch.logical_and(data['radar'].train_mask, train_mask)
+            data['radar'].test_mask = torch.logical_and(data['radar'].test_mask, test_mask)
 
         return data
 
