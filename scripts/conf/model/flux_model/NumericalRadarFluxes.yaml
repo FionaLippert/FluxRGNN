@@ -1,0 +1,10 @@
+# @package flux_model
+_target_: fluxrgnn.models.NumericalRadarFluxes
+radar2cell_model:
+  _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+  k: 10
+  radar_variables:
+    bird_uv: 2
+length_scale: ${model.length_scale}
+use_log_transform: ${model.use_log_transform}
+transforms: ${model.transforms}

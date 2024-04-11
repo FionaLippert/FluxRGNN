@@ -1,0 +1,12 @@
+# @package encoder
+_target_: fluxrgnn.models.RecurrentEncoder
+node_rnn: ${model.node_rnn}
+context: ${model.context}
+n_hidden: ${model.n_hidden}
+n_rnn_layers: 1
+dropout_p: ${model.dropout_p}
+static_cell_features:
+    coords: ${model.coord_dim}
+dynamic_cell_features: ${model.env_vars}
+location_encoder: ${location_encoder}
+radar2cell_model: ${radar2cell_model}
