@@ -273,6 +273,10 @@ initial_model:
 #  dropout_p: ${model.dropout_p}
 #  transforms: ${model.transforms}
 
+
+defaults:
+  - radar2cell_model: KNNInterpolation
+
   
 encoder:
   _target_: fluxrgnn.models.RecurrentEncoder
@@ -287,7 +291,7 @@ encoder:
   dynamic_cell_features: ${model.env_vars}
   #  env: ${model.n_env}
   location_encoder: ${model.location_encoder}
-  radar2cell_model:
+  radar2cell_model: ${model.radar2cell_model}
     #_target_: fluxrgnn.models.RadarToCellGNN
     #k: 10
     #n_hidden: ${model.radar_embedding_dim}
@@ -302,11 +306,11 @@ encoder:
     #static_radar_features:
     #  coords: ${model.coord_dim}
     #location_encoder: ${model.location_encoder}
-    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-    k: 10
-    radar_variables:
-      x: 1
-      bird_uv: 2
+#    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+#    k: 10
+#    radar_variables:
+#      x: 1
+#      bird_uv: 2
 
 
 boundary_model:
