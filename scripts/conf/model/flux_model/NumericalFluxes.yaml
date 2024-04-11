@@ -1,0 +1,14 @@
+# @package flux_model
+_target_: fluxrgnn.models.NumericalFluxes
+static_cell_features:
+  coords: ${model.coord_dim}
+dynamic_cell_features: ${model.env_vars}
+length_scale: ${model.length_scale}
+n_hidden: ${model.n_hidden}
+use_hidden: true
+n_fc_layers: 1
+n_graph_layers: 0
+activation: ${model.activation}
+use_log_transform: ${model.use_log_transform}
+dropout_p: ${model.dropout_p}
+transforms: ${model.transforms}

@@ -1,0 +1,9 @@
+# @package location_encoder
+_target_: fluxrgnn.models.LocationEncoder
+_partial_: true
+static_cell_features:
+  coords: ${model.coord_dim}
+  land_cover: 19
+out_channels: ${model.embedding_dim}
+n_layers: 2
+dropout_p: ${model.dropout_p}
