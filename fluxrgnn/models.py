@@ -1976,7 +1976,7 @@ class CorrectedRadarToCellInterpolation(MessagePassing):
 class RadarToCellGNN(MessagePassing):
 
     def __init__(self, static_radar_features=None, dynamic_radar_features=None,
-                 static_cell_features=None, dynamic_cell_features=None, location_encoder=None, **kwargs):
+                 static_cell_features=None, dynamic_cell_features=None, loc_enc_dim=0, **kwargs):
 
         super(RadarToCellGNN, self).__init__(aggr='sum', node_dim=0)
 
@@ -1989,21 +1989,21 @@ class RadarToCellGNN(MessagePassing):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        self.location_encoder = location_encoder
+        # self.location_encoder = location_encoder
 
         n_edge_in = sum(self.static_radar_features.values()) + \
                     sum(self.dynamic_radar_features.values()) + \
                     sum(self.static_cell_features.values()) + \
-                    sum(self.dynamic_cell_features.values()) + 2 #\
+                    sum(self.dynamic_cell_features.values()) + 2 + loc_enc_dim
                     #kwargs.get('radar2cell_edge_attr')
 
-        if self.location_encoder is not None:
-            n_edge_in += self.location_encoder.embedding_dim
+        # if self.location_encoder is not None:
+        #     n_edge_in += self.location_encoder.embedding_dim
 
         self.edge_mlp = MLP(n_edge_in, kwargs.get('n_hidden'), **kwargs)
         self.node_mlp = MLP(kwargs.get('n_hidden'), kwargs.get('n_hidden'), **kwargs)
 
-    def forward(self, graph_data, t, hidden, *args, **kwargs):
+    def forward(self, graph_data, t, hidden, loc_encoding=None, **kwargs):
         # radars_to_cells = graph_data['radar', 'cell']
         n_radars = graph_data['radar'].num_nodes
         n_cells = graph_data['cell'].num_nodes
@@ -2022,8 +2022,8 @@ class RadarToCellGNN(MessagePassing):
 
         cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
 
-        if self.location_encoder is not None:
-            static_cell_features.append(self.location_encoder(cell_data))
+        if loc_encoding is not None:
+            static_cell_features.append(loc_encoding)
 
         # dynamic cell features for current time step
         dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
@@ -3041,8 +3041,6 @@ class RecurrentEncoder(torch.nn.Module):
         # self.n_lstm_layers = kwargs.get('n_rnn_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
-        self.radar2cell_model = radar2cell_model
-
         self.location_encoder = location_encoder
 
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
@@ -3055,6 +3053,9 @@ class RecurrentEncoder(torch.nn.Module):
 
         if self.location_encoder is not None:
             n_inputs += self.location_encoder.embedding_dim
+            self.radar2cell_model = radar2cell_model(loc_enc_dim=location_encoder.embedding_dim)
+        else:
+            self.radar2cell_model = radar2cell_model(loc_enc_dim=0)
 
         # self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
         # self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
@@ -3085,7 +3086,10 @@ class RecurrentEncoder(torch.nn.Module):
                                    for feature in self.static_cell_features]
 
         if self.location_encoder is not None:
-            static_cell_features.append(self.location_encoder(cell_data))
+            loc_encoding = self.location_encoder(cell_data)
+            static_cell_features.append(loc_encoding)
+        else:
+            loc_encoding = None
 
         # process all context time steps and the first forecasting time step
         for tidx in range(self.t_context + 1):
@@ -3096,7 +3100,7 @@ class RecurrentEncoder(torch.nn.Module):
             dynamic_cell_features = [tidx_select(cell_data.get(feature), t).reshape(cell_data.num_nodes, -1)
                                           for feature in self.dynamic_cell_features]
             # get radar features and map them to cells
-            radar_features = self.radar2cell_model(data, t, self.node_rnn.get_hidden())
+            radar_features = self.radar2cell_model(data, t, self.node_rnn.get_hidden(), loc_encoding=loc_encoding)
             
             inputs = torch.cat(static_cell_features + dynamic_cell_features + [radar_features], dim=1)
 
