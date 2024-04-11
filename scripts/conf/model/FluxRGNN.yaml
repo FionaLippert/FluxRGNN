@@ -288,25 +288,25 @@ encoder:
   #  env: ${model.n_env}
   location_encoder: ${model.location_encoder}
   radar2cell_model:
-    #_target_: fluxrgnn.models.RadarToCellGNN
-    #k: 10
-    #n_hidden: ${model.radar_embedding_dim}
-    #n_fc_layers: 2
-    #activation: ${model.activation}
-    #dropout_p: ${model.dropout_p}
-    #dynamic_radar_features:
-    #  x: 1
-    #  bird_uv: 2
-    #static_cell_features:
-    #  coords: ${model.coord_dim}
-    #static_radar_features:
-    #  coords: ${model.coord_dim}
-    #location_encoder: ${model.location_encoder}
-    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+    _target_: fluxrgnn.models.RadarToCellGNN
     k: 10
-    radar_variables:
+    n_hidden: ${model.radar_embedding_dim}
+    n_fc_layers: 2
+    activation: ${model.activation}
+    dropout_p: ${model.dropout_p}
+    dynamic_radar_features:
       x: 1
       bird_uv: 2
+    static_cell_features:
+      coords: ${model.coord_dim}
+    static_radar_features:
+      coords: ${model.coord_dim}
+    location_encoder: ${model.location_encoder}
+    #_target_: fluxrgnn.models.RadarToCellKNNInterpolation
+    #k: 10
+    #radar_variables:
+    #  x: 1
+    #  bird_uv: 2
 
 
 boundary_model:
