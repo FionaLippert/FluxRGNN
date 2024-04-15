@@ -59,7 +59,7 @@ test_horizon: 72
 
 store_fluxes: false
 
-lr: 3e-5
+lr: 1e-4
 lr_schedulers:
         #- _target_: torch.optim.lr_scheduler.LinearLR
         #  _partial_: true

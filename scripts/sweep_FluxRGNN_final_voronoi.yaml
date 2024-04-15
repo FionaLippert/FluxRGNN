@@ -1,0 +1,28 @@
+program: run_neural_nets.py
+name: sweep_FluxRGNN
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - seed=1234
+  - model=FluxRGNN
+  - model.location_encoder=null
+  - model.flux_model=NNFluxes
+  - model.initial_model=ObservationCopy
+  - model.radar2cell_model=ObservationCopy
+  - model.increase_horizon_rate=0
+  - model.teacher_forcing=1.0
+  - model.teacher_forcing_gamma=0.95
+  - model.dropout_p=0.1
+  - trainer.max_epochs=500
+  - dataloader.batch_size=32
+  - task=train_eval
+  - task.store_test_results=true
+method: grid
+metric:
+  name: val/observed/x/raw/MAE
+  goal: minimize
+parameters:
+  job_id:
+    values: [0] #, 1, 2, 3, 4, 5, 6, 7, 8, 9]

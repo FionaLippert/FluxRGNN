@@ -121,9 +121,10 @@ class ForecastModel(pl.LightningModule):
                 # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
                 #  or use smaller horizon instead of teacher forcing?
                 #model_states['x'] = data.x[..., t - 1].view(-1, 1)
-                radars_to_cells = data['radar', 'cell']
-                interpolated = self.observation_model(data['radar'].x, radars_to_cells)
-                x = tidx_select(interpolated, t - 1).view(-1, 1)
+                #radars_to_cells = data['radar', 'cell']
+                #interpolated = self.observation_model(data['radar'].x, radars_to_cells)
+                assert data['radar'].num_nodes == data['cell'].num_nodes
+                x = tidx_select(data['radar'].x, t - 1).view(-1, 1)
             #else:
             #    print('no ground truth data available to use for teacher forcing')
             
