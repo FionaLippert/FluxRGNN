@@ -1,4 +1,4 @@
-# @package initial_model
+# @package model.initial_model
 _target_: fluxrgnn.models.InitialStateMLP
 node_features:
   coords: ${model.coord_dim}

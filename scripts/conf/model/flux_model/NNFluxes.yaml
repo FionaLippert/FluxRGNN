@@ -1,4 +1,4 @@
-# @package flux_model
+# @package model.flux_model
 _target_: fluxrgnn.models.Fluxes
 edge_features:
   edge_attr: ${model.n_edge_attr}

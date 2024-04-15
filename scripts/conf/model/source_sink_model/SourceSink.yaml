@@ -1,4 +1,4 @@
-# @package source_sink_model
+# @package model.source_sink_model
 _target_: fluxrgnn.models.SourceSink
 static_cell_features:
   coords: ${model.coord_dim}

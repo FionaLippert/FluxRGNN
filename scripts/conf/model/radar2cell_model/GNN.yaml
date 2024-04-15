@@ -1,5 +1,6 @@
-# @package radar2cell_model
+# @package model.radar2cell_model
 _target_: fluxrgnn.models.RadarToCellGNN
+_partial_: true
 k: 10
 n_hidden: ${model.radar_embedding_dim}
 n_fc_layers: 1
