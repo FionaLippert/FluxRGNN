@@ -75,21 +75,7 @@ def run(cfg: DictConfig):
     if 'train' in cfg.task.task_name:
         training(trainer, model, cfg)
     if 'eval' in cfg.task.task_name:
-        # if hasattr(cfg, 'importance_sampling'):
-        #     cfg.importance_sampling = False
-
-        # cfg['fixed_t0'] = True
-        # testing(trainer, model, cfg, ext='_fixedT0')
-        # cfg['fixed_t0'] = False
         testing(trainer, model, cfg)
-
-        # if cfg.get('test_train_data', False):
-        #     # evaluate performance on training data
-        #     training_years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-        #     cfg.model.test_horizon = cfg.model.horizon
-        #     for y in training_years:
-        #         cfg.datasource.test_year = y
-        #         testing(trainer, model, cfg, output_dir, log, ext=f'_training_year_{y}')
 
     if isinstance(cfg.trainer.logger, WandbLogger):
         wandb.finish()
@@ -131,23 +117,34 @@ def training(trainer, model, cfg: DictConfig):
     if trainer.accelerator == 'gpu' and torch.cuda.is_available():
         model.cuda()
 
-    seasonal_patterns = []
-    missing_patterns = []
+    seasonal_patterns_x = []
+    missing_patterns_x = []
+
+    seasonal_patterns_uv = []
+    missing_patterns_uv = []
 
     for nidx, data in enumerate(dl_train):
         data = data.to(model.device)
 
-        seasonal_patterns.append(data.x)
-        missing_patterns.append(data.missing)
+        seasonal_patterns_x.append(data.x)
+        missing_patterns_x.append(data.missing_x)
 
-    seasonal_patterns = torch.stack(seasonal_patterns, dim=0)  # shape [years, radars, timepoints]
-    missing_patterns = torch.stack(missing_patterns, dim=0)  # shape [years, radars, timepoints]
+        seasonal_patterns_uv.append(data.bird_uv)
+        missing_patterns_uv.append(data.missing_bird_uv)
 
-    mask = torch.logical_not(missing_patterns)
-    print(f'number of zeros = {(mask.sum(0) == 0).sum()}')
-    #seasonal_patterns = (mask * seasonal_patterns).sum(0) / mask.sum(0)  # shape [radars, timepoints]
-    seasonal_patterns = seasonal_patterns.mean(0)
-    model.seasonal_patterns = seasonal_patterns
+    seasonal_patterns_x = torch.stack(seasonal_patterns_x, dim=0)  # shape [years, radars, timepoints]
+    missing_patterns_x = torch.stack(missing_patterns_x, dim=0)  # shape [years, radars, timepoints]
+
+    seasonal_patterns_uv = torch.stack(seasonal_patterns_uv, dim=0)  # shape [years, radars, 2, timepoints]
+    missing_patterns_uv = torch.stack(missing_patterns_uv, dim=0)  # shape [years, radars, 2, timepoints]
+
+    mask_x = torch.logical_not(missing_patterns_x)
+    seasonal_patterns_x = (seasonal_patterns_x * mask_x).sum(0) / mask_x.sum(0)
+    model.seasonal_patterns['x'] = seasonal_patterns_x
+
+    mask_uv = torch.logical_not(missing_patterns_uv)
+    seasonal_patterns_uv = (seasonal_patterns_uv * mask_uv.unsqueeze(2)).sum(0) / mask_uv.unsqueeze(2).sum(0)
+    model.seasonal_patterns['bird_uv'] = seasonal_patterns_uv
 
     # save model
     model_path = osp.join(cfg.output_dir, 'models')
@@ -172,23 +169,21 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     # load test data
     transform = get_transform(cfg)
     test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
-    # test_data = test_data[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
 
-    print(model.device, model.seasonal_patterns.device)
     model.seasonal_patterns.to(model.device)
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
-    utils.dump_outputs(model.test_metrics, eval_path)
-    utils.dump_outputs(model.test_results, eval_path)
 
-    if isinstance(trainer.logger, WandbLogger):
-        print('add evaluation artifact')
+    if cfg.task.get('store_test_results', True):
+        print('save evaluation artifact')
+        # utils.dump_outputs(model.test_metrics, eval_path)
+        utils.dump_outputs(model.test_results, eval_path)
         artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
         artifact.add_dir(eval_path)
         wandb.run.log_artifact(artifact)
@@ -196,17 +191,13 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     if cfg.get('save_prediction', False):
         results = trainer.predict(model, test_loader, return_predictions=True)
 
-        # save results
-        #os.makedirs(result_path, exist_ok=True)
-        #with open(osp.join(result_path, 'results.pickle'), 'wb') as f:
-        #    pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
-
         pred_path = osp.join(cfg.output_dir, 'prediction')
         utils.dump_outputs(results, pred_path)
-        
-        if isinstance(cfg.trainer.logger, WandbLogger):
+
+        if isinstance(trainer.logger, WandbLogger):
+            print('add prediction artifact')
             # save as artifact for version control
-            artifact = wandb.Artifact(f'prediction', type='prediction')
+            artifact = wandb.Artifact(f'prediction-{trainer.logger.version}', type='prediction')
             artifact.add_dir(pred_path)
             wandb.run.log_artifact(artifact)
 

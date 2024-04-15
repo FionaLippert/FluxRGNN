@@ -3,9 +3,19 @@ _target_: fluxrgnn.models.FluxRGNN
 
 name: FluxRGNN
 
+defaults:
+  - flux_model: NNFluxes
+  - source_sink_model: SourceSink
+  - encoder: RecurrentEncoder
+  - decoder: RecurrentDecoder
+  - location_encoder: null
+  - radar2cell_model: ObservationCopy
+  - initial_model: ObservationCopy
+
+
 coord_dim: 4
-embedding_dim: 32
-radar_embedding_dim: 8
+#embedding_dim: 32
+#radar_embedding_dim: 8
 n_edge_attr: 6
 
 training_coefs:
@@ -14,7 +24,7 @@ test_vars:
   - x
 predict_vars:
   - x
-  - node_fluxes
+  - fluxes
   - source_sink
 
 env_vars:
@@ -61,42 +71,12 @@ store_fluxes: false
 
 lr: 1e-4
 lr_schedulers:
-        #- _target_: torch.optim.lr_scheduler.LinearLR
-        #  _partial_: true
-        #  start_factor: 1e-5
-        #  end_factor: 1.0
-        #  total_iters: 10
-        #- _target_: torch.optim.lr_scheduler.StepLR
-        #  _partial_: true
-        #  step_size: 50
-        #  gamma: 0.65
-        #- _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-        #  _partial_: true
-        #  T_max: 100
-        #  eta_min: 1e-5
-        #- _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-        #  _partial_: true
-        #  T_0: 10
-        #  T_mult: 2
-        #  eta_min: 1e-5
-        #- _target_: torch.optim.lr_scheduler.CyclicLR
-        #  _partial_: true
-        #  base_lr: 1e-5
-        #  max_lr: 1e-4
-        #  step_size_up: 10
-        #  step_size_down: 10
-        #  mode: triangular2
-        #  #gamma: 0.95
-        #  cycle_momentum: false
         - _target_: torch.optim.lr_scheduler.ConstantLR
           _partial_: true
           factor: 1.0
           total_iters: ${trainer.max_epochs}
 lr_milestones: []
-#        - 100
-#        - 50
-#        - 90
-          #- 100 #50
+
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
@@ -150,78 +130,6 @@ observation_model:
 node_rnn:
   _target_: fluxrgnn.models.NodeLSTM
   _partial_: true
-
-decoder:
-  _target_: fluxrgnn.models.RecurrentDecoder
-  node_rnn: ${model.node_rnn}
-  n_rnn_layers: 1
-  n_hidden: ${model.n_hidden}
-  use_encoder: true
-  dropout_p: ${model.dropout_p}
-  #static_cell_features:
-  #  coords: ${model.coord_dim}
-  edge_features:
-    edge_attr: ${model.n_edge_attr}
-  dynamic_cell_features: ${model.env_vars}
-
-flux_model:
-  _target_: fluxrgnn.models.Fluxes
-  static_cell_features:
-    coords: ${model.coord_dim}
-  edge_features:
-    edge_attr: ${model.n_edge_attr}
-  dynamic_cell_features: ${model.env_vars}
-  length_scale: ${model.length_scale}
-  n_hidden: ${model.n_hidden}
-  n_fc_layers: 1
-  n_graph_layers: 0
-  activation: ${model.activation}
-  use_log_transform: ${model.use_log_transform}
-  log_offset: ${model.log_offset}
-  scale: ${model.scale}
-  dropout_p: ${model.dropout_p}
-  transforms: ${model.transforms}
-
-
-source_sink_model:
-  _target_: fluxrgnn.models.SourceSink
-  static_cell_features:
-    coords: ${model.coord_dim}
-  dynamic_cell_features: ${model.env_vars}
-  n_hidden: ${model.n_hidden}
-  n_fc_layers: 1 
-  activation: ${model.activation}
-  use_log_transform: ${model.use_log_transform}
-  log_offset: ${model.log_offset}
-  scale: ${model.scale}
-  dropout_p: ${model.dropout_p}
-  transforms: ${model.transforms}
-
-
-initial_model:
-  _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-  k: 1
-  radar_variables:
-    x: 1
-
-  
-encoder:
-  _target_: fluxrgnn.models.RecurrentEncoder
-  node_rnn: ${model.node_rnn}
-  context: ${model.context}
-  n_hidden: ${model.n_hidden}
-  n_rnn_layers: 1
-  dropout_p: ${model.dropout_p}
-  static_cell_features:
-      coords: ${model.coord_dim}
-  dynamic_cell_features: ${model.env_vars}
-  radar2cell_model:
-    _target_: fluxrgnn.models.RadarToCellKNNInterpolation
-    k: 1
-    radar_variables:
-      x: 1
-      bird_uv: 2
-
 
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation

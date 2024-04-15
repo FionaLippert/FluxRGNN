@@ -200,11 +200,11 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
-    # utils.dump_outputs(model.test_metrics, eval_path)
-    utils.dump_outputs(model.test_results, eval_path)
 
     if cfg.task.get('store_test_results', True):
-        print('add evaluation artifact')
+        print('save evaluation artifact')
+        # utils.dump_outputs(model.test_metrics, eval_path)
+        utils.dump_outputs(model.test_results, eval_path)
         artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
         artifact.add_dir(eval_path)
         wandb.run.log_artifact(artifact)

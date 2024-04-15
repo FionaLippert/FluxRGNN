@@ -41,13 +41,13 @@ env_vars:
 
 xgboost:
   _target_: xgboost.XGBRegressor
-  n_estimators: 200
+  n_estimators: 500
   booster: gbtree
   learning_rate: 0.05
-  max_depth: 10
+  max_depth: 15
   random_state: ${seed}
-  min_child_weight: 1
-  subsample: 1.0
+  min_child_weight: 3
+  subsample: 0.7
   gamma: 0
 
 train_settings:

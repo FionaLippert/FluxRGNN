@@ -17,12 +17,12 @@ use_log_transform: false
 log_offset: 0.1
 pow_exponent: 0.33333
 scale: 1.0 #1.0 #0.001 #0.1
-transforms:
+transforms: []
   #  - _target_: transforms.PowerTransform
   #    feature: x
   #    exponent: ${model.pow_exponent}
-  - _target_: transforms.Rescaling
-    feature: x
-    factor: ${model.scale}
+#  - _target_: transforms.Rescaling
+#    feature: x
+#    factor: ${model.scale}
 
 load_states_from: none

@@ -1,0 +1,15 @@
+# @package radar2cell_model
+_target_: fluxrgnn.models.CorrectedRadarToCellKNNInterpolation
+k: 10
+radar_variables:
+  x: 1
+  bird_uv: 2
+static_cell_features:
+  coords: ${model.coord_dim}
+dynamic_cell_features: ${model.env_vars}
+n_hidden: ${model.n_hidden}
+use_hidden: true
+n_fc_layers: 1
+activation: ${model.activation}
+dropout_p: ${model.dropout_p}
+location_encoder: ${model.location_encoder}
