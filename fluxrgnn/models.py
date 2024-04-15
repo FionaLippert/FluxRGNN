@@ -257,7 +257,7 @@ class ForecastModel(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
 
-        for t0 in range(self.config.get('max_t0', 1)):
+        for t0 in [0]: #range(self.config.get('max_t0', 1)):
 
             # make predictions for all cells
             forecast = self.forecast(batch, self.horizon, t0=t0)
@@ -620,14 +620,16 @@ class FluxRGNN(ForecastModel):
         if self.flux_model is not None:
 
             # predict fluxes between neighboring cells
-            net_flux = self.flux_model(x, hidden, data, t) #, embeddings=self.cell_embeddings)
-
-            #print(f'avg net flux = {net_flux.mean()}')
+            in_flux, out_flux = self.flux_model(x, hidden, data, t) #, embeddings=self.cell_embeddings)
+            net_flux = in_flux - out_flux
 
             if hasattr(self.flux_model, 'node_velocity'):
-
                 output['bird_uv'] = self.flux_model.node_velocity
-                output['fluxes'] = output['bird_uv'] * x
+                # output['fluxes'] = output['bird_uv'] * x
+
+            output['in_flux'] = in_flux
+            output['out_flux'] = out_flux
+
             #if self.training and hasattr(self.flux_model, 'node_velocity'):
             #    #print('add velocity regularizer')
             #    uv_cells = self.flux_model.node_velocity
@@ -653,9 +655,9 @@ class FluxRGNN(ForecastModel):
             if not self.training and self.store_fluxes:
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes.detach())
-                self.node_flux.append(self.flux_model.node_flux.detach())
-                if hasattr(self.flux_model, 'node_velocity'):
-                    self.node_velocity.append(self.flux_model.node_velocity.detach())
+            #     self.node_flux.append(self.flux_model.node_flux.detach())
+            #     if hasattr(self.flux_model, 'node_velocity'):
+            #         self.node_velocity.append(self.flux_model.node_velocity.detach())
                     #print(self.flux_model.node_velocity.detach())
         else:
             net_flux = 0
@@ -669,14 +671,14 @@ class FluxRGNN(ForecastModel):
 
             output['source_sink'] = delta
 
-            if not self.training and self.store_fluxes:
-                # save model component outputs
-                if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
-                    self.node_source.append(self.source_sink_model.node_source.detach())
-                    self.node_sink.append(self.source_sink_model.node_sink.detach())
-                else:
-                    self.node_source.append(delta.detach())
-                    self.node_sink.append(-delta.detach())
+            # if not self.training and self.store_fluxes:
+            #     # save model component outputs
+            #     if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
+            #         self.node_source.append(self.source_sink_model.node_source.detach())
+            #         self.node_sink.append(self.source_sink_model.node_sink.detach())
+            #     else:
+            #         self.node_source.append(delta.detach())
+            #         self.node_sink.append(-delta.detach())
             #elif ground_states is None:
             if self.training: # and not hasattr(self.flux_model, 'node_velocity'):
                 #if hasattr(self.source_sink_model, 'node_source') and hasattr(self.source_sink_model, 'node_sink'):
@@ -978,6 +980,7 @@ class SeasonalityForecast(ForecastModel):
         """
 
         super(SeasonalityForecast, self).__init__(**kwargs)
+        self.seasonal_patterns = {}
 
         self.automatic_optimization = False
 
@@ -986,9 +989,12 @@ class SeasonalityForecast(ForecastModel):
         #print(data.ridx.device, self.seasonal_patterns.device)
         # get typical density for each radars at the given time point
         # print(data.tidx.min(), data.tidx.max(), self.seasonal_patterns.size())
-        x = self.seasonal_patterns[cell_data.cidx, cell_data.tidx[t]].view(-1, 1)
+        result = {'x': self.seasonal_patterns['x'][cell_data.cidx, cell_data.tidx[t]].view(-1, 1)}
 
-        return {'x': x}
+        if 'bird_uv' in self.seasonal_patterns:
+            result['bird_uv'] = self.seasonal_patterns['bird_uv'][cell_data.cidx, cell_data.tidx[t]].view(-1, 2)
+
+        return result
 
     def training_step(self, batch, batch_idx):
         pass
@@ -1155,7 +1161,7 @@ class Fluxes(MessagePassing):
                                          feature in self.dynamic_cell_features], dim=1)
 
         # message passing through graph
-        net_flux = self.propagate(cell_data.edge_index,
+        in_flux, out_flux = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
@@ -1165,15 +1171,16 @@ class Fluxes(MessagePassing):
                                           dynamic_features_t1=dynamic_features_t1,
                                           areas=cell_data.areas)
 
-        if not self.training:
-            if self.use_log_transform:
-                raw_net_flux = self.transforms.transformed2raw(x) * net_flux
-            else:
-                raw_net_flux = self.transforms.transformed2raw(net_flux)
-            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+        # if not self.training:
+        #     if self.use_log_transform:
+        #         raw_net_flux = self.transforms.transformed2raw(x) * net_flux
+        #     else:
+        #         raw_net_flux = self.transforms.transformed2raw(net_flux)
+        #     self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
 
 
-        return net_flux
+        # return net_flux
+        return in_flux, out_flux
 
 
     def message(self, x_i, x_j, hidden_sp_j, dynamic_features_t0_i, dynamic_features_t1_j,
@@ -1215,22 +1222,24 @@ class Fluxes(MessagePassing):
             total_j = torch.exp(x_j) * areas_j.view(-1, 1)
             in_flux = flux * total_j / total_i
             out_flux = flux[reverse_edges]
-            net_flux = in_flux - out_flux
+            # net_flux = in_flux - out_flux
         else:
-            in_flux = flux * x_j * areas_j.view(-1, 1)
-            out_flux = in_flux[reverse_edges]
-            net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
+            in_flux = flux * x_j * areas_j.view(-1, 1) / areas_i.view(-1, 1)
+            out_flux = in_flux[reverse_edges] / areas_i.view(-1, 1)
+            # net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
             #print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
             #print(f'min x: {x_j.min()}, max x: {x_j.max()}')
         if not self.training:
             # convert to raw quantities
             if self.use_log_transform:
-                raw_out_flux = out_flux * self.transforms.transformed2raw(x_i) * areas_i.view(-1, 1)
+                raw_out_flux = out_flux * self.transforms.transformed2raw(x_i, 'x') * areas_i.view(-1, 1)
                 self.edge_fluxes = raw_out_flux[reverse_edges] - raw_out_flux
             else:
-                self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
+                self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux, 'x')
         
-        return net_flux.view(-1, 1)
+        # return net_flux.view(-1, 1)
+        return torch.stack([in_flux, out_flux], dim=0)
+
 
 
 class NumericalRadarFluxes(MessagePassing):
@@ -1272,7 +1281,7 @@ class NumericalRadarFluxes(MessagePassing):
         velocities = self.radar2cell_model(graph_data, t)
 
         # message passing through graph
-        net_flux = self.propagate(cell_data.edge_index,
+        in_flux, out_flux = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           velocities=velocities,
@@ -1280,14 +1289,15 @@ class NumericalRadarFluxes(MessagePassing):
                                           face_length=cell_data.edge_face_lengths,
                                           edge_normals=cell_data.edge_normals)
 
-        if not self.training:
-            raw_net_flux = self.transforms.transformed2raw(net_flux)
-            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+        # if not self.training:
+        #     raw_net_flux = self.transforms.transformed2raw(net_flux)
+        #     self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
         
         self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
         #print('node velocity = ', self.node_velocity)
         
-        return net_flux
+        # return net_flux
+        return in_flux, out_flux
 
 
     def message(self, x_j, velocities_i, velocities_j,
@@ -1302,12 +1312,17 @@ class NumericalRadarFluxes(MessagePassing):
         flow = torch.clamp(flow, min=0) # only consider upwind flow
         in_flux = flow.view(-1, 1) * x_j.view(-1, 1) # influx from cell j to cell i [per km]
         out_flux = in_flux[reverse_edges] # outflux from cell i to cell j [per km]
-        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
-        if not self.training:
+        # net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
+        # if not self.training:
             # convert to raw quantities
-            self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
+            # self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
 
-        return net_flux.view(-1, 1)
+        in_flux = in_flux * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))
+        out_flux = out_flux * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))
+
+        # return net_flux.view(-1, 1)
+
+        return torch.stack([in_flux, out_flux], dim=0)
 
 
 class NumericalFluxes(MessagePassing):
@@ -1400,7 +1415,7 @@ class NumericalFluxes(MessagePassing):
             velocities = velocities + wind
 
         # message passing through graph
-        net_flux = self.propagate(cell_data.edge_index,
+        in_flux, out_flux = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
@@ -1412,13 +1427,14 @@ class NumericalFluxes(MessagePassing):
                                           face_length=cell_data.edge_face_lengths,
                                           edge_normals=cell_data.edge_normals)
 
-        if not self.training:
-            raw_net_flux = self.transforms.transformed2raw(net_flux)
-            self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
+        # if not self.training:
+        #     raw_net_flux = self.transforms.transformed2raw(net_flux)
+        #     self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
         
         self.node_velocity = velocities #* cell_data.length_scale # bird velocity [km/h] if t_unit is 1H
         
-        return net_flux
+        # return net_flux
+        return in_flux, out_flux
 
 
     def message(self, x_j, velocities_i, velocities_j,
@@ -1434,13 +1450,19 @@ class NumericalFluxes(MessagePassing):
         flow = torch.clamp(flow, min=0) # only consider upwind flow
         in_flux = flow.view(-1, 1) * x_j.view(-1, 1) # influx from cell j to cell i [per km]
         out_flux = in_flux[reverse_edges] # outflux from cell i to cell j [per km]
-        net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
-        #print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
-        if not self.training:
-            # convert to raw quantities
-            self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
 
-        return net_flux.view(-1, 1)
+        # net_flux = (in_flux - out_flux) * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))# net flux from j to i
+
+        in_flux = in_flux * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))
+        out_flux = out_flux * (face_length.view(-1, 1) / (areas_i.view(-1, 1) * self.length_scale))
+
+        #print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
+        # if not self.training:
+            # convert to raw quantities
+            # self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
+
+        # return net_flux.view(-1, 1)
+        return torch.stack([in_flux, out_flux], dim=0)
 
 
 
@@ -1566,19 +1588,19 @@ class SourceSink(torch.nn.Module):
             #print(f'avg sink = {sink.mean()}')
 
 
-        if not self.training:
-            # convert to raw quantities
-            if self.use_log_transform:
-                raw_x = self.transforms.transformed2raw(x)
-                # TODO: make sure this conversion is correct
-                self.node_source = raw_x * source # birds/km2 taking-off in cell i
-                self.node_sink = raw_x * frac_sink # birds/km2 landing in cell i
-            else:
-                self.node_source = self.transforms.transformed2raw(source) # birds/km2 taking-off in cell i
-                self.node_sink = self.transforms.transformed2raw(sink) # birds/km2 landing in cell i
-        else:
-            self.node_source = source
-            self.node_sink = frac_sink if self.use_log_transform else sink
+        # if not self.training:
+        #     # convert to raw quantities
+        #     if self.use_log_transform:
+        #         raw_x = self.transforms.transformed2raw(x)
+        #         # TODO: make sure this conversion is correct
+        #         self.node_source = raw_x * source # birds/km2 taking-off in cell i
+        #         self.node_sink = raw_x * frac_sink # birds/km2 landing in cell i
+        #     else:
+        #         self.node_source = self.transforms.transformed2raw(source) # birds/km2 taking-off in cell i
+        #         self.node_sink = self.transforms.transformed2raw(sink) # birds/km2 landing in cell i
+        # else:
+        #     self.node_source = source
+        #     self.node_sink = frac_sink if self.use_log_transform else sink
     
         return delta, ground_states
 
@@ -1910,6 +1932,95 @@ class RadarToCellKNNInterpolation(MessagePassing):
         w_ij = (edge_weight / weighted_degree_i)
         return torch.einsum('i,i...->i...', w_ij, x_j)
         # return x_j * edge_weight.view(-1, 1) / weighted_degree_i.view(-1, 1)
+
+
+class CorrectedRadarToCellKNNInterpolation(MessagePassing):
+
+    def __init__(self, radar_variables, k, static_cell_features=None, dynamic_cell_features=None,
+                 loc_enc_dim=0, **kwargs):
+        super(CorrectedRadarToCellKNNInterpolation, self).__init__(aggr='sum', node_dim=0)
+
+        self.radar_variables = radar_variables
+        self.k = k
+
+        self.n_features = sum(self.radar_variables.values())
+
+        self.static_cell_features = {} if static_cell_features is None else static_cell_features
+        self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
+
+        n_in = sum(self.static_cell_features.values()) + \
+               sum(self.dynamic_cell_features.values()) + \
+               self.n_features + loc_enc_dim
+
+        # self.use_hidden = kwargs.get('use_hidden', True)
+        # if self.use_hidden:
+        #     n_in += kwargs.get('n_hidden')
+
+        self.mlp = MLP(n_in, self.n_features, **kwargs)
+
+    def forward(self, graph_data, t, hidden, loc_encoding=None, **kwargs):
+
+        n_radars = graph_data['radar'].num_nodes
+        n_cells = graph_data['cell'].num_nodes
+
+        # dynamic features for current time step
+        variables = torch.cat([tidx_select(graph_data['radar'].get(var), t).reshape(n_radars, -1)
+                               for var in self.radar_variables], dim=1)
+
+        # use only valid training radars for interpolation
+        missing = tidx_select(graph_data['radar'].missing_x, t).reshape(n_radars)
+        radar_mask = torch.logical_and(graph_data['radar'].train_mask,
+                                       torch.logical_not(missing))  # size [n_radars, time_steps]
+        n_radars = radar_mask.sum()
+
+        variables = variables[radar_mask]
+        radar_pos = graph_data['radar'].pos[radar_mask]
+        cell_pos = graph_data['cell'].pos
+
+        if hasattr(graph_data, 'batch'):
+            radar_batch = graph_data['radar'].batch[radar_mask]
+            cell_batch = graph_data['cell'].batch
+        else:
+            radar_batch = None
+            cell_batch = None
+
+        edge_index = knn(radar_pos, cell_pos, k=self.k, batch_x=radar_batch, batch_y=cell_batch)
+        edge_index = torch.flip(edge_index, dims=[0])  # edges go from radars to cells
+
+        dummy_variables = torch.zeros((n_cells - n_radars, variables.size(1)), device=variables.device)
+        embedded_variables = torch.cat([variables, dummy_variables], dim=0)
+
+        distance = F.pairwise_distance(radar_pos[edge_index[0]], cell_pos[edge_index[1]], p=2)
+        edge_weight = 1. / (distance + 1e-6)
+
+        weighted_degree = scatter(edge_weight, edge_index[1], dim_size=n_cells, reduce='sum')
+
+        cell_states = self.propagate(edge_index, x=embedded_variables,
+                                     weighted_degree=weighted_degree,
+                                     edge_weight=edge_weight)
+
+        # static cell features
+        static_cell_features = [graph_data['cell'].get(feature).reshape(n_cells, -1)
+                                for feature in self.static_cell_features]
+
+        if loc_encoding is not None:
+            static_cell_features.append(loc_encoding)
+
+        # dynamic features for current time step
+        dynamic_cell_features = [tidx_select(graph_data['cell'].get(feature), t).reshape(n_cells, -1)
+                                 for feature in self.dynamic_cell_features]
+
+        # predict correction term
+        cell_inputs = torch.cat([cell_states] + static_cell_features + dynamic_cell_features, dim=1)
+        cell_states = cell_states + self.mlp(cell_inputs)
+
+        return cell_states
+
+    def message(self, x_j, weighted_degree_i, edge_weight):
+        # from radar j to cell i
+
+        w_ij = (edge_weight / weighted_degree_i)
+        return torch.einsum('i,i...->i...', w_ij, x_j)
 
 
 class CorrectedRadarToCellInterpolation(MessagePassing):

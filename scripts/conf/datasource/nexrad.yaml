@@ -17,10 +17,12 @@ train_years:
   - 2016
   - 2017
   - 2018
+  - 2019
 val_years:
   - 2019
 test_years:
-  - 2019
+  - 2020
+  - 2021
 years: ${merge:${datasource.train_years},${datasource.val_years},${datasource.test_years}}
 #val_train_split: 0.1
 env_files:

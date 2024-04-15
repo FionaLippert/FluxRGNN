@@ -179,29 +179,29 @@ class SeasonalData(InMemoryDataset):
             print('Preprocessed data not available. Please run preprocessing script first.')
 
         # load features
-        # dynamic_feature_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_features.csv'))
-        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'measurements.csv'))
-        # cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
+        measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_radar_features.csv'))
 
         if not self.birds_per_km2:
             target_col = 'birds'
         else:
             target_col = 'birds_km2'
-        if self.use_buffers:
-            target_col += '_from_buffer'
 
         time = measurement_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
+        time_scale = pd.Timedelta(self.t_unit).total_seconds()
 
-        print(tidx.min(), tidx.max())
-
-        data = dict(targets=[], missing=[])
+        data = dict(targets_x=[], targets_uv=[], missing_x=[], missing_uv=[])
 
         groups = measurement_df.groupby('ID')
         for name in measurement_df.ID:
             df = groups.get_group(name).sort_values(by='datetime').reset_index(drop=True)
-            data['targets'].append(df[target_col].to_numpy())
-            data['missing'].append(df.missing.to_numpy())
+            data['targets_x'].append(df[target_col].to_numpy())
+            data['missing_x'].append(df['missing_birds_km2'].to_numpy())
+
+            bird_uv = df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
+            bird_uv = bird_uv * time_scale / 1e3  # in km/[t_unit]
+            data['targets_uv'].append(bird_uv)
+            data['missing_uv'].append(df['missing_birds_uv'].to_numpy())
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
@@ -212,9 +212,11 @@ class SeasonalData(InMemoryDataset):
             edge_index=torch.zeros(0, dtype=torch.long),
 
             # animal densities
-            x=torch.tensor(data['targets'], dtype=torch.float),
-            y=torch.tensor(data['targets'], dtype=torch.float),
-            missing=torch.tensor(data['missing'], dtype=torch.bool),
+            x=torch.tensor(data['targets_x'], dtype=torch.float),
+            missing_x=torch.tensor(data['missing_x'], dtype=torch.bool),
+
+            bird_uv=torch.tensor(data['targets_uv'], dtype=torch.float),
+            missing_bird_uv=torch.tensor(data['missing_uv'], dtype=torch.bool),
 
             # time index of sequence
             tidx=torch.tensor(tidx, dtype=torch.long))]
@@ -1059,15 +1061,6 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, split: str, transfor
     processed_dirname += res_info
     
     data_dir = osp.join(cfg.device.root, 'data')
-
-    # if training:
-    #     # initialize normalizer
-    #     years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-    #
-    #     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
-    #         OmegaConf.save(config=cfg, f=f)
-    # else:
-    #     years = [cfg.datasource.test_year]
 
     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
         OmegaConf.save(config=cfg, f=f)

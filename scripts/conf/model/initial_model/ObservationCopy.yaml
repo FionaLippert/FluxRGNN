@@ -1,0 +1,5 @@
+# @package initial_model
+_target_: fluxrgnn.models.RadarToCellKNNInterpolation
+k: 1
+radar_variables:
+  x: 1
