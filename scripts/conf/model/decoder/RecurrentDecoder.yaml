@@ -1,4 +1,4 @@
-# @package decoder
+# @package model.decoder
 _target_: fluxrgnn.models.RecurrentDecoder
 node_rnn: ${model.node_rnn}
 n_rnn_layers: 1

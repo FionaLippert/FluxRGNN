@@ -1,4 +1,4 @@
-# @package flux_model
+# @package model.flux_model
 _target_: fluxrgnn.models.NumericalRadarFluxes
 radar2cell_model:
   _target_: fluxrgnn.models.RadarToCellKNNInterpolation

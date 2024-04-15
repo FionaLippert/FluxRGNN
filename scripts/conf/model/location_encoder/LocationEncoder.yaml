@@ -1,6 +1,5 @@
-# @package location_encoder
+# @package model.location_encoder
 _target_: fluxrgnn.models.LocationEncoder
-_partial_: true
 static_cell_features:
   coords: ${model.coord_dim}
   land_cover: 19

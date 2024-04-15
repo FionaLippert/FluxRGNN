@@ -257,7 +257,7 @@ class ForecastModel(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
 
-        for t0 in range(self.config.get('max_t0', 1)):
+        for t0 in [0]: #range(self.config.get('max_t0', 1)):
 
             # make predictions for all cells
             forecast = self.forecast(batch, self.horizon, t0=t0)
@@ -3047,16 +3047,18 @@ class RecurrentEncoder(torch.nn.Module):
         #print(static_cell_features)
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-        n_inputs = sum(self.static_cell_features.values()) + \
-                    sum(self.dynamic_cell_features.values()) + \
-                    self.radar2cell_model.n_features
 
         if self.location_encoder is not None:
-            n_inputs += self.location_encoder.embedding_dim
-            self.radar2cell_model = radar2cell_model(loc_enc_dim=location_encoder.embedding_dim)
+            n_inputs = self.location_encoder.embedding_dim
+            self.radar2cell_model = radar2cell_model(loc_enc_dim=self.location_encoder.embedding_dim)
         else:
+            n_inputs = 0
             self.radar2cell_model = radar2cell_model(loc_enc_dim=0)
 
+        n_inputs += sum(self.static_cell_features.values()) + \
+                    sum(self.dynamic_cell_features.values()) + \
+                    self.radar2cell_model.n_features
+        
         # self.input2hidden = torch.nn.Linear(n_node_in, self.n_hidden, bias=False)
         # self.lstm_layers = nn.ModuleList([nn.LSTMCell(self.n_hidden, self.n_hidden)
         #                                   for _ in range(self.n_lstm_layers)])
