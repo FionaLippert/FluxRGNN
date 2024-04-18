@@ -6,13 +6,12 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN
-  - model.location_encoder=null
+  - model=FluxRGNN_no_fluxes
   - model.dropout_p=0.1
   - trainer.max_epochs=500
   - dataloader.batch_size=32
   - task=train_eval
-  - task.store_test_results=true
+  - task.store_test_results=false
   - task.n_cv_folds=10
 method: grid
 metric:
@@ -20,8 +19,4 @@ metric:
   goal: minimize
 parameters:
   task.cv_fold:
-    values: [5, 6, 7, 8, 9] #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    #model.dropout_p:
-    #values: [0.25] #[0.0, 0.1, 0.25]
-  model.training_coefs.bird_uv:
-    values: [0.01] #[0.0, 0.01, 0.1]
+    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

@@ -14,8 +14,6 @@ test_vars:
   - x
 predict_vars:
   - x
-  - in_flux
-  - out_flux
   - source_sink
 
 env_vars:
@@ -77,23 +75,12 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 0.01 #1.0
-flux_scale: ${eval:'${model.scale} * ${model.length_scale}'} #0.00001
 transforms:
 #  - _target_: fluxrgnn.transforms.LogTransform
 #    feature: x
 #    offset: ${model.log_offset}
   - _target_: fluxrgnn.transforms.Rescaling
     feature: x
-    factor: ${model.scale}
-  - _target_: fluxrgnn.transforms.Rescaling
-    feature: bird_uv
-    factor: ${model.length_scale}
-  - _target_: fluxrgnn.transforms.Rescaling
-    feature: in_flux
-    factor: ${model.scale}
-  - _target_: fluxrgnn.transforms.Rescaling
-    feature: out_flux
     factor: ${model.scale}
   - _target_: fluxrgnn.transforms.Rescaling
     feature: source_sink
@@ -104,16 +91,16 @@ transforms:
     seed: ${seed}
 
 dropout_p: 0.0
-teacher_forcing: 1.0
-teacher_forcing_gamma: 0.95
-increase_horizon_rate: 0.0
+teacher_forcing: 0.0
+teacher_forcing_gamma: 1.0
+increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
 
 force_zeros: false #true
 root_transformed_loss: false
 weight_exponent: 1.0 #0.75
-edge_type: voronoi
+edge_type: hexagons
 birds_per_km2: true
 
 regularizer_weight: 0.0 #0.01
@@ -129,15 +116,14 @@ node_rnn:
   _partial_: true
 
 defaults:
-  - flux_model: NNFluxes
   - source_sink_model: SourceSink
-  #- location_encoder: LocationEncoder
+  - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder
   - decoder: RecurrentDecoder
-  - radar2cell_model: ObservationCopy
-  - initial_model: ObservationCopy
+  - radar2cell_model: KNNInterpolation
+  - initial_model: KNNInterpolation
 
-location_encoder: null
+flux_model: null
 
 boundary_model:
   _target_: fluxrgnn.models.Extrapolation

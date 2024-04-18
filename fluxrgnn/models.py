@@ -121,9 +121,10 @@ class ForecastModel(pl.LightningModule):
                 # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
                 #  or use smaller horizon instead of teacher forcing?
                 #model_states['x'] = data.x[..., t - 1].view(-1, 1)
-                radars_to_cells = data['radar', 'cell']
-                interpolated = self.observation_model(data['radar'].x, radars_to_cells)
-                x = tidx_select(interpolated, t - 1).view(-1, 1)
+                #radars_to_cells = data['radar', 'cell']
+                #interpolated = self.observation_model(data['radar'].x, radars_to_cells)
+                assert data['radar'].num_nodes == data['cell'].num_nodes
+                x = tidx_select(data['radar'].x, t - 1).view(-1, 1)
             #else:
             #    print('no ground truth data available to use for teacher forcing')
             
@@ -195,6 +196,7 @@ class ForecastModel(pl.LightningModule):
                 loss += coef * loss_var
 
         regularizer = self.config.get('regularizer_weight', 0.0) * self._regularizer()
+        
         self.log('train/regularizer', regularizer.detach(), batch_size=batch.num_graphs)
 
         loss += regularizer
@@ -253,6 +255,7 @@ class ForecastModel(pl.LightningModule):
         for var in self.test_vars:
             self.test_results[f'test/measurements/{var}'] = []
             self.test_results[f'test/predictions/{var}'] = []
+            self.test_results[f'test/masks/{var}'] = []
 
 
     def test_step(self, batch, batch_idx):
@@ -283,15 +286,19 @@ class ForecastModel(pl.LightningModule):
                                                                batch['cell', 'radar'],
                                                                batch['radar'].num_nodes)
                     
-                    predicted = self.transforms.transformed2raw(forecast[var], var)
-                    t_steps = predicted.size(-1)
+                        predicted = self.transforms.transformed2raw(forecast[var], var)[..., :self.horizon]
+                    #t_steps = predicted.size(-1)
 
                     measured = self.transforms.transformed2raw(batch['radar'][var], var)
-                    measured = measured[..., t0 + self.t_context: t0 + self.t_context + t_steps]
+                    measured = measured[..., t0 + self.t_context: t0 + self.t_context + self.horizon]
                     
                     self.test_results[f'test/predictions/{var}'].append(predicted.detach())
                     self.test_results[f'test/measurements/{var}'].append(measured.detach())
             
+                    if f'missing_{var}' in batch['radar']:
+                        self.test_results[f'test/masks/{var}'].append(
+                            torch.logical_not(batch['radar'][f'missing_{var}'])[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach()
+            )
             # # compute evaluation metrics as a function of the forecasting horizon
             # eval_dict_per_t = self._eval_step(radar_data, prediction, self.horizon, prefix='test', aggregate_time=False, t0=t0)
             #
@@ -302,7 +309,7 @@ class ForecastModel(pl.LightningModule):
             #         self.test_metrics[m] = [values]
 
             self.test_results['test/mask'].append(
-                torch.logical_not(batch['radar'].missing_x)[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)].detach()
+                torch.logical_not(batch['radar'].missing_x)[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach()
             )
             self.test_results['test/train_mask'].append(batch['radar'].train_mask.detach())
             self.test_results['test/test_mask'].append(batch['radar'].test_mask.detach())
@@ -344,9 +351,9 @@ class ForecastModel(pl.LightningModule):
             for var in self.predict_vars:
                 if var in forecast:
                     self.predict_results[f'predict/predictions/{var}'].append(
-                        self.transforms.transformed2raw(forecast[var], var).detach()
+                            self.transforms.transformed2raw(forecast[var][..., -self.horizon:], var).detach()
                     )
-            self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)].detach())
+            self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach())
             #self.predict_results['predict/t_q50'].append(batch['cell'].t_q50[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
 
             self.add_additional_predict_results()
@@ -376,7 +383,7 @@ class ForecastModel(pl.LightningModule):
         output = output[radar_mask]
         
         missing = radar_data.get(f'missing_{var}', torch.zeros(radar_data.local_night.size(), device=self.device))
-        if self.config.get('force_zeros', False):
+        if self.config.get('force_zeros', False) or self.config.get('ignore_day', False):
             local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(missing))
         else:
             local_mask = torch.logical_not(missing)
@@ -484,28 +491,39 @@ class FluxRGNN(ForecastModel):
     on the Voronoi tesselation of sensor network sites.
     """
 
-    def __init__(self, decoder, flux_model=None, source_sink_model=None,
-                 encoder=None, boundary_model=None, initial_model=None,
-                 ground_model=None, **kwargs):
+    def __init__(self, initial_model, decoder, 
+            flux_model=None, source_sink_model=None,     
+            encoder=None, radar2cell_model=None, 
+            boundary_model=None, location_encoder=None, 
+            **kwargs):
         """
         Initialize FluxRGNN and all its components.
 
-        :param dynamics: transition model (e.g. FluxRGNNTransition, LSTMTransition or Persistence)
-        :param encoder: encoder model (e.g. RecurrentEncoder)
-        :param boundary_model: model handling boundary cells (e.g. Extrapolation)
         :param initial_model: model predicting the initial state
+        :param decoder: decoder model (e.g. RecurrentDecoder)
+        :param source_sink_model source/sink model (e.g. SourceSink)
+        :param flux_model: (numerical) flux model (e.g. Fluxes, NumericalFluxes)
+        :param encoder: encoder model (e.g. RecurrentEncoder)
+        :param radar2cell_model: mapping from radar measurements to cells (e.g. RadarToCellKNNInterpolation)
+        :param boundary_model: model handling boundary cells (e.g. Extrapolation)
         :param location_encoder: model mapping static cell features to postitional embeddings
         """
 
         super(FluxRGNN, self).__init__(**kwargs)
 
-        self.encoder = encoder
+        if location_encoder is None:
+            loc_enc_dim = 0
+        else:
+            loc_enc_dim = location_encoder.embedding_dim
+
+        self.radar2cell_model = radar2cell_model
+        self.encoder = encoder(loc_enc_dim=loc_enc_dim, radar2cell_model=radar2cell_model)
+        self.initial_model = initial_model(loc_enc_dim=loc_enc_dim)
         self.decoder = decoder
         self.flux_model = flux_model
         self.source_sink_model = source_sink_model
         self.boundary_model = boundary_model
-        self.initial_model = initial_model
-        # self.location_encoder = location_encoder
+        self.location_encoder = location_encoder
         #self.ground_model = ground_model
 
         self.n_hidden = kwargs.get('n_hidden')
@@ -518,15 +536,15 @@ class FluxRGNN(ForecastModel):
 
         cell_data = graph_data.node_type_subgraph(['cell']).to_homogeneous()
 
-        # if self.location_encoder is not None:
-        #     # get cell embeddings
-        #     self.cell_embeddings = self.location_encoder(cell_data)
-        # else:
-        #     self.cell_embeddings = None
+        if self.location_encoder is not None:
+             # get cell embeddings
+             loc_encoding = self.location_encoder(cell_data)
+        else:
+             loc_encoding = None
 
         if self.encoder is not None:
             # push context timeseries through encoder to initialize decoder
-            rnn_states = self.encoder(graph_data, t0) #, embeddings=self.cell_embeddings)
+            rnn_states = self.encoder(graph_data, t0, loc_encoding=loc_encoding) #, embeddings=self.cell_embeddings)
             self.decoder.initialize(rnn_states)
             #h_t, c_t = self.encoder(graph_data, t0)
             #hidden = h_t[-1]
@@ -564,7 +582,7 @@ class FluxRGNN(ForecastModel):
 
         # predict initial system state
         if self.initial_model is not None:
-            x = self.initial_model(graph_data, self.t_context + t0, hidden) #, embeddings=self.cell_embeddings)
+            x = self.initial_model(graph_data, self.t_context + t0, hidden, loc_encoding=loc_encoding) #, embeddings=self.cell_embeddings)
             #x = tidx_select(cell_data.x, self.t_context + t0).view(-1, 1)
         #elif hasattr(cell_data, 'x'):
         #    x = cell_data.x[..., self.t_context - 1].view(-1, 1)
@@ -696,7 +714,7 @@ class FluxRGNN(ForecastModel):
                 #    #                                 self.source_sink_model.node_sink))
                 #else:
                 #    self.regularizers.append(delta)
-                if 'water' in cell_data:
+                if 'water' in cell_data and cell_data.water.numel() > 0:
                     self.regularizers.append(delta * cell_data.water.view(-1, 1))
         else:
             delta = 0
@@ -719,7 +737,7 @@ class FluxRGNN(ForecastModel):
             regularizers = torch.cat(self.regularizers, dim=0)
             penalty = regularizers.pow(2).mean()
         else:
-            penalty = torch.zeros(1, device=self.device)
+            penalty = torch.tensor(0, device=self.device)
 
         return penalty
 
@@ -992,7 +1010,7 @@ class SeasonalityForecast(ForecastModel):
         result = {'x': self.seasonal_patterns['x'][cell_data.cidx, cell_data.tidx[t]].view(-1, 1)}
 
         if 'bird_uv' in self.seasonal_patterns:
-            result['bird_uv'] = self.seasonal_patterns['bird_uv'][cell_data.cidx, cell_data.tidx[t]].view(-1, 2)
+            result['bird_uv'] = self.seasonal_patterns['bird_uv'][cell_data.cidx, :, cell_data.tidx[t]].view(-1, 2)
 
         return result
 
@@ -1161,7 +1179,7 @@ class Fluxes(MessagePassing):
                                          feature in self.dynamic_cell_features], dim=1)
 
         # message passing through graph
-        in_flux, out_flux = self.propagate(cell_data.edge_index,
+        fluxes = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
@@ -1171,6 +1189,9 @@ class Fluxes(MessagePassing):
                                           dynamic_features_t1=dynamic_features_t1,
                                           areas=cell_data.areas)
 
+        
+        in_flux = fluxes[..., 0]
+        out_flux = fluxes[..., 1]
         # if not self.training:
         #     if self.use_log_transform:
         #         raw_net_flux = self.transforms.transformed2raw(x) * net_flux
@@ -1224,8 +1245,12 @@ class Fluxes(MessagePassing):
             out_flux = flux[reverse_edges]
             # net_flux = in_flux - out_flux
         else:
-            in_flux = flux * x_j * areas_j.view(-1, 1) / areas_i.view(-1, 1)
-            out_flux = in_flux[reverse_edges] / areas_i.view(-1, 1)
+            in_flux = flux * x_j * areas_j.view(-1, 1)
+            out_flux = in_flux[reverse_edges]
+
+            # compute average per km2
+            in_flux = in_flux / areas_i.view(-1, 1)
+            out_flux = out_flux / areas_i.view(-1, 1)
             # net_flux = (in_flux - out_flux) / areas_i.view(-1, 1)  # net influx into cell i per km2
             #print(f'min net flux: {net_flux.min()}, max net flux: {net_flux.max()}')
             #print(f'min x: {x_j.min()}, max x: {x_j.max()}')
@@ -1238,7 +1263,7 @@ class Fluxes(MessagePassing):
                 self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux, 'x')
         
         # return net_flux.view(-1, 1)
-        return torch.stack([in_flux, out_flux], dim=0)
+        return torch.stack([in_flux, out_flux], dim=-1)
 
 
 
@@ -1281,7 +1306,7 @@ class NumericalRadarFluxes(MessagePassing):
         velocities = self.radar2cell_model(graph_data, t)
 
         # message passing through graph
-        in_flux, out_flux = self.propagate(cell_data.edge_index,
+        fluxes = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           velocities=velocities,
@@ -1289,6 +1314,8 @@ class NumericalRadarFluxes(MessagePassing):
                                           face_length=cell_data.edge_face_lengths,
                                           edge_normals=cell_data.edge_normals)
 
+        in_flux = fluxes[..., 0]
+        out_flux = fluxes[..., 1]
         # if not self.training:
         #     raw_net_flux = self.transforms.transformed2raw(net_flux)
         #     self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
@@ -1322,7 +1349,7 @@ class NumericalRadarFluxes(MessagePassing):
 
         # return net_flux.view(-1, 1)
 
-        return torch.stack([in_flux, out_flux], dim=0)
+        return torch.stack([in_flux, out_flux], dim=-1)
 
 
 class NumericalFluxes(MessagePassing):
@@ -1415,7 +1442,7 @@ class NumericalFluxes(MessagePassing):
             velocities = velocities + wind
 
         # message passing through graph
-        in_flux, out_flux = self.propagate(cell_data.edge_index,
+        fluxes = self.propagate(cell_data.edge_index,
                                           reverse_edges=cell_data.reverse_edges,
                                           x=x,
                                           hidden=hidden,
@@ -1427,6 +1454,8 @@ class NumericalFluxes(MessagePassing):
                                           face_length=cell_data.edge_face_lengths,
                                           edge_normals=cell_data.edge_normals)
 
+        in_flux = fluxes[..., 0]
+        out_flux = fluxes[..., 1]
         # if not self.training:
         #     raw_net_flux = self.transforms.transformed2raw(net_flux)
         #     self.node_flux = raw_net_flux  # birds/km2 flying in/out of cell i
@@ -1462,7 +1491,7 @@ class NumericalFluxes(MessagePassing):
             # self.edge_fluxes = self.transforms.transformed2raw(in_flux - out_flux)
 
         # return net_flux.view(-1, 1)
-        return torch.stack([in_flux, out_flux], dim=0)
+        return torch.stack([in_flux, out_flux], dim=-1)
 
 
 
@@ -3143,7 +3172,7 @@ class Extrapolation(MessagePassing):
 class RecurrentEncoder(torch.nn.Module):
     """Encoder LSTM extracting relevant information from sequences of past environmental conditions and system states"""
 
-    def __init__(self, node_rnn, radar2cell_model, location_encoder=None,
+    def __init__(self, node_rnn, radar2cell_model, loc_enc_dim=0,
                  static_cell_features=None, dynamic_cell_features=None, **kwargs):
         super(RecurrentEncoder, self).__init__()
 
@@ -3152,19 +3181,12 @@ class RecurrentEncoder(torch.nn.Module):
         # self.n_lstm_layers = kwargs.get('n_rnn_layers', 1)
         self.dropout_p = kwargs.get('dropout_p', 0)
 
-        self.location_encoder = location_encoder
-
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         #print(static_cell_features)
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
 
-
-        if self.location_encoder is not None:
-            n_inputs = self.location_encoder.embedding_dim
-            self.radar2cell_model = radar2cell_model(loc_enc_dim=self.location_encoder.embedding_dim)
-        else:
-            n_inputs = 0
-            self.radar2cell_model = radar2cell_model(loc_enc_dim=0)
+        n_inputs = loc_enc_dim
+        self.radar2cell_model = radar2cell_model(loc_enc_dim=loc_enc_dim)
 
         n_inputs += sum(self.static_cell_features.values()) + \
                     sum(self.dynamic_cell_features.values()) + \
@@ -3188,7 +3210,7 @@ class RecurrentEncoder(torch.nn.Module):
     #     self.lstm_layers.apply(init_weights)
     #     init_weights(self.input2hidden)
 
-    def forward(self, data, t0=0):
+    def forward(self, data, t0=0, loc_encoding=None):
         """Run encoder until the given number of context time steps has been reached."""
 
         cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
@@ -3198,11 +3220,8 @@ class RecurrentEncoder(torch.nn.Module):
         static_cell_features = [cell_data.get(feature).reshape(cell_data.num_nodes, -1)
                                    for feature in self.static_cell_features]
 
-        if self.location_encoder is not None:
-            loc_encoding = self.location_encoder(cell_data)
+        if loc_encoding is not None:
             static_cell_features.append(loc_encoding)
-        else:
-            loc_encoding = None
 
         # process all context time steps and the first forecasting time step
         for tidx in range(self.t_context + 1):

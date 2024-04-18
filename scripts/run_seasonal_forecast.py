@@ -19,6 +19,7 @@ import yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
+from evaluate_models import summarize_performance
 import transforms
 
 def merge_lists(*lists):
@@ -96,8 +97,10 @@ def get_transform(cfg):
 def load_training_data(cfg):
 
     transform = get_transform(cfg)
-    data = dataloader.load_seasonal_dataset(cfg, cfg.output_dir, split='train',
-                                   transform=transform)
+    #data = dataloader.load_seasonal_dataset(cfg, cfg.output_dir, split='train',
+    #                               transform=transform)
+    
+    data = dataloader.load_dataset(cfg, cfg.output_dir, split='train', transform=transform)[0]
     data = torch.utils.data.ConcatDataset(data)
     train_loader = instantiate(cfg.dataloader, data, batch_size=1)
 
@@ -117,33 +120,41 @@ def training(trainer, model, cfg: DictConfig):
     if trainer.accelerator == 'gpu' and torch.cuda.is_available():
         model.cuda()
 
-    seasonal_patterns_x = []
-    missing_patterns_x = []
+    max_tidx = 31 * 12 * 24
+    seasonal_patterns_x = None # TODO: initialize all zeros and then index according to batch tidx
+    counts_x = None
 
-    seasonal_patterns_uv = []
-    missing_patterns_uv = []
+    seasonal_patterns_uv = None
+    counts_uv = None
 
     for nidx, data in enumerate(dl_train):
         data = data.to(model.device)
 
-        seasonal_patterns_x.append(data.x)
-        missing_patterns_x.append(data.missing_x)
+        tidx = data['cell'].tidx
 
-        seasonal_patterns_uv.append(data.bird_uv)
-        missing_patterns_uv.append(data.missing_bird_uv)
+        if seasonal_patterns_x is None:
+            seasonal_patterns_x = torch.zeros(data['radar'].num_nodes, max_tidx, device=model.device)
+            seasonal_patterns_uv = torch.zeros(data['radar'].num_nodes, 2, max_tidx, device=model.device)
+            counts_x = torch.zeros(data['radar'].num_nodes, max_tidx, device=model.device)
+            counts_uv = torch.zeros(data['radar'].num_nodes, max_tidx, device=model.device)
 
-    seasonal_patterns_x = torch.stack(seasonal_patterns_x, dim=0)  # shape [years, radars, timepoints]
-    missing_patterns_x = torch.stack(missing_patterns_x, dim=0)  # shape [years, radars, timepoints]
+        mask = torch.logical_not(data['radar'].missing_x)
+        seasonal_patterns_x[:, tidx] += data['radar'].x * mask
+        counts_x[:, tidx] += mask
 
-    seasonal_patterns_uv = torch.stack(seasonal_patterns_uv, dim=0)  # shape [years, radars, 2, timepoints]
-    missing_patterns_uv = torch.stack(missing_patterns_uv, dim=0)  # shape [years, radars, 2, timepoints]
+        mask = torch.logical_not(data['radar'].missing_bird_uv)
+        seasonal_patterns_uv[:, :, tidx] += data['radar'].bird_uv * mask.unsqueeze(1)
+        counts_uv[:, tidx] += mask
 
-    mask_x = torch.logical_not(missing_patterns_x)
-    seasonal_patterns_x = (seasonal_patterns_x * mask_x).sum(0) / mask_x.sum(0)
+    
+    seasonal_patterns_x = seasonal_patterns_x / (counts_x + 1e-8)
+    print('x size:', seasonal_patterns_x.size())
     model.seasonal_patterns['x'] = seasonal_patterns_x
 
-    mask_uv = torch.logical_not(missing_patterns_uv)
-    seasonal_patterns_uv = (seasonal_patterns_uv * mask_uv.unsqueeze(2)).sum(0) / mask_uv.unsqueeze(2).sum(0)
+    seasonal_patterns_uv = seasonal_patterns_uv / (counts_uv.unsqueeze(1) + 1e-8)
+    print('uv size:', seasonal_patterns_uv)
+    print((counts_uv > 0).sum())
+    print((counts_x > 0).sum())
     model.seasonal_patterns['bird_uv'] = seasonal_patterns_uv
 
     # save model
@@ -174,11 +185,23 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
+    model.config['ignore_day'] = True
 
-    model.seasonal_patterns.to(model.device)
+    #model.seasonal_patterns.to(model.device)
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
+
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'radar'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'night'], path=eval_path)
+
+    if 'bird_uv' in model.test_vars:
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'radar'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'night'], path=eval_path)
 
     if cfg.task.get('store_test_results', True):
         print('save evaluation artifact')

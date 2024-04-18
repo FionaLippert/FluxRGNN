@@ -197,6 +197,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
+    model.config['ignore_day'] = True
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')

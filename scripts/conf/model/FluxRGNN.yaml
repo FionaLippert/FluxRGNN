@@ -18,6 +18,8 @@ test_vars:
 predict_vars:
   - x
   - bird_uv
+  - in_flux
+  - out_flux
   - source_sink
 
 env_vars:
@@ -122,8 +124,11 @@ transforms:
     feature: bird_uv
     factor: ${model.length_scale}
   - _target_: fluxrgnn.transforms.Rescaling
-    feature: fluxes
-    factor: ${model.flux_scale}
+    feature: in_flux
+    factor: ${model.scale}
+  - _target_: fluxrgnn.transforms.Rescaling
+    feature: out_flux
+    factor: ${model.scale}
   - _target_: fluxrgnn.transforms.Rescaling
     feature: source_sink
     factor: ${model.scale}
@@ -282,8 +287,8 @@ defaults:
   - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder
   - decoder: RecurrentDecoder
-  - radar2cell_model: KNNInterpolation
-  - initial_model: KNNInterpolation
+  - radar2cell_model: CorrectedKNNInterpolation #KNNInterpolation
+  - initial_model: CorrectedKNNInterpolation #KNNInterpolation
 
 #flux_model: flux_model/NumericalFluxes
 #source_sink_model: source_sink_model/SourceSink

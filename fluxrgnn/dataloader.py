@@ -181,6 +181,8 @@ class SeasonalData(InMemoryDataset):
         # load features
         measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_radar_features.csv'))
 
+        print('loaded measurements')
+
         if not self.birds_per_km2:
             target_col = 'birds'
         else:
@@ -206,6 +208,8 @@ class SeasonalData(InMemoryDataset):
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
 
+        print('created data dict')
+
         # create graph data objects per sequence
         data = [SensorData(
             # graph structure and edge features
@@ -221,6 +225,7 @@ class SeasonalData(InMemoryDataset):
             # time index of sequence
             tidx=torch.tensor(tidx, dtype=torch.long))]
 
+        print('created SensorData')
 
         # write data to disk
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -659,7 +664,13 @@ class RadarHeteroData(InMemoryDataset):
 
         # remove sequences with too much missing data
         data['missing'] = np.logical_and(data['missing_x'], data['missing_uv'])
-        perc_missing = data['missing'].reshape(-1, data['missing'].shape[-1]).mean(0)
+        print(f'missing shape = {data["missing"].shape}')
+        perc_missing = data['missing']
+        if self.edge_type == 'voronoi':
+            # ignore dummy radars for computation of missing data
+            observed = cells['observed'].to_numpy()
+            perc_missing = perc_missing[observed]
+        perc_missing = perc_missing.reshape(-1, perc_missing.shape[-1]).mean(0)
         print(perc_missing)
         valid_idx = perc_missing <= self.missing_data_threshold
         #valid_idx = np.ones(tidx.shape[-1], dtype='int')
@@ -746,8 +757,6 @@ class RadarHeteroData(InMemoryDataset):
                 cell_data['x'] = torch.tensor(data[target_col][..., idx], dtype=torch.float)
                 cell_data['bird_uv'] = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
 
-            assert (data[target_col][..., idx].shape[0] == 143)
-            assert (data['bird_uv'][..., idx].shape[0] == 143)
             
             x = torch.tensor(data[target_col][..., idx], dtype=torch.float)
             bird_uv = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
@@ -765,6 +774,7 @@ class RadarHeteroData(InMemoryDataset):
                 'x': x,
                 'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
                 'missing_bird_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
+                'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
                 #'missing_fluxes': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': bird_uv,
@@ -898,7 +908,7 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
               + cfg.datasource.get('tidx_step', 1) #- 1
 
     if cfg.model.edge_type == 'hexagons':
-        res_info = f'_buffer={cfg.datasource.buffer}_res={cfg.datasource.h3_resolution}'
+        res_info = f'_{cfg.datasource.buffer}_res={cfg.datasource.h3_resolution}'
     elif cfg.model.edge_type == 'voronoi':
         res_info = f'_ndummy={cfg.datasource.n_dummy_radars}'
     else:
@@ -1066,6 +1076,7 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, split: str, transfor
         OmegaConf.save(config=cfg, f=f)
 
     years = cfg.datasource[f'{split}_years']
+    print(f'load data for {years}')
 
     # load training and validation data
     data = [SeasonalData(year, preprocessed_dirname, processed_dirname,
