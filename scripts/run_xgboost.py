@@ -22,6 +22,8 @@ import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 import xgboost
 
+from evaluate_models import summarize_performance
+
 import transforms
 
 def merge_lists(*lists):
@@ -201,6 +203,11 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     trainer.test(model, test_loader)
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
+
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'radar'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'night'], path=eval_path)
 
     if cfg.task.get('store_test_results', True):
         print('save evaluation artifact')
