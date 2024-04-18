@@ -7,6 +7,8 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=XGBoost
+  - model.pow_exponent=1.0
+  - model.scale=0.01
   - model.xgboost.n_estimators=300
   - model.train_settings.early_stopping_rounds=10
   - trainer.accelerator=cpu

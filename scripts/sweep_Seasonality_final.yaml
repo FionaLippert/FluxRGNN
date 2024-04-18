@@ -1,24 +1,21 @@
-program: run_xgboost.py
-name: sweep_XGBoost
+program: run_seasonality.py
+name: sweep_Seasonality
 command:
   - ${env}
   - ${interpreter}
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=XGBoost
-  - model.xgboost.n_estimators=500
-  - model.train_settings.early_stopping_rounds=10
+  - model=Seasonality
   - trainer.accelerator=cpu
   - device=local
   - model.max_t0=1
   - task=train_eval
   - task.store_test_results=true
-  - task.n_cv_folds=10
 method: grid
 metric:
   name: test/observed/x/raw/RMSE
   goal: minimize
-parameters:
-  task.cv_fold:
-    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+#parameters:
+#  task.cv_fold:
+#    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

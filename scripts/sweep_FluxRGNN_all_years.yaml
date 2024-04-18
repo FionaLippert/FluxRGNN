@@ -7,20 +7,21 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=FluxRGNN
-  - trainer.max_epochs=400
-  - dataloader.batch_size=64
-  - task.store_test_results=true
-  - model.n_hidden=64
+  - trainer.max_epochs=300
+  - dataloader.batch_size=32
+  - task=predict
+  - model.n_hidden=128
   - model.lr=3e-5
+  - model.load_states_from=..... # insert model path here
 method: grid
 metric:
-  name: test/observed/raw/RMSE
+  name: test/observed/x/raw/RMSE
   goal: minimize
 parameters:
-  test_year:
+  test_years:
     values:
-      - 2015
-      - 2016
-      - 2017
-      - 2018
-      - 2019
+      - [2015]
+      - [2016]
+      - [2017]
+      - [2018]
+      - [2019]

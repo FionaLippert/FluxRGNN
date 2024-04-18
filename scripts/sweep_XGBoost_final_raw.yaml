@@ -7,7 +7,13 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=XGBoost
+  - model.pow_exponent=1.0
   - model.xgboost.n_estimators=500
+  - model.xgboost.max_depth=15
+  - model.xgboost.learning_rate=0.01
+  - model.xgboost.min_child_weight=3
+  - model.xgboost.subsample=0.7
+  - model.xgboost.gamma=1
   - model.train_settings.early_stopping_rounds=10
   - trainer.accelerator=cpu
   - device=local
