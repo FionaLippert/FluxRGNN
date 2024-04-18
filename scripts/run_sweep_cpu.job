@@ -3,9 +3,9 @@
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --job-name=xgboost
-#SBATCH --time=1:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --job-name=fluxrgnn_sweep
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
@@ -14,9 +14,5 @@ cd $HOME/FluxRGNN/scripts
 
 which python
 
-OVERRIDES=$1
-
-echo $OVERRIDES
-
-srun python run_xgboost.py $OVERRIDES
+wandb agent $1
 
