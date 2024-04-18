@@ -9,20 +9,30 @@ context: 24
 test_horizon: 72
 test_context: 24
 
+test_vars:
+  - x
+  - bird_uv
+predict_vars:
+  - x
+  - bird_uv
+
+observation_model:
+  _target_: fluxrgnn.models.ObservationModel
+
 force_zeros: true
 edge_type: none
 birds_per_km2: true
 
 use_log_transform: false
 log_offset: 0.1
-pow_exponent: 0.33333
+pow_exponent: 1.0 #0.33333
 scale: 1.0 #1.0 #0.001 #0.1
-transforms: []
-  #  - _target_: transforms.PowerTransform
-  #    feature: x
-  #    exponent: ${model.pow_exponent}
-#  - _target_: transforms.Rescaling
-#    feature: x
-#    factor: ${model.scale}
+transforms: #[]
+  - _target_: transforms.PowerTransform
+    feature: x
+    exponent: ${model.pow_exponent}
+  - _target_: transforms.Rescaling
+    feature: x
+    factor: ${model.scale}
 
 load_states_from: none

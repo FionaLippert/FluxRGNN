@@ -22,6 +22,8 @@ import yaml
 import pandas as pd
 from pytorch_lightning.loggers import WandbLogger
 
+from evaluate_models import summarize_performance
+
 #import transforms
 
 def merge_lists(*lists):
@@ -182,19 +184,31 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
+    model.config['ignore_day'] = True
     trainer.test(model, test_loader)
 
+    eval_path = osp.join(cfg.output_dir, 'evaluation')
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'radar'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'night'], path=eval_path)
+
+    if 'bird_uv' in model.test_vars:
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'radar'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'night'], path=eval_path)
+    
     if cfg.task.get('store_test_results', True):
 
-        eval_path = osp.join(cfg.output_dir, 'evaluation')
         # utils.dump_outputs(model.test_metrics, eval_path)
         utils.dump_outputs(model.test_results, eval_path)
 
-        if isinstance(trainer.logger, WandbLogger):
-            print('add evaluation artifact')
-            artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
-            artifact.add_dir(eval_path)
-            wandb.run.log_artifact(artifact)
+    if isinstance(trainer.logger, WandbLogger):
+        print('add evaluation artifact')
+        artifact = wandb.Artifact(f'evaluation-{trainer.logger.version}', type='evaluation')
+        artifact.add_dir(eval_path)
+        wandb.run.log_artifact(artifact)
 
     if cfg.get('save_prediction', False):
         trainer.predict(model, test_loader, return_predictions=True)

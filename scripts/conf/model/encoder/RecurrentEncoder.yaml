@@ -1,8 +1,7 @@
 # @package model.encoder
 _target_: fluxrgnn.models.RecurrentEncoder
+_partial_: true
 node_rnn: ${model.node_rnn}
-radar2cell_model: ${model.radar2cell_model}
-location_encoder: ${model.location_encoder}
 context: ${model.context}
 n_hidden: ${model.n_hidden}
 n_rnn_layers: 1

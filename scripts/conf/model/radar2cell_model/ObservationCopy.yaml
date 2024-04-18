@@ -1,5 +1,6 @@
 # @package model.radar2cell_model
 _target_: fluxrgnn.models.RadarToCellKNNInterpolation
+_partial_: true
 k: 1
 radar_variables:
   x: 1

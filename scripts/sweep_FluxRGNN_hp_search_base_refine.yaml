@@ -15,6 +15,8 @@ command:
   - model.radar2cell_model=KNNInterpolation
   - model.initial_model=KNNInterpolation
   - trainer.max_epochs=500
+  - trainer.log_every_n_steps=100
+  - trainer.check_val_every_n_epoch=10
   - dataloader.batch_size=32
   - task=cross_validation
   - task.store_test_results=false

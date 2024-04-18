@@ -11,6 +11,8 @@ command:
   - model.flux_model.n_fc_layers=1
   - model.source_sink_model.n_fc_layers=1
   - trainer.max_epochs=300
+  - trainer.log_every_n_steps=100
+  - trainer.check_val_every_n_epoch=10
   - dataloader.batch_size=32
   - task=cross_validation
   - task.store_test_results=false
