@@ -221,7 +221,6 @@ class CVMasks(BaseTransform):
             test_radars = shuffled_ridx[n_test * self.cv_fold: n_test * (self.cv_fold + 1)]
             train_radars = torch.cat([shuffled_ridx[:(n_test * self.cv_fold)],
                                       shuffled_ridx[(n_test * (self.cv_fold + 1)):]], dim=0)
-
             train_mask = torch.isin(data['radar'].ridx, train_radars)
             test_mask = torch.isin(data['radar'].ridx, test_radars)
 

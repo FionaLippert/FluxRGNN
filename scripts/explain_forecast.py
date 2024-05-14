@@ -15,8 +15,23 @@ import os.path as osp
 import os
 from pytorch_lightning.loggers import WandbLogger
 
+import logging
+logging.getLogger('shap').setLevel(logging.WARNING) # turns off the "shap INFO" logs
+
 # trade precision for performance
 torch.set_float32_matmul_precision('medium')
+
+def merge_lists(*lists):
+    merged = []
+    for l in lists:
+        merged += l
+    return merged
+
+OmegaConf.register_new_resolver("sum", sum)
+OmegaConf.register_new_resolver("len", len)
+OmegaConf.register_new_resolver("merge", merge_lists)
+
+OmegaConf.register_new_resolver("eval", eval)
 
 
 @hydra.main(config_path="conf", config_name="config")
@@ -62,9 +77,10 @@ def get_transform(cfg):
     return transform
 
 
-def load_background_data(cfg, feature_names, reduction='sampling', n_samples=100):
+def load_background_data(cfg, feature_names, seqID_min, seqID_max, reduction='sampling', n_samples=100):
     transform = get_transform(cfg)
-    data = dataloader.load_dataset(cfg, cfg.output_dir, split='train', transform=transform)[0]
+
+    data = dataloader.load_dataset(cfg, cfg.output_dir, split='train', transform=transform, seqID_min=seqID_min, seqID_max=seqID_max)[0]
     data = torch.utils.data.ConcatDataset(data)
 
     background = explainer.construct_background(data, feature_names, reduction=reduction, n_samples=n_samples)
@@ -80,37 +96,45 @@ def explain(trainer, model, cfg: DictConfig):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
-    # test_data = test_data[0]
+
+    # define time period to consider
+    seqID_start = cfg.task.get('seqID_start', 0)
+    seqID_end = cfg.task.get('seqID_end', -1)
+
+    test_data, normalization = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform, seqID_min=seqID_min, seqID_max=seqID_max)
     test_data = torch.utils.data.ConcatDataset(test_data)
-
-    normalization = test_data.normalization
-
-    model.horizon = cfg.model.test_horizon
-    # model.store_fluxes = cfg.model.store_fluxes
-
-    #feature_names = list(cfg.model.env_vars.keys()) #[:4]
-
-    feature_names = list(cfg.task.get('feature_names', ['u10', 'v10', 't2m', 'cc', 'q', 'sp', 'tp']))
-    print(feature_names, type(feature_names))
-
-    feature_names = cfg.task.feature_names
-    print(type(feature_names))
 
     feature_names = OmegaConf.to_object(cfg.task)['feature_names']
 
     n_bg_samples = cfg.task.get('n_bg_samples', 10)
+    reduction = cfg.task.get('bg_reduction', 'all')
     n_shap_samples = cfg.task.get('n_shap_samples', 1000)
-    idx = cfg.task.seqID
+    
 
-    print(f'Explain sequence {idx}')
-    print(f'Consider features {feature_names}')
+    n_nights = len(test_data)
+
+    if cfg.task.random_sample or 'seqID' not in cfg.task:
+        # randomly sample a sequence
+        rng = np.random.default_rng(cfg.seed)
+        random_nights = rng.permutation(n_nights)
+
+        idx = random_nights[cfg.task.get('sample_idx', 0)]
+    else:
+        idx = max(0, cfg.task.seqID - seqID_start)
+
+    # ID in overall dataset
+    seqID = seqID_start + idx
+
+    print(f'Explain sequence {seqID}')
+    print(f'Considered features: {feature_names}')
 
     input_graph = test_data[idx]
-    background = load_background_data(cfg, feature_names, reduction='sampling', n_samples=n_bg_samples)
+    seqID_min = idx #max(0, idx - 1)
+    seqID_max = idx #min(idx + 1, len(test_data) - 1)
+    background = load_background_data(cfg, feature_names, seqID_min, seqID_max, reduction=reduction, n_samples=n_bg_samples)
 
-    expl = explainer.ForecastExplainer(model, background, feature_names)
-    explanation = expl.explain(input_graph, n_samples=n_shap_samples) #0)
+    expl = explainer.ForecastExplainer(model, background, feature_names, explain_processes=False)
+    explanation = expl.explain(input_graph, n_samples=n_shap_samples)
 
     explanation['local_night'] = input_graph[expl.node_store]['local_night'][:, expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
 
@@ -118,25 +142,15 @@ def explain(trainer, model, cfg: DictConfig):
         values = input_graph[expl.node_store][name][..., expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
 
         # reverse normalization
-        if name in ['u', 'v']:
-            uv_scale = max(normalization.absmax('u'), normalization.absmax('v'))
-            explanation[name] = values * uv_scale
+        values = values + 1
+        values = values / 2.0
+        values = values * (normalization.max(name) - normalization.min(name))
+        values = values + normalization.min(name)
+        explanation[name] = values
 
-        elif name in ['u10', 'v10']:
-            uv_scale = max(normalization.absmax('u10'), normalization.absmax('v10'))
-            explanation[name] = values * uv_scale
+    # TODO: also scale outputs correctly (bird_scale and uv_scale)
 
-        elif name in ['sshf']:
-            explanation[name] = values * normalization.absmax('sshf')
-
-        else:
-            values = values + 1
-            values = values / 2.0
-            values = values * (normalization.max(name) - normalization.min(name))
-            values = values + normalization.min(name)
-            explanation[name] = values
-
-    expl_path = osp.join(cfg.output_dir, f'explanation_{idx}')
+    expl_path = osp.join(cfg.output_dir, f'explanation_{seqID}')
     utils.dump_outputs(explanation, expl_path)
 
     if isinstance(trainer.logger, WandbLogger):

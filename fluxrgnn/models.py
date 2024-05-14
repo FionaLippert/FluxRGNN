@@ -329,8 +329,9 @@ class ForecastModel(pl.LightningModule):
     def on_predict_epoch_start(self):
 
         self.predict_results = {
-                #'predict/t_q50': [],
+                'predict/local_night': [],
                 'predict/tidx': [],
+                'predict/year': []
                 }
 
         for var in self.predict_vars:
@@ -350,11 +351,23 @@ class ForecastModel(pl.LightningModule):
 
             for var in self.predict_vars:
                 if var in forecast:
+                    if self.observation_model is not None:
+                        # map from cells to radars
+                        forecast[var] = self.observation_model(forecast[var],
+                                                               batch['cell', 'radar'],
+                                                               batch['radar'].num_nodes)
+
+
                     self.predict_results[f'predict/predictions/{var}'].append(
-                            self.transforms.transformed2raw(forecast[var][..., -self.horizon:], var).detach()
+                            self.transforms.transformed2raw(forecast[var][..., :self.horizon], var).detach()
                     )
+            
+            self.predict_results['predict/year'].append(batch['radar'].year.detach())
             self.predict_results['predict/tidx'].append(batch['cell'].tidx[(t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach())
-            #self.predict_results['predict/t_q50'].append(batch['cell'].t_q50[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon + 1)])
+            if self.observation_model is not None:
+                self.predict_results['predict/local_night'].append(batch['radar'].local_night[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach())
+            else:
+                self.predict_results['predict/local_night'].append(batch['cell'].local_night[:, (t0 + self.t_context): (t0 + self.t_context + self.horizon)].detach())
 
             self.add_additional_predict_results()
 
@@ -670,7 +683,7 @@ class FluxRGNN(ForecastModel):
             #    self.regularizers.append(uv_error)
 
 
-            if not self.training and self.store_fluxes:
+            if not self.training and self.store_fluxes and hasattr(self.flux_model, 'edge_fluxes'):
                 # save model component outputs
                 self.edge_fluxes.append(self.flux_model.edge_fluxes.detach())
             #     self.node_flux.append(self.flux_model.node_flux.detach())
@@ -766,10 +779,10 @@ class FluxRGNN(ForecastModel):
                     self.predict_results['node_velocity'] = []
                 self.predict_results['node_velocity'].append(torch.stack(self.node_velocity, dim=-1))
 
-            #if len(self.edge_fluxes) > 0:
-            #    if 'edge_flux' not in self.predict_results:
-            #        self.predict_results['edge_flux'] = []
-            #    self.predict_results['edge_flux'].append(torch.cat(self.edge_fluxes, dim=-1))
+            if len(self.edge_fluxes) > 0:
+                if 'edge_flux' not in self.predict_results:
+                    self.predict_results['edge_flux'] = []
+                self.predict_results['edge_flux'].append(torch.cat(self.edge_fluxes, dim=-1))
 
 
     #def on_predict_start(self):

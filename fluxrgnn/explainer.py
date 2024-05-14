@@ -37,16 +37,17 @@ class ForecastExplainer():
         self.feature_names = feature_names
 
         self.t0 = kwargs.get('t0', 0)
-        self.horizon = kwargs.get('horizon', 48)
+        self.horizon = self.forecast_model.horizon
         self.context = self.forecast_model.t_context
         self.node_store = kwargs.get('node_store', 'cell')
 
         self.explain_processes = kwargs.get('explain_processes', True)
         if self.explain_processes:
-            self.output_shape = (self.n_cells, 5, self.horizon - 1) 
-            self.forecast_model.store_fluxes = True
+            self.output_shape = (self.n_cells, 5, self.horizon) 
+            self.output_names = ['x', 'source', 'sink', 'mtr', 'direction']
         else:
             self.output_shape = (self.n_cells, 1, self.horizon)
+            self.output_names = ['x']
         self.output_dim = prod(self.output_shape)
 
 
@@ -58,17 +59,30 @@ class ForecastExplainer():
         :return: prediction: np.ndarray of shape [n_samples, N]
         """
 
-        prediction = self.forecast_model.forecast(input_graph, self.horizon, t0=self.t0) # [cells, horizon]
+        forecast = self.forecast_model.forecast(input_graph, self.horizon, t0=self.t0) # [cells, horizon]
+
+        prediction = forecast['x'][..., :self.horizon]
 
         if self.explain_processes:
-            source = torch.stack(self.forecast_model.node_sink, dim=-1)
-            sink = torch.stack(self.forecast_model.node_source, dim=-1) # [cells, 1, horizon]
+            #source = torch.stack(self.forecast_model.node_sink, dim=-1)
+            #sink = torch.stack(self.forecast_model.node_source, dim=-1) # [cells, 1, horizon]
 
-            velocities = torch.stack(self.forecast_model.node_velocity, dim=-1) # [cells, 2, horizon]
+            #velocities = torch.stack(self.forecast_model.node_velocity, dim=-1) # [cells, 2, horizon]
+            source = torch.clamp(forecast['source_sink'], 0)
+            sink = torch.clamp(-forecast['source_sink'], 0)
+            
+            velocities = forecast['bird_uv']
+            speed = torch.linalg.vector_norm(velocities, dim=-2).unsqueeze(1)
+            
+            direction = (torch.rad2deg(torch.arctan2(velocities[:, 0], velocities[:, 1])) + 360) % 360
+            direction = direction.unsqueeze(1)
 
-            prediction = torch.cat([prediction[..., 1:].unsqueeze(1), source, sink, velocities], dim=1)
+            #fluxes = prediction * velocities
+            mtr = prediction * speed
 
-        return prediction.reshape(-1)
+            prediction = torch.cat([prediction, source, sink, mtr, direction], dim=1) # [n_samples * n_cells, 5, horizon]
+
+        return prediction #.reshape(-1)
 
 
     def mask_features(self, binary_mask, input_batch, sample_idx=0):
@@ -79,30 +93,17 @@ class ForecastExplainer():
         :return: updated SensorHeteroData object
         """
 
-        # background_mask = np.logical_not(binary_mask)
-        # out = np.tile(features, (self.n_samples, 1, 1))
-        # out[:, background_mask, :] = self.background[:, background_mask, :]
-
         # apply changes to copies of original input data
         masked_input_batch = copy.copy(input_batch)
         indices = np.where(np.logical_not(binary_mask))[0]
-        # indices = torch.logical_not(binary_mask).nonzero().view(-1)
 
         for fidx in indices:
             name = self.feature_names[fidx]
-            # fbg = self.background[sample_idx, fidx] # [n_cells, T]
             fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, -1, self.T)
 
             masked_input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
                                                        device=input_batch[self.node_store][name].device)
 
-            # data[self.node_store][name] = torch.tensor(fbg, dtype=data[self.node_store][name].dtype,
-            #                                                 device=data[self.node_store][name].device)
-
-            #print(f'original {name}: {input_graph[self.node_store][name]}')
-            #print(f'masked {name}: {data[self.node_store][name]}')
-
-            #assert not torch.allclose(data[self.node_store][name], input_graph[self.node_store][name])
 
         return masked_input_batch
 
@@ -122,19 +123,37 @@ class ForecastExplainer():
 
         input_batch = Batch.from_data_list([copy.copy(input_graph) for _ in range(self.n_samples)])
         
-        print('model device', self.forecast_model.device)
-
         def f(binary_masks):
             # maps feature masks to model outputs and averages over background samples
             n_masks = binary_masks.shape[0]
-            # out = np.zeros((n_masks, self.n_cells * self.horizon))
             out = torch.zeros((n_masks, self.output_dim), device=self.forecast_model.device)
             for i in range(n_masks):
                 print(f'retain {binary_masks[i].sum()} features: {binary_masks[i]}')
-                # TODO: push all samples through model in parallel
                 masked_input = self.mask_features(binary_masks[i], input_batch)
-                pred = self.predict(masked_input) # [n_samples * n_cells * horizon]
-                out[i] = pred.reshape(self.n_samples, -1).mean(0)
+                pred = self.predict(masked_input) # [n_samples * n_cells, n_outputs, horizon]
+                pred = pred.reshape(self.n_samples, -1, pred.size(-2), pred.size(-1))
+
+                if 'direction' in self.output_names:
+                    # find minimum angle across background samples
+                    directions = pred[:, :, -1, :]
+                    min_dir = directions.min(0) # [n_cells, horizon]
+
+                    # find angles that need to wrap around
+                    wrap_idx = (directions - min_dir.unsqueeze(0)) > 180
+                    directions[wrap_idx] -= 360
+
+                    # write directions back to pred
+                    pred[:, :, -1, :] = directions
+
+                    # average over background
+                    pred = pred.mean(0)
+
+                    # make sure final directions are between 0 and 360 degrees
+                    pred[:, -1, :] = (pred[:, -1, :] + 360) % 360
+                else:
+                    pred = pred.mean(0)
+                
+                out[i] = pred.reshape(-1)
                 # out[i] = unbatch(pred, masked_input[self.node_store].batch, dim=0) # [n_samples, n_cells * horizon]
                 # for j in range(self.n_samples):
                 #     masked_input = self.mask_features(binary_masks[i], input_graph, sample_idx=j)
@@ -158,18 +177,15 @@ class ForecastExplainer():
 
         # compute SHAP values
         mask_none = np.ones((1, self.n_features)) # mask for actual prediction
-        shap_values = explainer.shap_values(mask_none, nsamples=n_samples)
-        #shap_values = explainer.shap_values(nsamples=n_samples)
+        shap_values = explainer.shap_values(mask_none, nsamples=n_samples, silent=True)
         shap_values = np.stack(shap_values, axis=0)
 
         result = {'shap_values': shap_values.reshape(*self.output_shape, self.n_features),
                  'expected_values': explainer.expected_value.reshape(self.output_shape),
-                # 'expected_values': explainer.pred_null,
-                # 'actual_values': explainer.pred_orig, 
-                'actual_values': explainer.fx.reshape(self.output_shape),
-                'permuted_values': explainer.ey.reshape(-1, *self.output_shape),
-                'feature_names': self.feature_names,
-                #'local_night': input_graph[self.node_store].local_night[:, self.t0 + self.context: self.t0 + self.context + self.horizon]
+                 'actual_values': explainer.fx.reshape(self.output_shape),
+                 'permuted_values': explainer.ey.reshape(-1, *self.output_shape),
+                 'feature_names': self.feature_names,
+                 'output_names': self.output_names
                 }
         
         #for name in self.feature_names:

@@ -144,7 +144,7 @@ def load_training_data(cfg, split='train'):
         else:
             radar_mask = radar_data.test_mask
 
-        if cfg.get('force_zeros', False):
+        if cfg.model.get('force_zeros', False):
             local_mask = torch.logical_and(radar_data.local_night, torch.logical_not(missing))
         else:
             local_mask = torch.logical_not(missing)
@@ -162,6 +162,13 @@ def load_training_data(cfg, split='train'):
 
     X = torch.cat(X, dim=0).detach().numpy()
     y = torch.cat(y, dim=0).detach().numpy()
+
+    print(f'mean density = {y.mean()}')
+    print(f'max density = {y.max()}')
+    print(f'min density = {y.min()}')
+    print(f'95% density = {np.percentile(y, 95)}')
+    print(f'90% density = {np.percentile(y, 90)}')
+    print(f'99% density = {np.percentile(y, 99)}')
 
     return X, y
 
@@ -193,7 +200,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     transform = get_transform(cfg)
     print('######### testing #########')
 
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
@@ -205,7 +212,10 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
     eval_path = osp.join(cfg.output_dir, 'evaluation')
 
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed'], path=eval_path)
-    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 150, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 50, 250, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 50, 200, 1500], path=eval_path)
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'radar'], path=eval_path)
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'night'], path=eval_path)
 
@@ -241,7 +251,7 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)

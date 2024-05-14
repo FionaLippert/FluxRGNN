@@ -288,6 +288,7 @@ class RadarHeteroData(InMemoryDataset):
         self.use_nights = kwargs.get('fixed_t0', True)
         self.tidx_start = kwargs.get('tidx_start', 0)
         self.tidx_step = kwargs.get('tidx_step', 1)
+        self.tidx_max = kwargs.get('tidx_max', -1)
 
         self.seed = kwargs.get('seed', 1234)
         self.rng = np.random.default_rng(self.seed)
@@ -623,18 +624,18 @@ class RadarHeteroData(InMemoryDataset):
             data[k] = np.stack(v, axis=0).astype(float)
 
         # apply perturbations (if applicable)
-        for var in self.permute_env_vars:
-            # data[var] has shape [cells, ..., time]
+        #for var in self.permute_env_vars:
+        #    # data[var] has shape [cells, ..., time]
 
-            # perturb in time
-            random_tidx = np.arange(data[var].shape[-1])
-            random_tidx = self.rng.permutation(random_tidx)
-            data[var] = data[var][..., random_tidx]
+        #    # perturb in time
+        #    random_tidx = np.arange(data[var].shape[-1])
+        #    random_tidx = self.rng.permutation(random_tidx)
+        #    data[var] = data[var][..., random_tidx]
 
-            # perturb in space
-            random_cidx = np.arange(data[var].shape[0])
-            random_cidx = self.rng.permutation(random_cidx)
-            data[var] = data[var][random_cidx]
+        #    # perturb in space
+        #    random_cidx = np.arange(data[var].shape[0])
+        #    random_cidx = self.rng.permutation(random_cidx)
+        #    data[var] = data[var][random_cidx]
 
         #print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
         print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
@@ -657,10 +658,10 @@ class RadarHeteroData(InMemoryDataset):
             # reshape data into sequences
             for k, v in data.items():
                 data[k] = reshape(v, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
-                                  self.tidx_start, self.tidx_step)
+                                  self.tidx_start, self.tidx_step, self.tidx_max)
 
             tidx = reshape(tidx, nights, np.ones(check_all.shape, dtype=bool), self.timesteps, self.use_nights,
-                           self.tidx_start, self.tidx_step)
+                           self.tidx_start, self.tidx_step, self.tidx_max)
 
         # remove sequences with too much missing data
         data['missing'] = np.logical_and(data['missing_x'], data['missing_uv'])
@@ -779,7 +780,8 @@ class RadarHeteroData(InMemoryDataset):
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': bird_uv,
                 #'fluxes': fluxes,
-                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long)
+                'tidx': torch.tensor(tidx[:, idx], dtype=torch.long),
+                'year': torch.tensor(int(self.year), dtype=torch.long)
             }
 
             # heterogeneous graph with two types of nodes: cells and radars
@@ -892,7 +894,7 @@ class SensorHeteroData(HeteroData):
 
 
 
-def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
+def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, seqID_min=0, seqID_max=-1):
     """
     Load training or testing data, initialize normalizer, setup and save configuration
 
@@ -925,6 +927,12 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     n_excl = len(cfg.datasource.get('excluded_radars', []))
     if n_excl > 0:
         processed_dirname += f'_excluded={n_excl}'
+
+    #if 'tidx_max' in cfg.datasource:
+    #    tidx_max = cfg.datasource.tidx_max
+    #    processed_dirname += f'_tidx={cfg.datasource.get("tidx_start", 0)}-{tidx_max}'
+    #else:
+    #    tidx_max = -1
 
     # perm_vars = cfg.model.get('permute_env_vars', [])
     # if len(perm_vars) > 0:
@@ -978,8 +986,11 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
     #         for year in years]
 
     years = cfg.datasource[f'{split}_years']
+    print(years)
 
-    data = [RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
+    data = []
+    for year in years:
+        data_y = RadarHeteroData(year, seq_len, preprocessed_dirname, processed_dirname,
                       **cfg, **cfg.model, **cfg.task,
                       data_root=data_dir,
                       data_source=cfg.datasource.name,
@@ -989,9 +1000,15 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None):
                       tidx_step=cfg.datasource.get('tidx_step', 1),
                       transform=transform
                       )
-            for year in years]
-
-    return data, context, seq_len
+        print(f'len data = {len(data_y)}')
+        indices = range(0, len(data_y))
+        print(indices)
+        print(seqID_min, seqID_max)
+        if seqID_max < 0:
+            seqID_max = len(data_y) - 1
+        data.append(torch.utils.data.Subset(data_y, indices[seqID_min: seqID_max + 1]))
+    
+    return data, normalization #context, seq_len
 
 
 def load_xgboost_dataset(cfg: DictConfig, output_dir: str, split: str = 'train', transform=None):
@@ -1107,13 +1124,13 @@ def rescale(features, min=None, max=None):
         rescaled /= (max - min)
     return rescaled
 
-def reshape(data, nights, mask, timesteps, use_nights=True, t0=0, step=1):
+def reshape(data, nights, mask, timesteps, use_nights=True, t0=0, step=1, t_max=-1):
     """Reshape data to have dimensions [nodes, features, timesteps, sequences]"""
 
     if use_nights:
         reshaped = reshape_nights(data, nights, mask, timesteps)
     else:
-        reshaped = reshape_t(data, timesteps, t0, step)
+        reshaped = reshape_t(data, timesteps, t0, step, t_max)
     return reshaped
 
 def reshape_nights(data, nights, mask, timesteps):
@@ -1125,13 +1142,15 @@ def reshape_nights(data, nights, mask, timesteps):
     return reshaped
 
 
-def reshape_t(data, timesteps, t0=0, step=1):
+def reshape_t(data, timesteps, t0=0, step=1, t_max=-1):
     """
     Reshape into sequences of length 'timesteps', starting at all possible time points in the data (step=1),
     or at regular intervals of size `step`
     """
+    if t_max < 0:
+        t_max = data.shape[-1] - 1
 
-    index = np.arange(t0, data.shape[-1] - timesteps, step)
+    index = np.arange(t0, t_max + 1 - timesteps, step)
     reshaped = [data[..., t:t + timesteps] for t in index]
     reshaped = np.stack(reshaped, axis=-1)
     return reshaped

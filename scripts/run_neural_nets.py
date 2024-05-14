@@ -177,8 +177,7 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
-    # test_data = test_data[0]
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
@@ -189,15 +188,54 @@ def testing(trainer, model, cfg: DictConfig, ext=''):
 
     eval_path = osp.join(cfg.output_dir, 'evaluation')
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed'], path=eval_path)
-    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 150, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 50, 250, 1500], path=eval_path)
+    summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'bird_bin'], bins=[1, 50, 200, 1500], path=eval_path)
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'radar'], path=eval_path)
     summarize_performance(model.test_results, cfg, var='x', groupby=['observed', 'night'], path=eval_path)
 
     if 'bird_uv' in model.test_vars:
         summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed'], path=eval_path)
-        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 50, 250, 1500])
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 150, 1500])
+        summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 1500])
         summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'radar'], path=eval_path)
         summarize_performance(model.test_results, cfg, var='bird_uv', groupby=['observed', 'night'], path=eval_path)
+    
+        def uv_to_speed(uv):
+            # assume uv to have shape [sequences, radars, 2, horizon]
+            return torch.linalg.vector_norm(uv, dim=-2).unsqueeze(-2)
+
+        def uv_to_direction(uv):
+            # assume uv to have shape [sequences, radars, 2, horizon]
+            angles = (torch.rad2deg(torch.arctan2(uv[..., 0, :], uv[..., 1, :])) + 360) % 360
+
+            return angles.unsqueeze(-2)
+
+        # compute speed and direction
+        model.test_results['test/predictions/direction'] = uv_to_direction(model.test_results['test/predictions/bird_uv'])
+        model.test_results['test/predictions/speed'] = uv_to_speed(model.test_results['test/predictions/bird_uv'])
+        model.test_results['test/measurements/direction'] = uv_to_direction(model.test_results['test/measurements/bird_uv'])
+        model.test_results['test/measurements/speed'] = uv_to_speed(model.test_results['test/measurements/bird_uv'])
+        model.test_results['test/masks/direction'] = model.test_results['test/masks/bird_uv']
+        model.test_results['test/masks/speed'] = model.test_results['test/masks/bird_uv']
+
+
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 50, 250, 1500])
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 150, 1500])
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 1500])
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed', 'radar'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='direction', groupby=['observed', 'night'], path=eval_path)
+
+
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 50, 250, 1500])
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 150, 1500])
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed', 'bird_bin'], path=eval_path, bins=[1, 1500])
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed', 'radar'], path=eval_path)
+        summarize_performance(model.test_results, cfg, var='speed', groupby=['observed', 'night'], path=eval_path)
     
     if cfg.task.get('store_test_results', True):
 
@@ -234,15 +272,17 @@ def prediction(trainer, model, cfg: DictConfig, ext=''):
 
     # load test data
     transform = get_transform(cfg)
-    test_data, context, seq_len = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)
-    # test_data = test_data[0]
+    test_data = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform)[0]
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     test_loader = instantiate(cfg.dataloader, test_data, batch_size=1, shuffle=False)
 
     model.horizon = cfg.model.test_horizon
-    print(f'config store fluxes: {cfg.model.store_fluxes}')
     model.store_fluxes = cfg.model.store_fluxes
+    
+    if cfg.task.predict_cells:
+        model.observation_model = None
+    
     trainer.predict(model, test_loader)
 
     pred_path = osp.join(cfg.output_dir, 'prediction')
