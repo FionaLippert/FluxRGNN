@@ -5,9 +5,9 @@ name: FluxRGNN
 
 coord_dim: 4
 embedding_dim: 32
-radar_embedding_dim: 8
+#radar_embedding_dim: 8
 radar2cell_n_hidden: 16
-radar2cell_n_layers: 1
+radar2cell_n_layers: 2
 n_edge_attr: 6
 
 training_coefs:
@@ -288,8 +288,8 @@ defaults:
   - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder
   - decoder: RecurrentDecoder
-  - radar2cell_model: KNNInterpolation #KNNInterpolation
-  - initial_model: KNNInterpolation #KNNInterpolation
+  - radar2cell_model: CorrectedKNNInterpolation #KNNInterpolation
+  - initial_model: CorrectedKNNInterpolation #KNNInterpolation
 
 #flux_model: flux_model/NumericalFluxes
 #source_sink_model: source_sink_model/SourceSink

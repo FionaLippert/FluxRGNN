@@ -1,5 +1,6 @@
 # @package task
-task_name: predict
+task_name: train_predict
 predict_cells: true
 n_cv_folds: 0
 cv_fold: 0
+store_test_results: true

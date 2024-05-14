@@ -23,8 +23,8 @@ env_vars:
   v_q10: 1
   v_q50: 1
   v_q90: 1
-  u10: 1
-  v10: 1
+  #u10: 1
+  #v10: 1
   tcc: 1
   tp: 1
   sp: 1
@@ -91,16 +91,16 @@ transforms:
     seed: ${seed}
 
 dropout_p: 0.0
-teacher_forcing: 0.0
-teacher_forcing_gamma: 1.0
-increase_horizon_rate: 0.1
+teacher_forcing: 1.0
+teacher_forcing_gamma: 0.95
+increase_horizon_rate: 0.0
 increase_horizon_start: 0
 
 
 force_zeros: false #true
 root_transformed_loss: false
 weight_exponent: 1.0 #0.75
-edge_type: hexagons
+edge_type: voronoi
 birds_per_km2: true
 
 regularizer_weight: 0.0 #0.01
@@ -120,8 +120,8 @@ defaults:
   - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder
   - decoder: RecurrentDecoder
-  - radar2cell_model: KNNInterpolation
-  - initial_model: KNNInterpolation
+  - radar2cell_model: ObservationCopy #KNNInterpolation
+  - initial_model: ObservationCopy #KNNInterpolation
 
 flux_model: null
 

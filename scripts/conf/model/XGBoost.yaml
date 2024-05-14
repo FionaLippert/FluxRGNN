@@ -1,6 +1,8 @@
 # @package model
 _target_: fluxrgnn.models.XGBoostForecast
 
+name: XGBoost
+
 coord_dim: 4
 
 test_vars:
@@ -15,8 +17,8 @@ env_vars:
   v_q10: 1
   v_q50: 1
   v_q90: 1
-  u10: 1
-  v10: 1
+  #u10: 1
+  #v10: 1
   tcc: 1
   tp: 1
   sp: 1

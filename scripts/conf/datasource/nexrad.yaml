@@ -1,15 +1,5 @@
 # @package datasource
 name: nexrad
-#years:
-#  - 2013
-#  - 2014
-#  - 2015
-#  - 2016
-#  - 2017
-#  - 2018
-#  - 2019
-#  - 2020
-#  - 2021
 train_years:
   - 2013
   - 2014
@@ -18,34 +8,25 @@ train_years:
   - 2017
   - 2018
   - 2019
+  - 2020
+  - 2021
 val_years:
   - 2019
 test_years:
-  - 2020
+  #- 2013
+  #- 2014
+  #- 2015
+  #- 2016
+  #- 2017
+  #- 2018
+  #- 2019
+  #- 2020
   - 2021
 years: ${merge:${datasource.train_years},${datasource.val_years},${datasource.test_years}}
 #val_train_split: 0.1
 env_files:
   - model_levels.nc
   - surface.nc
-#env_vars:
-#  - u
-#  - v
-#  - u10
-#  - v10
-#  - cc
-#  - tp
-#  - sp
-#  - t2m
-#  - t
-#  - q
-#  - sshf
-#  - night
-#  - dusk
-#  - dawn
-#  - dayofyear
-#  - solarpos
-#  - solarpos_dt
 use_buffers: True
 buffer: 450000
 observation_range: 35000

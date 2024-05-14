@@ -11,14 +11,13 @@ radar2cell_n_layers: 1
 n_edge_attr: 6
 
 training_coefs:
+  #fluxes: 1.0
   x: 1.0
-  bird_uv: 0.01
 test_vars:
   - x
   - bird_uv
 predict_vars:
   - x
-  - bird_uv
   - in_flux
   - out_flux
   - source_sink
@@ -30,8 +29,8 @@ env_vars:
   v_q10: 1
   v_q50: 1
   v_q90: 1
-  #u10: 1
-  #v10: 1
+  u10: 1
+  v10: 1
   tcc: 1
   tp: 1
   sp: 1
@@ -283,7 +282,7 @@ node_rnn:
 
 
 defaults:
-  - flux_model: NumericalFluxes
+  - flux_model: NNFluxes
   - source_sink_model: SourceSink
   - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder

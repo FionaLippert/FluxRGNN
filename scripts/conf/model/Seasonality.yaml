@@ -9,6 +9,8 @@ context: 24
 test_horizon: 72
 test_context: 24
 
+uv_threshold: 0
+
 test_vars:
   - x
   - bird_uv

@@ -1,14 +1,31 @@
 # @package task
 task_name: explain
-seqID: 18
+seqID: 30 #34 #1
+seqID_start: 31 # 1 September
+seqID_end: 76 # 15 October
+random_sample: true
+sample_idx: 0
+bg_reduction: all
 n_bg_samples: 10
-n_shap_samples: 1000
+n_shap_samples: 2 #16
 feature_names:
-  - u10
-  - v10
-  - t2m
-  - q
-  - tp
-  - cc
-  - sp
+  - u_q10
+  - u_q50
+  #- u_q90
+  #- v_q10
+  #- v_q50
+  #- v_q90
+  #- tcc
+  #- tp
+  #- sp
+  #- msl
+  #- t_q10
+  #- t_q50
+  #- t_q90
+  #- q_q10
+  #- q_q50
+  #- q_q90
+
+n_cv_folds: 0
+cv_fold: 0
 slurm_job: scripts/explain_forecast.job

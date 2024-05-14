@@ -8,7 +8,7 @@ radar_variables:
 static_cell_features:
   coords: ${model.coord_dim}
 dynamic_cell_features: ${model.env_vars}
-n_hidden: 32 #${model.n_hidden}
-n_fc_layers: 1
+n_hidden: ${model.radar2cell_n_hidden}
+n_fc_layers: ${model.radar2cell_n_layers} 
 activation: ${model.activation}
 dropout_p: ${model.dropout_p}
