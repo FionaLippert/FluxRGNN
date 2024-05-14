@@ -7,7 +7,6 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=FluxRGNN_voronoi
-  - model.location_encoder=null
   - model.increase_horizon_rate=0
   - model.teacher_forcing=1.0
   - model.teacher_forcing_gamma=0.95

@@ -7,25 +7,24 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - model=XGBoost
-  - model.pow_exponent=0.3333
-  - model.scale=0.1
+  - model.pow_exponent=1.0
+  - model.scale=0.001
   - model.xgboost.n_estimators=500
   - model.xgboost.max_depth=15
-  - model.xgboost.learning_rate=0.05
+  - model.xgboost.learning_rate=0.01
   - model.xgboost.min_child_weight=3
   - model.xgboost.subsample=0.7
-  - model.xgboost.gamma=0
+  - model.xgboost.gamma=1
   - model.train_settings.early_stopping_rounds=10
   - trainer.accelerator=cpu
   - device=local
   - model.max_t0=1
   - task=train_eval
   - task.store_test_results=true
-  - task.n_cv_folds=10
 method: grid
 metric:
   name: test/observed/x/raw/RMSE
   goal: minimize
 parameters:
-  task.cv_fold:
+  job_id:
     values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

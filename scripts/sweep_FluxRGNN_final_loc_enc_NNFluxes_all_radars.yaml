@@ -6,18 +6,20 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN_no_fluxes
-  #- model.location_encoder=null
+  - model=FluxRGNN_NNfluxes
+  - model.lr=1e-4
+  #- model.training_coefs.bird_uv=0.1
   - model.dropout_p=0.1
-  - trainer.max_epochs=500
+  - trainer.max_epochs=600
   - dataloader.batch_size=32
   - task=train_eval
   - task.store_test_results=true
-    #- task.n_cv_folds=10
 method: grid
 metric:
   name: val/unobserved/x/raw/MAE
   goal: minimize
 parameters:
   job_id:
-    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    values: [0, 1] #, 2, 3, 4, 5, 6, 7, 8, 9]
+  #model.train_coefs.bird_uv:
+  #  values: [0.0, 0.001, 0.01, 0.1, 1.0]

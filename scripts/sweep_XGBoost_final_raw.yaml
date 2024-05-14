@@ -8,7 +8,7 @@ command:
   - seed=1234
   - model=XGBoost
   - model.pow_exponent=1.0
-  - model.scale=0.01
+  - model.scale=0.001
   - model.xgboost.n_estimators=500
   - model.xgboost.max_depth=15
   - model.xgboost.learning_rate=0.01
