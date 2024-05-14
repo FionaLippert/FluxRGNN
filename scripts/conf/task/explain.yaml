@@ -1,30 +1,27 @@
 # @package task
 task_name: explain
-seqID: 30 #34 #1
+seqID: 34 #1
 seqID_start: 31 # 1 September
 seqID_end: 76 # 15 October
-random_sample: true
+random_sample: false
 sample_idx: 0
+explain_processes: true
 bg_reduction: all
 n_bg_samples: 10
-n_shap_samples: 2 #16
+n_shap_samples: 12
 feature_names:
-  - u_q10
-  - u_q50
-  #- u_q90
-  #- v_q10
-  #- v_q50
-  #- v_q90
-  #- tcc
-  #- tp
-  #- sp
-  #- msl
-  #- t_q10
-  #- t_q50
-  #- t_q90
-  #- q_q10
-  #- q_q50
-  #- q_q90
+  - u_q10+v_q10
+  - u_q50+v_q50
+  - u_q90+v_q90
+  - tcc
+  - tp
+  - sp+msl
+  - t_q10
+  - t_q50
+  - t_q90
+  - q_q10
+  - q_q50
+  - q_q90
 
 n_cv_folds: 0
 cv_fold: 0

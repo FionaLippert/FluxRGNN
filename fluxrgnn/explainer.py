@@ -31,10 +31,20 @@ class ForecastExplainer():
         else:
             raise Exception("background must have 3 or 4 dimensions")
 
-        self.n_samples, self.n_features, self.n_cells, self.T = self.background.shape
+        self.n_samples, _, self.n_cells, self.T = self.background.shape
         self.N = self.n_cells * self.T
 
+        # each feature name corresponds to one or more feature keys used to index the dataset 
         self.feature_names = feature_names
+        self.n_features = len(self.feature_names)
+
+        self.feature_idx_map = {}
+        offset = 0
+        for i, fn in enumerate(self.feature_names):
+            names = fn.split('+')
+            self.feature_idx_map[i] = range(offset, offset + len(names))
+            offset += len(names)
+        print(self.feature_idx_map)
 
         self.t0 = kwargs.get('t0', 0)
         self.horizon = self.forecast_model.horizon
@@ -98,12 +108,14 @@ class ForecastExplainer():
         indices = np.where(np.logical_not(binary_mask))[0]
 
         for fidx in indices:
-            name = self.feature_names[fidx]
-            fbg = self.background[:, fidx].reshape(self.n_samples * self.n_cells, -1, self.T)
 
-            masked_input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
+            names = self.feature_names[fidx].split('+')
+            for i, name in enumerate(names):
+                fidx_adjusted = self.feature_idx_map[fidx][i]
+                fbg = self.background[:, fidx_adjusted].reshape(self.n_samples * self.n_cells, -1, self.T)
+
+                masked_input_batch[self.node_store][name] = torch.tensor(fbg, dtype=input_batch[self.node_store][name].dtype,
                                                        device=input_batch[self.node_store][name].device)
-
 
         return masked_input_batch
 
@@ -227,7 +239,9 @@ def construct_background(dataset, feature_names, reduction='sampling', n_samples
     for graph_data in subset:
         features = []
         for name in feature_names:
-            features.append(graph_data[node_store][name])
+            # assume that combined features are concatenated with '+', e.g. 'sp+msl'
+            for sub_name in name.split('+'):
+                features.append(graph_data[node_store][sub_name])
         features = torch.stack(features, dim=0)
         background.append(features)
     background = torch.stack(background, dim=0) # shape [subset_size, n_features, n_cells, T]

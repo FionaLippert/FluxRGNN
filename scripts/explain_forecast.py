@@ -101,7 +101,7 @@ def explain(trainer, model, cfg: DictConfig):
     seqID_start = cfg.task.get('seqID_start', 0)
     seqID_end = cfg.task.get('seqID_end', -1)
 
-    test_data, normalization = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform, seqID_min=seqID_min, seqID_max=seqID_max)
+    test_data, normalization = dataloader.load_dataset(cfg, cfg.output_dir, split='test', transform=transform, seqID_min=seqID_start, seqID_max=seqID_end)
     test_data = torch.utils.data.ConcatDataset(test_data)
 
     feature_names = OmegaConf.to_object(cfg.task)['feature_names']
@@ -139,14 +139,15 @@ def explain(trainer, model, cfg: DictConfig):
     explanation['local_night'] = input_graph[expl.node_store]['local_night'][:, expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
 
     for name in feature_names:
-        values = input_graph[expl.node_store][name][..., expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
+        for sub_name in name.split('+'):
+            values = input_graph[expl.node_store][sub_name][..., expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
 
         # reverse normalization
         values = values + 1
         values = values / 2.0
-        values = values * (normalization.max(name) - normalization.min(name))
-        values = values + normalization.min(name)
-        explanation[name] = values
+        values = values * (normalization.max(sub_name) - normalization.min(sub_name))
+        values = values + normalization.min(sub_name)
+        explanation[sub_name] = values
 
     # TODO: also scale outputs correctly (bird_scale and uv_scale)
 
