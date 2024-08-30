@@ -1743,6 +1743,7 @@ class LocationEncoder(torch.nn.Module):
         inputs = torch.cat([cell_data.get(feature).reshape(cell_data.num_nodes, -1) for
                                           feature in self.static_cell_features], dim=1)
 
+        #print('loc enc input shape:', inputs.shape)
         # input = self.input_embedding(input)
 
         embeddings = self.location_encoder(inputs, edge_index=cell_data.edge_index, edge_attr=cell_data.edge_attr) # [n_cells, n_hidden]
@@ -3197,6 +3198,9 @@ class RecurrentEncoder(torch.nn.Module):
         self.static_cell_features = {} if static_cell_features is None else static_cell_features
         #print(static_cell_features)
         self.dynamic_cell_features = {} if dynamic_cell_features is None else dynamic_cell_features
+        
+
+        print('dynamic cell features', self.dynamic_cell_features)
 
         n_inputs = loc_enc_dim
         self.radar2cell_model = radar2cell_model(loc_enc_dim=loc_enc_dim)

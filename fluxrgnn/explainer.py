@@ -32,6 +32,8 @@ class ForecastExplainer():
             raise Exception("background must have 3 or 4 dimensions")
 
         self.n_samples, _, self.n_cells, self.T = self.background.shape
+
+        print(f'use {self.n_samples} background samples')
         self.N = self.n_cells * self.T
 
         # each feature name corresponds to one or more feature keys used to index the dataset 
@@ -53,11 +55,17 @@ class ForecastExplainer():
 
         self.explain_processes = kwargs.get('explain_processes', True)
         if self.explain_processes:
-            self.output_shape = (self.n_cells, 5, self.horizon) 
-            self.output_names = ['x', 'source', 'sink', 'mtr', 'direction']
+            self.n_outputs = 6
+            self.output_shape = (self.n_cells, self.n_outputs, self.horizon) 
+            self.output_names = ['x', 'source', 'sink', 'mtr', 'direction', 'speed']
+            self.wrap_vals = np.zeros(self.output_shape)
+            self.wrap_vals[:, -1, :] = 180
         else:
-            self.output_shape = (self.n_cells, 1, self.horizon)
+            self.n_outputs = 1
+            self.output_shape = (self.n_cells, self.n_outputs, self.horizon)
             self.output_names = ['x']
+            self.wrap_vals = np.zeros(self.output_shape)
+
         self.output_dim = prod(self.output_shape)
 
 
@@ -70,8 +78,9 @@ class ForecastExplainer():
         """
 
         forecast = self.forecast_model.forecast(input_graph, self.horizon, t0=self.t0) # [cells, horizon]
-
-        prediction = forecast['x'][..., :self.horizon]
+        for var in forecast:
+            forecast[var] = self.forecast_model.transforms.transformed2raw(forecast[var], var)[..., :self.horizon]
+        prediction = forecast['x']
 
         if self.explain_processes:
             #source = torch.stack(self.forecast_model.node_sink, dim=-1)
@@ -90,7 +99,7 @@ class ForecastExplainer():
             #fluxes = prediction * velocities
             mtr = prediction * speed
 
-            prediction = torch.cat([prediction, source, sink, mtr, direction], dim=1) # [n_samples * n_cells, 5, horizon]
+            prediction = torch.cat([prediction, source, sink, mtr, direction, speed], dim=1) # [n_samples * n_cells, 5, horizon]
 
         return prediction #.reshape(-1)
 
@@ -135,71 +144,74 @@ class ForecastExplainer():
 
         input_batch = Batch.from_data_list([copy.copy(input_graph) for _ in range(self.n_samples)])
         
+        # boundary_nodes = input_graph[self.node_store].boundary #.view(-1, 1)
+        # inner_nodes = torch.logical_not(boundary_nodes)
+
+        night_time = input_graph[self.node_store].local_night[:, self.t0 + self.context: (self.t0 + self.context + self.horizon)]
+        night_time = night_time.unsqueeze(1).repeat(1, self.n_outputs, 1)
+        # night_time = night_time[inner_nodes, :, :] # [inner_cells, 1, horizon]
+
+        output_dim = night_time.sum()
+
         def f(binary_masks):
             # maps feature masks to model outputs and averages over background samples
             n_masks = binary_masks.shape[0]
-            out = torch.zeros((n_masks, self.output_dim), device=self.forecast_model.device)
+            out = torch.zeros((n_masks, output_dim), device=self.forecast_model.device)
             for i in range(n_masks):
                 print(f'retain {binary_masks[i].sum()} features: {binary_masks[i]}')
                 masked_input = self.mask_features(binary_masks[i], input_batch)
                 pred = self.predict(masked_input) # [n_samples * n_cells, n_outputs, horizon]
                 pred = pred.reshape(self.n_samples, -1, pred.size(-2), pred.size(-1))
+                # pred = pred[:, inner_nodes] # [n_samples, inner_cells, n_outputs, horizon]
 
-                if 'direction' in self.output_names:
-                    # find minimum angle across background samples
+                if self.n_samples > 1 and 'direction' in self.output_names:
                     directions = pred[:, :, -1, :]
-                    min_dir = directions.min(0) # [n_cells, horizon]
 
-                    # find angles that need to wrap around
-                    wrap_idx = (directions - min_dir.unsqueeze(0)) > 180
-                    directions[wrap_idx] -= 360
-
-                    # write directions back to pred
-                    pred[:, :, -1, :] = directions
+                    # compute circular mean
+                    mean_sin = torch.sin(torch.deg2rad(directions)).mean(0)
+                    mean_cos = torch.cos(torch.deg2rad(directions)).mean(0)
+                    mean_dir = torch.rad2deg(torch.arctan2(mean_sin, mean_cos))
 
                     # average over background
                     pred = pred.mean(0)
+                    
+                    # write directions back to pred
+                    pred[:, -1, :] = mean_dir
 
-                    # make sure final directions are between 0 and 360 degrees
-                    pred[:, -1, :] = (pred[:, -1, :] + 360) % 360
                 else:
                     pred = pred.mean(0)
+
+                # only explain night-time predictions to save computations
+                out[i] = pred[night_time].reshape(-1) # n_cells * n_outputs * night_time
                 
-                out[i] = pred.reshape(-1)
-                # out[i] = unbatch(pred, masked_input[self.node_store].batch, dim=0) # [n_samples, n_cells * horizon]
-                # for j in range(self.n_samples):
-                #     masked_input = self.mask_features(binary_masks[i], input_graph, sample_idx=j)
-                #     pred = self.predict(masked_input)
-                #     out[i, j] = pred
-                # TODO: get batch for each node and reshape to size [samples, cells * time] (use ptg.utils.unbatch)
-
-            #out /= self.n_samples
-            # print(f'std over predictions = {out.std(1)}')
-            # out = out.mean(1) # take sample mean
-
-            #return out # shape [n_masks, N]
             return out.cpu().numpy()
 
 
         # setup explainer (compute expectation over background)
         mask_all = np.zeros((1, self.n_features)) # mask for overall background
-        explainer = shap.KernelExplainer(f, mask_all)
+        wrap_vals = self.wrap_vals[night_time.cpu().numpy()].flatten()
+        explainer = shap.KernelExplainer(f, mask_all, wrap_vals=wrap_vals)
 
-        #explainer = KernelExplainer(f, self.n_features, self.forecast_model.device)
-
-        # compute SHAP values
         mask_none = np.ones((1, self.n_features)) # mask for actual prediction
-        shap_values = explainer.shap_values(mask_none, nsamples=n_samples, silent=True)
-        shap_values = np.stack(shap_values, axis=0)
+        actual_pred = f(mask_none)[0]
 
-        result = {'shap_values': shap_values.reshape(*self.output_shape, self.n_features),
-                 'expected_values': explainer.expected_value.reshape(self.output_shape),
-                 'actual_values': explainer.fx.reshape(self.output_shape),
-                 'permuted_values': explainer.ey.reshape(-1, *self.output_shape),
+        result = {
+                 'expected_values': explainer.expected_value, #.reshape(self.output_shape),
+                 'actual_values': actual_pred,
                  'feature_names': self.feature_names,
-                 'output_names': self.output_names
+                 'output_names': self.output_names,
+                 'mask': night_time.cpu().numpy()
                 }
-        
+
+        if n_samples > 0:
+            # compute SHAP values
+            mask_none = np.ones((1, self.n_features)) # mask for actual prediction
+            shap_values = explainer.shap_values(mask_none, nsamples=n_samples, silent=True)
+            shap_values = np.stack(shap_values, axis=0)
+
+            result['shap_values'] = shap_values
+            result['actual_values_shap'] = explainer.fx
+
         #for name in self.feature_names:
         #    result[name] = input_graph[self.node_store][name][:, self.t0 + self.context: self.t0 + self.context + self.horizon]
 
@@ -228,6 +240,7 @@ def construct_background(dataset, feature_names, reduction='sampling', n_samples
     node_store = kwargs.get('node_store', 'cell')
 
     if reduction == 'sampling':
+        print(f'take {n_samples} background samples')
         # use a limited number of samples as background
         subset = random_split(dataset, (n_samples, len(dataset) - n_samples),
                               generator=torch.Generator().manual_seed(seed))[0]
@@ -237,6 +250,7 @@ def construct_background(dataset, feature_names, reduction='sampling', n_samples
 
     background = []
     for graph_data in subset:
+        print(f'background tidx range = {graph_data[node_store].tidx.min()} - {graph_data[node_store].tidx.max()}')
         features = []
         for name in feature_names:
             # assume that combined features are concatenated with '+', e.g. 'sp+msl'

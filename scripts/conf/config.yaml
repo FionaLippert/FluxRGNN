@@ -8,11 +8,11 @@ defaults:
   - device: cluster
   - logger: wandb
 job_id: 0
-season: fall
+season: spring #fall
 seed: 1234
 model_seed: ${seed}
 root_transform: 0
-missing_data_threshold: 0.1
+missing_data_threshold: 0.1 #1.0 #0.1
 t_unit: 1H
 fixed_t0: false
 data_perc: 1.0

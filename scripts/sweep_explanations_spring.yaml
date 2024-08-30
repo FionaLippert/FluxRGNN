@@ -1,0 +1,25 @@
+program: explain_forecast.py
+name: sweep_explanations
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - seed=1234
+  - model=FluxRGNN
+  - model.horizon=24
+  - model.scale=0.002
+  - season=spring
+  - dataloader.batch_size=32
+  - task=explain
+  - task.n_seq_samples=10
+  - model.load_states_from=flippert/FluxRGNN_hex_all_years_all_radars_uv_coef_01_spring/model-4cqddps4:v9
+    #- +datasource.load_normalization_from=/home/flippert/FluxRGNN/scripts/outputs/2024-07-17/15-48-24/results/normalization.pkl
+  - missing_data_threshold=1.0
+method: grid
+metric:
+  name: val/unobserved/x/raw/MAE
+  goal: minimize
+parameters:
+  task.sample_idx:
+    values: [0] #, 10, 20, 30, 40, 50, 60, 70, 80, 90]

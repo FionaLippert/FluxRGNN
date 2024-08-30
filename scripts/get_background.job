@@ -3,9 +3,10 @@
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=128
-#SBATCH --job-name=fluxrgnn_sweep
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus=0
+#SBATCH --job-name=background
+#SBATCH --time=01:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
@@ -14,5 +15,11 @@ cd $HOME/FluxRGNN/scripts
 
 which python
 
-wandb agent $1
+nvidia-smi
+
+OVERRIDES=$1
+
+echo $OVERRIDES
+
+srun python get_background.py $OVERRIDES
 

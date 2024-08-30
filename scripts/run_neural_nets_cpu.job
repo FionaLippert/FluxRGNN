@@ -3,7 +3,7 @@
 #SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=64
 #SBATCH --job-name=fluxrgnn_training
 #SBATCH --time=10:00:00
 #SBATCH --output=slurm_output_%A_%a.out

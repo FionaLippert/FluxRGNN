@@ -92,16 +92,17 @@ def summarize_performance(test_results, cfg, var='x', groupby=[], bins=[0, 150, 
     df_eval = grouped['residual'].aggregate(res_to_rmse).reset_index(name='RMSE')
     df_eval['MAE'] = grouped['residual'].aggregate(res_to_mae).reset_index(name='MAE')['MAE']
     df_eval['ME'] = grouped['residual'].aggregate(np.mean).reset_index(name='ME')['ME']
-    df_eval['SMAPE'] = [df_to_smape(df_sub) for group, df_sub in grouped]
-    df_eval['MAPE'] = [df_to_mape(df_sub) for group, df_sub in grouped]
+    #df_eval['SMAPE'] = [df_to_smape(df_sub) for group, df_sub in grouped]
+    #df_eval['MAPE'] = [df_to_mape(df_sub) for group, df_sub in grouped]
     #df_rmse_pow = df.groupby(['model', 'fold', 'quantile', 'observed'])['residual_pow'].aggregate(res_to_rmse).reset_index(name='RMSE')
     #df_mae_pow = df.groupby(['model', 'fold', 'quantile', 'observed'])['residual_pow'].aggregate(res_to_mae).reset_index(name='MAE')
 
-    if var == 'x':
-        df_eval['TP'] = [df_to_tp(df_sub, thr) for group, df_sub in grouped]
-        df_eval['TN'] = [df_to_tn(df_sub, thr) for group, df_sub in grouped]
-        df_eval['FP'] = [df_to_fp(df_sub, thr) for group, df_sub in grouped]
-        df_eval['FN'] = [df_to_fn(df_sub, thr) for group, df_sub in grouped]
+    #if var == 'x':
+
+    #    df_eval['TP'] = [df_to_tp(df_sub, thr) for group, df_sub in grouped]
+    #    df_eval['TN'] = [df_to_tn(df_sub, thr) for group, df_sub in grouped]
+    #    df_eval['FP'] = [df_to_fp(df_sub, thr) for group, df_sub in grouped]
+    #    df_eval['FN'] = [df_to_fn(df_sub, thr) for group, df_sub in grouped]
 
     if path is None:
         path = osp.join(cfg.output_dir, 'evaluation')

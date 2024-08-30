@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=128
 #SBATCH --gpus=0
 #SBATCH --job-name=explain
-#SBATCH --time=010:00:00
+#SBATCH --time=4:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn

@@ -55,6 +55,8 @@ class Normalization:
         measurement_df = pd.concat(all_measurements)
 
         self.feature_stats = feature_df.describe()
+        print(self.feature_stats)
+        print(self.feature_stats.columns)
         self.feature_stats.loc['absmax'] = feature_df[self.feature_stats.columns].apply(lambda x: np.max(np.abs(x)))
 
         self.measurement_stats = measurement_df.describe()
@@ -894,7 +896,7 @@ class SensorHeteroData(HeteroData):
 
 
 
-def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, seqID_min=0, seqID_max=-1):
+def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, seqID_min=0, seqID_max=-1, normalization=None):
     """
     Load training or testing data, initialize normalizer, setup and save configuration
 
@@ -918,9 +920,9 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, s
 
     preprocessed_dirname = f'{cfg.t_unit}_{cfg.model.edge_type}' + res_info
 
-    processed_dirname = f'buffers={cfg.datasource.use_buffers}_log={cfg.model.use_log_transform}_' \
-                        f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
+    processed_dirname = f'maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}_' \
+                        f'missing_thr={cfg.missing_data_threshold}_' \
                         f'seed={cfg.seed}' + res_info
                         #f'fold={n_cv_folds}-{cv_fold}_seed={cfg.seed}'
 
@@ -940,8 +942,11 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, s
     
     data_dir = osp.join(cfg.device.root, 'data')
 
-    norm_years = cfg.datasource['train_years']
-    normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    if normalization is None:
+        print('setup feature normalization')
+        norm_years = cfg.datasource['train_years']
+        normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
+    
     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
         OmegaConf.save(config=cfg, f=f)
     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:

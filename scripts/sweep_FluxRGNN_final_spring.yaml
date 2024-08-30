@@ -1,0 +1,25 @@
+program: run_neural_nets.py
+name: sweep_FluxRGNN
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args_no_hyphens}
+  - seed=1234
+  - season=spring
+  - model=FluxRGNN
+  - model.lr=1e-4
+  - model.training_coefs.bird_uv=0.1
+  - model.scale=0.005
+  - model.dropout_p=0.1
+  - trainer.max_epochs=300
+  - dataloader.batch_size=32
+  - task=train_eval
+  - task.store_test_results=true
+method: grid
+metric:
+  name: val/unobserved/x/raw/MAE
+  goal: minimize
+parameters:
+  job_id:
+    values: [0] #[0, 1, 2, 3, 4] #, 2, 3, 4, 5, 6, 7, 8, 9]

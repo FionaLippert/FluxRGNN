@@ -12,7 +12,7 @@ n_edge_attr: 6
 
 training_coefs:
   x: 1.0
-  bird_uv: 0.01
+  bird_uv: 0.1
 test_vars:
   - x
   - bird_uv
@@ -112,7 +112,9 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 0.01 #1.0
+# scale: 0.0025 (1/99.9 percentile for night-time bird densities in spring)
+# scale: ???
+length_scale: 0.01 # (roughly 1/99.9 percentile of absolute uv during night time)
 flux_scale: ${eval:'${model.scale} * ${model.length_scale}'} #0.00001
 transforms:
 #  - _target_: fluxrgnn.transforms.LogTransform

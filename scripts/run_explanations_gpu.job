@@ -3,10 +3,10 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --gpus=1
-#SBATCH --job-name=fluxrgnn_training
-#SBATCH --time=12:00:00
+#SBATCH --job-name=explain
+#SBATCH --time=03:00:00
 #SBATCH --output=slurm_output_%A_%a.out
 
 source activate fluxrgnn
@@ -21,5 +21,5 @@ OVERRIDES=$1
 
 echo $OVERRIDES
 
-srun python run_neural_nets.py $OVERRIDES
+srun python explain_forecast.py $OVERRIDES
 

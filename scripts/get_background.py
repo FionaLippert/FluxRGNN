@@ -134,34 +134,14 @@ def explain(trainer, model, cfg: DictConfig):
     
     
     n_nights = len(test_data)
-
-    sample_idx_start = cfg.task.get('sample_idx', 0)
-    n_seq_samples = cfg.task.get('n_seq_samples', 1)
-    
-    if n_seq_samples == 'all':
-        sample_idx_start = 0
-        n_seq_samples = n_nights
-
-    sample_idx = range(sample_idx_start, sample_idx_start + n_seq_samples)
-    
-    if cfg.task.random_sample: # or 'seqID' not in cfg.task:
-        # randomly sample a sequence
-        rng = np.random.default_rng(cfg.seed)
-        random_nights = rng.permutation(n_nights)
-        idx_list = random_nights[sample_idx]
-    else:
-        # idx_list = [max(0, cfg.task.seqID - seqID_start)]
-        # select sequences sequentially
-        idx_list = np.arange(n_nights)[sample_idx]
-
+    print(f'load background for {n_nights} nights')
     model.horizon = cfg.model.horizon
 
-    for idx in idx_list:
+    all_backgrounds = []
+
+    for idx in range(n_nights):
         # ID in overall dataset
         seqID = seqID_list[idx]
-
-        print(f'Explain idx {idx}, night {seqID}')
-        print(f'Considered features: {feature_names}')
 
         input_graph = test_data[idx]
 
@@ -176,48 +156,33 @@ def explain(trainer, model, cfg: DictConfig):
         end = timer()
         print(f'Background loading took {end - start} seconds')
 
+        all_backgrounds.append(background)
 
-        start = timer()
-        expl = explainer.ForecastExplainer(model, background, feature_names, explain_processes=cfg.task.explain_processes)
-        explanation = expl.explain(input_graph, n_samples=n_shap_samples)
-        end = timer()
-        print(f'Explanation took {end - start} seconds')
+    all_backgrounds = torch.stack(all_backgrounds, dim=0)
 
-        explanation['local_night'] = input_graph[expl.node_store]['local_night'][:, expl.t0 + expl.context: expl.t0 + expl.context + expl.horizon]
+    fidx = 0
+    for name in feature_names:
+        for sub_name in name.split('+'):
+            values = all_backgrounds[:, :, fidx]
 
-        explanation['background'] = background
+            # reverse normalization
+            values = values + 1
+            values = values / 2.0
+            values = values * (normalization.max(sub_name) - normalization.min(sub_name))
+            values = values + normalization.min(sub_name)
+            all_backgrounds[:, :, fidx] = values
+
+            fidx += 1
 
 
-        fidx = 0
-        for name in feature_names:
-            for sub_name in name.split('+'):
-                values = input_graph[expl.node_store][sub_name][..., expl.t0: expl.t0 + expl.context + expl.horizon]
+    results = {'background': all_backgrounds}
+    bg_path = osp.join(cfg.output_dir, f'background')
+    utils.dump_outputs(results, bg_path)
 
-                explanation[sub_name] = transformed2raw(values, normalization, sub_name)
-
-                explanation['background'][:, fidx] = transformed2raw(
-                        explanation['background'][:, fidx],
-                        normalization, sub_name
-                )
-                fidx += 1
-
-        expl_path = osp.join(cfg.output_dir, f'explanation_{idx}')
-        utils.dump_outputs(explanation, expl_path)
-
-        if isinstance(trainer.logger, WandbLogger):
-            artifact = wandb.Artifact(f'explanation-{idx}-{trainer.logger.version}', type='explanation')
-            artifact.add_dir(expl_path)
-            wandb.run.log_artifact(artifact)
-
-def transformed2raw(values, normalization, var_name):
-    # reverse normalization
-    values = values + 1
-    values = values / 2.0
-    values = values * (normalization.max(var_name) - normalization.min(var_name))
-    values = values + normalization.min(var_name)
-
-    return values
-
+    if isinstance(trainer.logger, WandbLogger):
+        artifact = wandb.Artifact(f'background-{trainer.logger.version}', type='background')
+        artifact.add_dir(bg_path)
+        wandb.run.log_artifact(artifact)
 
 
 if __name__ == "__main__":
