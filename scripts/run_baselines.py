@@ -2,7 +2,6 @@ from fluxrgnn import dataloader, utils
 import torch
 from torch.utils.data import random_split, Subset
 from omegaconf import DictConfig, OmegaConf
-import hydra
 import pickle
 import os.path as osp
 import os

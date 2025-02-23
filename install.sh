@@ -2,8 +2,9 @@
 
 # install dependencies
 echo "Installing environment..."
+conda config --set channel_priority strict
 conda env create -f environment.yml
-conda activate fluxrgnn
+source activate fluxrgnn
 
 # install python package
 echo "Installing FluxRGNN package"

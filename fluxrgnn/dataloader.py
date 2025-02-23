@@ -126,6 +126,7 @@ class SeasonalData(InMemoryDataset):
 
         self.season = kwargs.get('season')
         self.year = str(year)
+
         self.data_source = kwargs.get('data_source', 'radar')
         self.use_buffers = kwargs.get('use_buffers', False)
 
@@ -135,7 +136,7 @@ class SeasonalData(InMemoryDataset):
 
         super(SeasonalData, self).__init__(self.root, transform, pre_transform)
 
-        # run self.process() to generate dataset
+        # generate dataset if it does not exist yet
         self.data, self.slices = torch.load(self.processed_paths[0])
 
         # save additional info
@@ -728,6 +729,60 @@ class RadarHeteroData(InMemoryDataset):
         return dynamic_feature_df
 
 
+    def compute_fluxes(self, data, G):
+        """Estimate fluxes across Voronoi faces based on radar MTR"""
+
+        fluxes = []
+        mtr = []
+        for i, j, e_data in G.edges(data=True):
+            vid_i = data['birds_km2'][i]
+            vid_j = data['birds_km2'][j]
+            vid_i[np.isnan(vid_i)] = vid_j[np.isnan(vid_i)]
+            vid_j[np.isnan(vid_j)] = vid_i[np.isnan(vid_j)]
+
+            dd_i = data['direction'][i]
+            dd_j = data['direction'][j]
+            dd_i[np.isnan(dd_i)] = dd_j[np.isnan(dd_i)]
+            dd_j[np.isnan(dd_j)] = dd_i[np.isnan(dd_j)]
+
+            ff_i = data['speed'][i]
+            ff_j = data['speed'][j]
+            ff_i[np.isnan(ff_i)] = ff_j[np.isnan(ff_i)]
+            ff_j[np.isnan(ff_j)] = ff_i[np.isnan(ff_j)]
+
+            vid_interp = (vid_i + vid_j) / 2
+            dd_interp = ((dd_i + 360) % 360 + (dd_j + 360) % 360) / 2
+            ff_interp = (ff_i + ff_j) / 2
+            length = e_data.get('face_length', 1)
+            fluxes.append(compute_flux(vid_interp, ff_interp, dd_interp, e_data['angle'], length))
+            mtr.append(compute_flux(vid_interp, ff_interp, dd_interp, e_data['angle'], 1))
+        fluxes = np.stack(fluxes, axis=0)
+        mtr = np.stack(mtr, axis=0)
+
+        return fluxes, mtr
+
+    def importance_sampling(self, data, valid_idx):
+        """
+        Use importance sampling to reduce bias towards low migration intensity.
+
+        Importance weights are computed based on total migration intensities per sequence.
+        """
+
+        agg = data['targets'].reshape(-1, data['targets'].shape[-1]).sum(0)
+
+        # define importance weights
+        thr = np.quantile(agg, 0.8)
+        weight_func = lambda x: 1 - np.exp(-x / thr)
+        weights = weight_func(agg)
+        weights /= weights.sum()
+
+        # resample sequences according to importance weights
+        n_seq = int(self.data_perc * valid_idx.sum())
+        seq_index = self.rng.choice(np.arange(agg.size), n_seq, p=weights, replace=True)
+
+        return n_seq, seq_index
+
+
 class SensorData(Data):
     """Graph data object where reverse edges are treated the same as the regular 'edge_index'."""
 
@@ -916,7 +971,6 @@ def load_seasonal_dataset(cfg: DictConfig, output_dir: str, split: str, transfor
             for year in years]
 
     return data
-
 
 
 

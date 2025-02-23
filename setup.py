@@ -12,7 +12,7 @@ with open('LICENSE') as f:
 
 setup(
     name='fluxrgnn',
-    version='0.1.0',
+    version='1.1.0',
     description='Spatio-temporal modeling framework for large-scale migration forecasts based on static sensor network data ',
     long_description=readme,
     author='Fiona Lippert',

@@ -1,7 +1,7 @@
 # @package model
 name: LocalLSTM
 
-n_hidden: 128
+n_hidden: 64
 n_lstm_layers: 1
 
 context: 24
@@ -9,8 +9,8 @@ horizon: 48
 test_horizon: 72
 
 epochs: 300
-batch_size: 4
-lr: 1e-5
+batch_size: 8
+lr: 3e-5
 lr_decay: 300
 lr_gamma: 1.0
 early_stopping: true
@@ -22,7 +22,7 @@ teacher_forcing_gamma: 0.95
 predict_delta: true
 force_zeros: false
 use_encoder: true
-use_uv: false
+use_uv: true
 root_transformed_loss: false
 edge_type: none
 coord_dim: 2

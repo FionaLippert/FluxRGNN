@@ -3671,6 +3671,7 @@ def distance(x1, y1, x2, y2):
     """
     return np.linalg.norm(np.array([x1-x2, y1-y2])) / 10**3
 
+
 def MSE(output, gt):
     """Compute mean squared error."""
     return torch.mean((output - gt)**2)

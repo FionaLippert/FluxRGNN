@@ -2,11 +2,10 @@ name: fluxrgnn
 channels:
   - pytorch
   - pyg
-  - anaconda
   - conda-forge
   - nvidia
 dependencies:
-  - python=3.9
+  - python>=3.9
   - pip
   - numpy
   - scipy
@@ -21,15 +20,9 @@ dependencies:
   - scikit-learn
   - pygam
   - yaml
-  - hydra-core
+  - hydra-core>=1.1
   - wandb
   - pandas
   - matplotlib
   - pip:
     - torch-geometric-temporal
-  #- notebook
-  #- seaborn
-  #- geopandas
-  #- cartopy
-  #- geoplot
-  #- shapely

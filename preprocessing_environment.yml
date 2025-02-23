@@ -1,0 +1,40 @@
+channels:
+  - pytorch
+  - pyg
+  - conda-forge
+  - anaconda
+dependencies:
+   - python>=3.8.3
+   - numpy
+   - scipy
+   - networkx
+   - torchvision
+   - cudatoolkit=10.2
+   - pytorch
+   - pyg
+   - scikit-learn
+   - pygam
+   - ruamel.yaml
+   - yaml
+   - hydra-core>=1.1
+   - pandas
+   - matplotlib
+   - ipykernel
+   - seaborn
+   - fiona
+   - geopandas
+   - cartopy
+   - geoplot
+   - shapely
+   - tqdm
+   - pip
+   - geopy
+   - xarray
+   - rioxarray
+   - pyproj
+   - descartes
+   - pip:
+      - geovoronoi==0.3.0
+      - pvlib==0.8.1
+      - cdsapi
+
