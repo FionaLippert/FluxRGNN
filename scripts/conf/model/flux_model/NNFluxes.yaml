@@ -1,4 +1,5 @@
 # @package model.flux_model
+# directly predict fluxes between cells
 _target_: fluxrgnn.models.Fluxes
 edge_features:
   edge_attr: ${model.n_edge_attr}

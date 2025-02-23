@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - model.lr=1e-4
   - model.n_hidden=128
   - model.flux_model.n_fc_layers=1

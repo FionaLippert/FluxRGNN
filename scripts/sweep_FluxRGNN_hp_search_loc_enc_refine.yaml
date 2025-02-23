@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - trainer.max_epochs=500
   - trainer.log_every_n_steps=100
   - trainer.check_val_every_n_epoch=10

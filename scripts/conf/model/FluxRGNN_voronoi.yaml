@@ -1,4 +1,5 @@
 # @package model
+# original FluxRGNN model on Voronoi tessellation
 _target_: fluxrgnn.models.FluxRGNN
 
 name: FluxRGNN
@@ -31,28 +32,25 @@ env_vars:
   tp: 1
   sp: 1
   msl: 1
-  #t2m: 1
   t_q10: 1
   t_q50: 1
   t_q90: 1
   q_q10: 1
   q_q50: 1
   q_q90: 1
-  #sshf: 1
   night: 1
   dusk: 1
   dawn: 1
   dayofyear: 1
   solarpos: 1
   solarpos_dt: 1
-  #frac_night_fw: 1
-  #frac_night_bw: 1
 
 permute_env_vars: []
 
 n_hidden: 128 
 
 max_t0: ${datasource.tidx_step}
+max_t0_test: 1
 context: 24
 horizon: 48
 min_horizon: 2
@@ -77,7 +75,7 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 0.01 #1.0
+length_scale: 0.01
 flux_scale: ${eval:'${model.scale} * ${model.length_scale}'} #0.00001
 transforms:
 #  - _target_: fluxrgnn.transforms.LogTransform
@@ -110,13 +108,13 @@ increase_horizon_rate: 0.0
 increase_horizon_start: 0
 
 
-force_zeros: false #true
+force_zeros: false
 root_transformed_loss: false
-weight_exponent: 1.0 #0.75
+weight_exponent: 1.0
 edge_type: voronoi
 birds_per_km2: true
 
-regularizer_weight: 0.0 #0.01
+regularizer_weight: 0.0
 
 activation:
   _target_: torch.nn.ReLU #LeakyReLU

@@ -4,6 +4,7 @@ _target_: fluxrgnn.models.RadarToCellForecast
 name: Radar2Cell
 
 max_t0: ${datasource.tidx_step}
+max_t0_test: 1
 horizon: 48
 context: 24
 test_horizon: 72

@@ -1,4 +1,5 @@
 # @package model.flux_model
+# predict velocities and use numerical upwind scheme to compute fluxes
 _target_: fluxrgnn.models.NumericalFluxes
 static_cell_features:
   coords: ${model.coord_dim}

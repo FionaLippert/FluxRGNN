@@ -1,12 +1,13 @@
 # @package model
-# original FluxRGNN on Voronoi tessellation with numerical instead of NN fluxes
+# FluxRGNN+ with NN correction of radar2cell interpolation
 _target_: fluxrgnn.models.FluxRGNN
 
-name: FluxRGNN numerical fluxes
+name: FluxRGNN+ corrected KNN
 
 coord_dim: 4
 embedding_dim: 32
-radar_embedding_dim: 8
+radar2cell_n_hidden: 16
+radar2cell_n_layers: 2
 n_edge_attr: 6
 
 training_coefs:
@@ -46,7 +47,6 @@ env_vars:
   solarpos: 1
   solarpos_dt: 1
 
-
 permute_env_vars: []
 
 n_hidden: 128 
@@ -63,12 +63,11 @@ store_fluxes: false
 lr: 1e-4
 lr_decay: 1.0
 lr_schedulers:
-        - _target_: torch.optim.lr_scheduler.ConstantLR
+        - _target_: torch.optim.lr_scheduler.CosineAnnealingLR
           _partial_: true
-          factor: 1.0
-          total_iters: ${trainer.max_epochs}
+          T_max: ${trainer.max_epochs}
+          eta_min: ${eval:'${model.lr} * ${model.lr_decay}'} 
 lr_milestones: []
-
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
@@ -77,7 +76,7 @@ optimizer:
 use_log_transform: false
 log_offset: 0.1
 scale: 0.001
-length_scale: 0.01 #1.0
+length_scale: 0.01
 flux_scale: ${eval:'${model.scale} * ${model.length_scale}'} #0.00001
 transforms:
 #  - _target_: fluxrgnn.transforms.LogTransform
@@ -103,17 +102,17 @@ transforms:
     cv_fold: ${task.cv_fold}
     seed: ${seed}
 
-dropout_p: 0.0
-teacher_forcing: 1.0
-teacher_forcing_gamma: 0.95
-increase_horizon_rate: 0.0
+dropout_p: 0.1
+teacher_forcing: 0.0
+teacher_forcing_gamma: 1.0
+increase_horizon_rate: 0.1
 increase_horizon_start: 0
 
 
 force_zeros: false
 root_transformed_loss: false
 weight_exponent: 1.0
-edge_type: voronoi
+edge_type: hexagons
 birds_per_km2: true
 
 regularizer_weight: 0.0
@@ -137,9 +136,8 @@ defaults:
   - location_encoder: LocationEncoder
   - encoder: RecurrentEncoder
   - decoder: RecurrentDecoder
-  - radar2cell_model: ObservationCopy
-  - initial_model: ObservationCopy
+  - radar2cell_model: CorrectedKNNInterpolation #KNNInterpolation
+  - initial_model: CorrectedKNNInterpolation #KNNInterpolation
 
-location_encoder: null
 
 load_states_from: null

@@ -7,7 +7,7 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - season=spring
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - model.dropout_p=0.1
   - model.training_coefs.bird_uv=0.1
   - missing_data_threshold=0.1

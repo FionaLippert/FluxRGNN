@@ -19,6 +19,7 @@ observation_model:
   _target_: fluxrgnn.models.ObservationModel
   
 max_t0: ${datasource.tidx_step}
+max_t0_test: 1
 test_horizon: 72
 test_context: 24
 

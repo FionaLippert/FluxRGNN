@@ -52,6 +52,7 @@ increase_horizon_start: 0
 #lr_gamma: 1.0
 
 max_t0: ${datasource.tidx_step}
+max_t0_test: 1
 horizon: 48
 context: 24
 test_horizon: 72

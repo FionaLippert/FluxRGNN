@@ -37,7 +37,7 @@ class Normalization:
 
         all_features = []
         all_measurements = []
-        print(years)
+
         for year in years:
             dir = self.preprocessed_dir(year)
             print(dir)
@@ -55,8 +55,6 @@ class Normalization:
         measurement_df = pd.concat(all_measurements)
 
         self.feature_stats = feature_df.describe()
-        print(self.feature_stats)
-        print(self.feature_stats.columns)
         self.feature_stats.loc['absmax'] = feature_df[self.feature_stats.columns].apply(lambda x: np.max(np.abs(x)))
 
         self.measurement_stats = measurement_df.describe()
@@ -300,11 +298,6 @@ class RadarHeteroData(InMemoryDataset):
         self.n_cv_folds = kwargs.get('n_cv_folds', 0)
         self.cv_fold = kwargs.get('cv_fold', 0)
 
-        print(kwargs)
-
-        print(self.normalization)
-        print(transform)
-
         super(RadarHeteroData, self).__init__(self.root, transform, pre_transform)
 
         # run self.process() to generate dataset
@@ -362,17 +355,6 @@ class RadarHeteroData(InMemoryDataset):
         measurement_df = pd.read_csv(osp.join(self.preprocessed_dir, 'dynamic_radar_features.csv'))
         cells = pd.read_csv(osp.join(self.preprocessed_dir, 'static_cell_features.csv'))
         radars = pd.read_csv(osp.join(self.preprocessed_dir, 'static_radar_features.csv'))
-        
-        
-        # # define test radars
-        # if self.n_cv_folds == 0:
-        #     test_radars = []
-        # else:
-        #     radar_idx = np.arange(len(radars))
-        #     shuffled_radars = self.rng.permutation(radar_idx)
-        #     n_test = int(np.ceil(len(radars) / self.n_cv_folds))
-        #     test_radars = shuffled_radars[n_test * self.cv_fold : n_test * (self.cv_fold + 1)]
-        # print(f'test radars: {test_radars}')
 
         # excluded_radars = np.concatenate([test_radars, radars[radars.radar.isin(self.exclude)].ID.values], axis=0)
         excluded_radars = radars[radars.radar.isin(self.exclude)].ID.values
@@ -383,9 +365,6 @@ class RadarHeteroData(InMemoryDataset):
             cell_to_radar_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
             cell_to_radar_weights = torch.ones(len(cells))
             
-            # radar_to_cell_edge_index = torch.stack([torch.arange(len(cells)), torch.arange(len(cells))], dim=0).contiguous()
-            # radar_to_cell_weights = torch.ones(len(cells))
-            # radar_to_cell_dist = torch.zeros(len(cells))
         else:
             cell_to_radar_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'cell_to_radar_edges.csv'))
             # radar_to_cell_edges = pd.read_csv(osp.join(self.preprocessed_dir, 'radar_to_cell_edges.csv'))
@@ -399,24 +378,6 @@ class RadarHeteroData(InMemoryDataset):
             else:
                 print('data on radar-cell intersections not available')
                 cell_to_radar_weights = 1 / cell_to_radar_dist
-
-            # # exclude test radars from interpolation
-            # all_radars = torch.arange(len(radars))
-            # mask = torch.logical_not(torch.isin(all_radars, torch.tensor(test_radars)))
-            # train_radars = all_radars[mask]
-            # cell_pos = torch.tensor(cells[['x', 'y']].values) # size [n_radars, 2]
-            # radar_pos = torch.tensor(radars[['x', 'y']].values)[mask] # size [n_radars, 2]
-            # # TODO: first exclude train_radars, but make sure indices are not messed up!
-            # radar_to_cell_edge_index = knn(radar_pos, cell_pos)
-            # print(radar_to_cell_edge_index)
-
-
-            # radar_to_cell_edge_index = torch.tensor(radar_to_cell_edges[['ridx', 'cidx']].values, dtype=torch.long)
-            # mask = torch.logical_not(torch.isin(radar_to_cell_edge_index[:, 0], excluded_radars))
-            # radar_to_cell_edge_index = radar_to_cell_edge_index[mask].t().contiguous()
-            # radar_to_cell_dist = torch.tensor(radar_to_cell_edges['distance'].values, dtype=torch.float)
-            # radar_to_cell_dist = radar_to_cell_dist[mask]
-            # radar_to_cell_weights = 1 / radar_to_cell_dist**2
 
 
         graph_file = osp.join(self.preprocessed_dir, 'delaunay.graphml')
@@ -458,12 +419,6 @@ class RadarHeteroData(InMemoryDataset):
 
         print(f'target col = {target_col}')
 
-        # normalize dynamic features
-        #if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
-        #    # keep original wind velocities
-        #    dynamic_feature_df['wind_u'] = dynamic_feature_df['u']
-        #    dynamic_feature_df['wind_v'] = dynamic_feature_df['v']
-
         if not 'dayofyear' in dynamic_feature_df:
             dynamic_feature_df['dayofyear'] = pd.DatetimeIndex(dynamic_feature_df.datetime).dayofyear
 
@@ -500,9 +455,6 @@ class RadarHeteroData(InMemoryDataset):
 
         print(f'lonlat min = {lonlat_encoding.min(0)}, lonlat max = {lonlat_encoding.max(0)}')
         # land cover
-        # if 'nlcd_maj_c' in cells.columns:
-        #     land_cover = torch.tensor(cells.nlcd_maj_c.values, dtype=torch.float)
-        #     land_cover = torch.nn.functional.one_hot(land_cover) # binary tensor of shape [cells, classes]
         landcover_cols = [col for col in cells.columns if col.startswith('nlcd_c')]
         if len(landcover_cols) > 0:
             land_cover = torch.tensor(cells[landcover_cols].values, dtype=torch.float) # shape [cells, classes]
@@ -515,10 +467,7 @@ class RadarHeteroData(InMemoryDataset):
         else:
             water = torch.zeros(0)
         
-        areas = cells[['area_km2']].to_numpy() #.apply(lambda col: col / col.max(), axis=0).to_numpy()
-        #area_scale = cells['area_km2'].max() # [km^2]
-        #length_scale = np.sqrt(area_scale) # [km]
-        #length_scale = length_scale * 1e3 # [0.001 km]
+        areas = cells[['area_km2']].to_numpy()
         length_scale = 1.0
 
         time_scale = pd.Timedelta(self.t_unit).total_seconds() # number of seconds per time step
@@ -534,12 +483,10 @@ class RadarHeteroData(InMemoryDataset):
         else:
             print('Use tessellation')
             # get distances, angles and face lengths between radars
-            # distances = rescale(np.array([data['distance'] for i, j, data in G.edges(data=True)]), min=0)
             distances = np.array([data['distance'] for i, j, data in G.edges(data=True)]) / length_scale
 
             edge_weights = rescale(1. / distances**2, min=0)
 
-            # angles = rescale(np.array([data['angle'] for i, j, data in G.edges(data=True)]), min=0, max=360)
             angles = np.array([data['angle'] for i, j, data in G.edges(data=True)])
             angles_sin = np.sin(angles * np.pi / 180.)
             angles_cos = np.cos(angles * np.pi / 180.)
@@ -565,19 +512,6 @@ class RadarHeteroData(InMemoryDataset):
             edge_weights = torch.tensor(edge_weights, dtype=torch.float)
 
 
-            # radar-cell edge features
-            # radar_to_cell_delta_x = np.array([local_pos[j, 0] - local_radar_pos[i, 0]
-            #                                   for i, j in radar_to_cell_edge_index.T])
-            # radar_to_cell_delta_y = np.array([local_pos[j, 1] - local_radar_pos[i, 1]
-            #                                   for i, j in radar_to_cell_edge_index.T])
-            #
-            # radar_to_cell_edge_attr = torch.stack([
-            #     torch.tensor(rescale(radar_to_cell_dist, min=0), dtype=torch.float),
-            #     torch.tensor(radar_to_cell_delta_x, dtype=torch.float),
-            #     torch.tensor(radar_to_cell_delta_y, dtype=torch.float)
-            # ], dim=1)
-
-
         time = dynamic_feature_df.datetime.sort_values().unique()
         tidx = np.arange(len(time))
 
@@ -587,23 +521,13 @@ class RadarHeteroData(InMemoryDataset):
         for var in self.env_vars:
             data[var] = []
 
-        #if 'wind_u' in dynamic_feature_df and 'wind_v' in dynamic_feature_df:
-        #    data['wind'] = []
-
         # process dynamic cell features
         for cid, group_df in dynamic_feature_df.groupby('ID'):
             df = group_df.sort_values(by='datetime').reset_index(drop=True)
-            # data['env'].append(df[self.env_vars].to_numpy().T)
             data['cell_nighttime'].append(df.night.to_numpy())
 
             for var in self.env_vars:
                 data[var].append(df[var].to_numpy())
-
-            #if 'wind' in data:
-            #    wind = df[['wind_u', 'wind_v']].to_numpy().T # in m/s
-            #    wind = wind * time_scale / 1e3 # in km/[t_unit]
-            #    wind = wind / length_scale # in [length_scale]/[t_unit]
-            #    data['wind'].append(wind)
 
 
         # process radar measurements
@@ -611,35 +535,18 @@ class RadarHeteroData(InMemoryDataset):
         for rid, group_df in measurement_df.groupby('ID'):
             group_df = group_df.sort_values(by='datetime').reset_index(drop=True)
             data[target_col].append(group_df[target_col].to_numpy())
-            # data['bird_uv'].append(group_df[['bird_u', 'bird_v']].to_numpy().T)
             data['missing_x'].append(group_df['missing_birds_km2'].to_numpy())
             data['missing_uv'].append(group_df['missing_birds_uv'].to_numpy())
             data['radar_nighttime'].append(group_df.night.to_numpy())
 
             bird_uv = group_df[['bird_u', 'bird_v']].to_numpy().T  # in m/s
             bird_uv = bird_uv * time_scale / 1e3  # in km/[t_unit]
-            #bird_uv = 1e3 * bird_uv / length_scale  # in [length_scale]/[t_unit]
             data['bird_uv'].append(bird_uv)
 
 
         for k, v in data.items():
             data[k] = np.stack(v, axis=0).astype(float)
 
-        # apply perturbations (if applicable)
-        #for var in self.permute_env_vars:
-        #    # data[var] has shape [cells, ..., time]
-
-        #    # perturb in time
-        #    random_tidx = np.arange(data[var].shape[-1])
-        #    random_tidx = self.rng.permutation(random_tidx)
-        #    data[var] = data[var][..., random_tidx]
-
-        #    # perturb in space
-        #    random_cidx = np.arange(data[var].shape[0])
-        #    random_cidx = self.rng.permutation(random_cidx)
-        #    data[var] = data[var][random_cidx]
-
-        #print(f'wind min = {data["wind"].min()}, max = {data["wind"].max()}')
         print(f'bird_uv min = {data["bird_uv"].min()}, max = {data["bird_uv"].max()}')
 
 
@@ -676,7 +583,6 @@ class RadarHeteroData(InMemoryDataset):
         perc_missing = perc_missing.reshape(-1, perc_missing.shape[-1]).mean(0)
         print(perc_missing)
         valid_idx = perc_missing <= self.missing_data_threshold
-        #valid_idx = np.ones(tidx.shape[-1], dtype='int')
 
         for k, v in data.items():
             data[k] = data[k][..., valid_idx]
@@ -712,19 +618,6 @@ class RadarHeteroData(InMemoryDataset):
             'edge_weight': cell_to_radar_weights
         }
 
-        # # interpolation model structure
-        # radar2cell_edges = {
-        #     'edge_index': radar_to_cell_edge_index,
-        #     'edge_weight': radar_to_cell_weights,
-        #     'edge_attr': radar_to_cell_edge_attr
-        # }
-
-        # masks to select train or test radars
-        # train_mask = torch.ones(len(radar_ids), dtype=torch.bool)
-        # train_mask[excluded_radars] = False
-        # test_mask = torch.zeros(len(radar_ids), dtype=torch.bool)
-        # test_mask[test_radars] = True
-
         # ignore excluded radars during both training and testing
         radar_mask = torch.ones(len(radar_ids), dtype=torch.bool)
         radar_mask[excluded_radars] = False
@@ -744,7 +637,6 @@ class RadarHeteroData(InMemoryDataset):
                 'water': water,
 
                 # dynamic cell features
-                # 'env': torch.tensor(data['env'][..., idx], dtype=torch.float),
                 'local_night': torch.tensor(data['cell_nighttime'][..., idx], dtype=torch.bool),
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long),
                 'length_scale': torch.tensor(length_scale)
@@ -753,9 +645,6 @@ class RadarHeteroData(InMemoryDataset):
             for var in self.env_vars:
                 cell_data[var] = torch.tensor(data[var][..., idx], dtype=torch.float)
 
-            #if 'wind' in data:
-            #    cell_data['wind'] = torch.tensor(data['wind'][..., idx], dtype=torch.float)
-
             if self.edge_type in ['voronoi', 'none']:
                 cell_data['x'] = torch.tensor(data[target_col][..., idx], dtype=torch.float)
                 cell_data['bird_uv'] = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
@@ -763,7 +652,6 @@ class RadarHeteroData(InMemoryDataset):
             
             x = torch.tensor(data[target_col][..., idx], dtype=torch.float)
             bird_uv = torch.tensor(data['bird_uv'][..., idx], dtype=torch.float)
-            #fluxes = x.unsqueeze(1) * bird_uv
 
             radar_data = {
                 # static radar features
@@ -778,10 +666,8 @@ class RadarHeteroData(InMemoryDataset):
                 'missing_x': torch.tensor(data['missing_x'][..., idx], dtype=torch.bool),
                 'missing_bird_uv': torch.tensor(data['missing_uv'][..., idx], dtype=torch.bool),
                 'missing': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
-                #'missing_fluxes': torch.tensor(data['missing'][..., idx], dtype=torch.bool),
                 'local_night': torch.tensor(data['radar_nighttime'][..., idx], dtype=torch.bool),
                 'bird_uv': bird_uv,
-                #'fluxes': fluxes,
                 'tidx': torch.tensor(tidx[:, idx], dtype=torch.long),
                 'year': torch.tensor(int(self.year), dtype=torch.long)
             }
@@ -792,7 +678,6 @@ class RadarHeteroData(InMemoryDataset):
                 radar = radar_data,
                 cell__to__cell = cell2cell_edges,
                 cell__to__radar = cell2radar_edges,
-                # radar__to__cell = radar2cell_edges
             ))
 
 
@@ -805,8 +690,6 @@ class RadarHeteroData(InMemoryDataset):
 
         info = {
                 'env_vars': self.env_vars,
-                #'timepoints': time,
-                #'tidx': tidx,
                 'n_seq_discarded': n_seq_discarded,
                 'length_scale': length_scale,
                 'time_scale': time_scale
@@ -834,35 +717,13 @@ class RadarHeteroData(InMemoryDataset):
                                                  'missing_birds_km2', 'missing_birds_uv'])
 
 
-        # apply to u, v, u10, v10, bird_u, bird_v, t2m, t, sp, cc, q, sshf, tp, acc vars
-        #dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
-        #    lambda col: (col - self.normalization.mean(col.name)) / self.normalization.std(col.name), axis=0)
         # rescale q, t2m, t, sp to [-1, 1] 
         dynamic_feature_df.loc[:, cidx] = dynamic_feature_df.loc[:, cidx].apply(
              lambda col: 2 * ((col - self.normalization.min(col.name)) /
                          (self.normalization.max(col.name) - self.normalization.min(col.name))) - 1, axis=0)
 
-        #if 'tp' in dynamic_feature_df:
-        #    dynamic_feature_df['tp'] = dynamic_feature_df['tp'] / self.normalization.max('tp')
-        
-        #
-        #if 'sshf' in dynamic_feature_df:
-        #    dynamic_feature_df['sshf'] = dynamic_feature_df['sshf'] / self.normalization.absmax('sshf')
-
-        # if 'bird_u' in dynamic_feature_df and 'bird_v' in dynamic_feature_df:
-        #     uv_scale = max(self.normalization.absmax('bird_u'), self.normalization.absmax('bird_v'))
-        #     dynamic_feature_df[['bird_u', 'bird_v']] = dynamic_feature_df[['bird_u', 'bird_v']] / uv_scale
-        
-        #if 'u' in dynamic_feature_df and 'v' in dynamic_feature_df:
-        #    uv_scale = max(self.normalization.absmax('u'), self.normalization.absmax('v'))
-        #    dynamic_feature_df[['u', 'v']] = dynamic_feature_df[['u', 'v']] / uv_scale
-        
-        #if 'u10' in dynamic_feature_df and 'v10' in dynamic_feature_df:
-        #    uv_scale = max(self.normalization.absmax('u10'), self.normalization.absmax('v10'))
-        #    dynamic_feature_df[['u10', 'v10']] = dynamic_feature_df[['u10', 'v10']] / uv_scale
-
         if 'dayofyear' in dynamic_feature_df:
-            dynamic_feature_df['dayofyear'] /= 365.0 #self.normalization.max('dayofyear')  # always use 365?
+            dynamic_feature_df['dayofyear'] /= 365.0
 
         return dynamic_feature_df
 
@@ -929,16 +790,6 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, s
     n_excl = len(cfg.datasource.get('excluded_radars', []))
     if n_excl > 0:
         processed_dirname += f'_excluded={n_excl}'
-
-    #if 'tidx_max' in cfg.datasource:
-    #    tidx_max = cfg.datasource.tidx_max
-    #    processed_dirname += f'_tidx={cfg.datasource.get("tidx_start", 0)}-{tidx_max}'
-    #else:
-    #    tidx_max = -1
-
-    # perm_vars = cfg.model.get('permute_env_vars', [])
-    # if len(perm_vars) > 0:
-    #     processed_dirname += f'_permuted={"+".join(perm_vars)}'
     
     data_dir = osp.join(cfg.device.root, 'data')
 
@@ -952,46 +803,8 @@ def load_dataset(cfg: DictConfig, output_dir: str, split: str, transform=None, s
     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
         pickle.dump(normalization, f)
 
-    # if split == 'train':
-    #     # initialize normalizer
-    #     years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
-    #     normalization = Normalization(years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
-    #
-    #     # complete config and write it together with normalizer to disk
-    #     # cfg.datasource.bird_scale = float(normalization.max(input_col))
-    #     # cfg.model_seed = seed
-    #     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
-    #         OmegaConf.save(config=cfg, f=f)
-    #     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
-    #         pickle.dump(normalization, f)
-    #
-    #
-    # else:
-    #     years = [cfg.datasource.test_year]
-    #     norm_path = osp.join(cfg.get('model_dir', output_dir), 'normalization.pkl')
-    #     if osp.isfile(norm_path):
-    #         print(f'load normalization from {norm_path}')
-    #         with open(norm_path, 'rb') as f:
-    #             normalization = pickle.load(f)
-    #     else:
-    #         #normalization = None
-    #         norm_years = cfg.datasource.get('train_years', set(cfg.datasource.years) - set([cfg.datasource.test_year]))
-    #         normalization = Normalization(norm_years, cfg.datasource.name, data_dir, preprocessed_dirname, **cfg)
-    #         with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:
-    #             pickle.dump(normalization, f)
-    # load training/validation/test data
-    # data = [RadarData(year, seq_len, preprocessed_dirname, processed_dirname,
-    #                              **cfg, **cfg.model,
-    #                              data_root=data_dir,
-    #                              data_source=cfg.datasource.name,
-    #                              normalization=normalization,
-    #                              env_vars=cfg.datasource.env_vars,
-    #                              transform=transform
-    #                              )
-    #         for year in years]
-
+    
     years = cfg.datasource[f'{split}_years']
-    print(years)
 
     data = []
     for year in years:
@@ -1026,7 +839,6 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, split: str = 'train',
     """
 
     seq_len = 'all'
-    # seed = cfg.seed + cfg.get('job_id', 0)
 
     preprocessed_dirname = f'{cfg.t_unit}_none'
 
@@ -1037,20 +849,14 @@ def load_xgboost_dataset(cfg: DictConfig, output_dir: str, split: str = 'train',
                         f'pow={cfg.model.get("pow_exponent", 1.0)}_maxT0={cfg.model.max_t0}_timepoints={seq_len}_' \
                         f'edges={cfg.model.edge_type}_dataperc={cfg.data_perc}' \
                         f'_seed={cfg.seed}'
-
-    # perm_vars = cfg.model.get('permute_env_vars', [])
-    # if len(perm_vars) > 0:
-    #     processed_dirname += f'_permuted={"+".join(perm_vars)}'
     
     data_dir = osp.join(cfg.device.root, 'data')
 
     # initialize normalizer
-    # years = set(cfg.datasource.years) - set([cfg.datasource.test_year])
     normalization = Normalization(cfg.datasource.train_years, cfg.datasource.name,
                                   data_dir, preprocessed_dirname, **cfg)
 
     # complete config and write it together with normalizer to disk
-    # cfg.model_seed = seed
     with open(osp.join(output_dir, 'config.yaml'), 'w') as f:
         OmegaConf.save(config=cfg, f=f)
     with open(osp.join(output_dir, 'normalization.pkl'), 'wb') as f:

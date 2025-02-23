@@ -3,20 +3,19 @@ output_dir: results
 sub_dir: none
 defaults:
   - datasource: nexrad
-  - model: FluxRGNN
+  - model: FluxRGNN+
   - task: train_eval
-  - device: cluster
+  - device: local
   - logger: wandb
 job_id: 0
 season: spring #fall
 seed: 1234
 model_seed: ${seed}
 root_transform: 0
-missing_data_threshold: 0.1 #1.0 #0.1
+missing_data_threshold: 0.1
 t_unit: 1H
 fixed_t0: false
 data_perc: 1.0
-#exclude: []
 verbose: True
 debugging: False
 
@@ -25,7 +24,7 @@ trainer:
   _target_: pytorch_lightning.Trainer
   logger: ${logger}
   log_every_n_steps: 500
-  check_val_every_n_epoch: 50 # 10
+  check_val_every_n_epoch: 50
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       #- _target_: pytorch_lightning.callbacks.EarlyStopping
@@ -38,7 +37,6 @@ trainer:
 #    - _target_: callbacks.PredictionCallback
   accelerator: ${device.accelerator}
   devices: ${device.devices}
-  #  deterministic: True
   gradient_clip_algorithm: value
   gradient_clip_val: 0
   max_epochs: 500

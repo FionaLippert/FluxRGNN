@@ -1,11 +1,10 @@
 # @package task
 task_name: explain
-# seqID: 49 #34 #1
 seqID_start: 31 # fall: 1 September
 # seqID_start: 41 # spring: 10 April
 seqID_end: 76 # fall: 15 October
 # seqID_end: 86 # spring: 25 May
-random_sample: true #true
+random_sample: true
 sample_idx: 0
 n_seq_samples: 10
 explain_processes: true

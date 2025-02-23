@@ -7,10 +7,10 @@ command:
   - ${args_no_hyphens}
   - seed=1234
   - season=spring
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - model.lr=1e-4
   - model.training_coefs.bird_uv=0.1
-  - model.scale=0.005
+  - model.scale=0.002
   - model.dropout_p=0.1
   - trainer.max_epochs=300
   - dataloader.batch_size=32

@@ -17,28 +17,22 @@ env_vars:
   v_q10: 1
   v_q50: 1
   v_q90: 1
-  #u10: 1
-  #v10: 1
   tcc: 1
   tp: 1
   sp: 1
   msl: 1
-  #t2m: 1
   t_q10: 1
   t_q50: 1
   t_q90: 1
   q_q10: 1
   q_q50: 1
   q_q90: 1
-  #sshf: 1
   night: 1
   dusk: 1
   dawn: 1
   dayofyear: 1
   solarpos: 1
   solarpos_dt: 1
-  #frac_night_fw: 1
-  #frac_night_bw: 1
 
 
 xgboost:
@@ -53,13 +47,14 @@ xgboost:
   gamma: 0
 
 train_settings:
-  early_stopping_rounds: 10 #100
+  early_stopping_rounds: 10
   eval_metric: rmse
 
 observation_model:
   _target_: fluxrgnn.models.ObservationModel
   
 max_t0: ${datasource.tidx_step}
+max_t0_test: 1
 test_horizon: 72
 test_context: 24
 
@@ -77,7 +72,7 @@ force_zeros: true
 use_log_transform: false
 log_offset: 0.1
 pow_exponent: 0.3333
-scale: 0.1 #1.0 #0.1 #0.001
+scale: 0.1
 
 
 transforms:

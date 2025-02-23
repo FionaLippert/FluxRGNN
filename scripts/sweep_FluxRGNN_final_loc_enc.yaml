@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - model.dropout_p=0.1
   - model.training_coefs.bird_uv=0.0
   - trainer.max_epochs=500

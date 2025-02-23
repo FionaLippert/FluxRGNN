@@ -17,6 +17,9 @@ from fluxrgnn.transforms import Transforms
 
 
 class Forecast:
+    """
+    Class for storing predicted system states
+    """
 
     def __init__(self):
 
@@ -71,11 +74,7 @@ class ForecastModel(pl.LightningModule):
 
         self.use_log_transform = kwargs.get('use_log_transform', False)
         self.scale = kwargs.get('scale', 1.0)
-        # self.transforms = [t for t in kwargs.get('transforms', []) if t.feature == 'x']
         self.transforms = Transforms(kwargs.get('transforms', []))
-
-        # self.zero_value = self.apply_forward_transforms(torch.tensor(0))
-        # print(f'zero value = {self.zero_value}')
 
         self.training_coefs = kwargs.get('training_coefs', {'x': 1.0})
         self.test_vars = kwargs.get('test_vars', ['x'])
@@ -103,9 +102,6 @@ class ForecastModel(pl.LightningModule):
         forecast = Forecast()
         forecast.update(states)
 
-        # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
-        # radar_data = data['radar']
-
         # predict until the max forecasting horizon is reached
         forecast_horizon = range(self.t_context + 1, self.t_context + horizon + 1)
         for tidx in forecast_horizon:
@@ -115,19 +111,9 @@ class ForecastModel(pl.LightningModule):
 
             # use gt data instead of model output with probability 'teacher_forcing'
             r = torch.rand(1)
-            #if hasattr(data, 'x') and (r < teacher_forcing):
             if r < teacher_forcing:
-                #print('use teacher forcing')
-                # TODO: map measurements in node_storage 'radar' to cells in node_storage 'cell',
-                #  or use smaller horizon instead of teacher forcing?
-                #model_states['x'] = data.x[..., t - 1].view(-1, 1)
-                #radars_to_cells = data['radar', 'cell']
-                #interpolated = self.observation_model(data['radar'].x, radars_to_cells)
                 assert data['radar'].num_nodes == data['cell'].num_nodes
                 x = tidx_select(data['radar'].x, t - 1).view(-1, 1)
-            #else:
-            #    print('no ground truth data available to use for teacher forcing')
-            
             
             # make prediction for next time step
             states = self.forecast_step(x, data, t, teacher_forcing)
@@ -138,13 +124,7 @@ class ForecastModel(pl.LightningModule):
                 states['x'] = states['x'] + self.transforms.zero_value['x'].to(x.device) * \
                                     torch.logical_not(local_night)
 
-
-            # forecast.append(x)
             forecast.update(states)
-
-
-        # forecast = torch.cat(forecast, dim=-1)
-        # return forecast
 
         return forecast.finalize()
 
@@ -152,7 +132,6 @@ class ForecastModel(pl.LightningModule):
     def initialize(self, data, t0=0):
 
         # make prediction for first time step
-        # cell_data = data.node_type_subgraph(['cell']).to_homogeneous()
         states = self.forecast_step(None, data, t0 + self.t_context)
 
         return states
@@ -218,11 +197,6 @@ class ForecastModel(pl.LightningModule):
         # evaluate forecast
         for var in (list(self.training_coefs.keys()) + self.test_vars):
             if var in forecast:
-                # loss_var, eval_dict = self._eval_step(batch, forecast,
-                #                                       radar_mask=batch['radar'].train_mask,
-                #                                       prefix='val', t0=t0, var=var)
-                # self.log_dict(eval_dict, batch_size=batch.num_graphs)
-
                 # compute evaluation metrics for radars used during training
                 _, eval_dict = self._eval_step(batch, forecast,
                                                radar_mask=batch['radar'].train_mask,
@@ -235,12 +209,6 @@ class ForecastModel(pl.LightningModule):
                                                prefix='val/unobserved', t0=t0, var=var)
                 self.log_dict(eval_dict, batch_size=batch.num_graphs)
 
-        # # evaluate forecast
-        # _, eval_dict = self._eval_step(batch['radar'], forecast, self.horizon,
-        #                             radar_mask=batch['radar'].train_mask, prefix='val', t0=t0)
-        # self.log_dict(eval_dict, batch_size=batch.num_graphs)
-
-
 
     def on_test_epoch_start(self):
 
@@ -248,8 +216,6 @@ class ForecastModel(pl.LightningModule):
                 'test/mask': [], 
                 'test/train_mask': [],
                 'test/test_mask': [],
-                # 'test/measurements': [],
-                # 'test/predictions': [],
                 }
 
         for var in self.test_vars:

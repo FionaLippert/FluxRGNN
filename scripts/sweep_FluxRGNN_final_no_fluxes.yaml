@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN_no_fluxes
+  - model=FluxRGNN_voronoi_no_fluxes
   #- model.location_encoder=null
   - model.dropout_p=0.1
   - trainer.max_epochs=500

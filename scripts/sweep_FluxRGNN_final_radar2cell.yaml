@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN_correctedKNN
+  - model=FluxRGNN+_correctedKNN
   - model.dropout_p=0.1
   - trainer.max_epochs=500
   - dataloader.batch_size=32

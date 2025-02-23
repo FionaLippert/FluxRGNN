@@ -75,16 +75,6 @@ def summarize_performance(test_results, cfg, var='x', groupby=[], bins=[0, 150, 
 
     if var == 'direction':
         df['resiual'] = df['residual'].apply(lambda d: d if np.abs(d) <= 180 else ((180 - d) if d > 180 else -(d + 180)))
-    #df['measurements_pow'] = df.measurements.pow(1/3)
-    #df['predictions_pow'] = df.predictions.pow(1/3)
-    #df['residual_pow'] = df.predictions_pow - df.measurements_pow
-    #df['night'] = df['horizon'].apply(lambda h: h // 24)
-
-    #q = [0.0, .9, .95, .99, 1.]
-    #zero_index = (df.densities < 1.0)
-    #df.loc[zero_index, 'densities'] = 1.0 # to avoid negative lowest bin using qcut
-    #df['quantile'], bins = pd.qcut(df['densities'], q, retbins=True, precision=0) #labels=q[1:])
-    #bins = [0, 1, 10, 25, 50, 100, 150, 200, 250, 1500] # roughly [0%, 80%, 95%, 100%]
     df['bird_bin'] = pd.cut(df['densities'], bins)
 
     grouped = df.groupby(groupby + ['model', 'fold'])
@@ -92,17 +82,6 @@ def summarize_performance(test_results, cfg, var='x', groupby=[], bins=[0, 150, 
     df_eval = grouped['residual'].aggregate(res_to_rmse).reset_index(name='RMSE')
     df_eval['MAE'] = grouped['residual'].aggregate(res_to_mae).reset_index(name='MAE')['MAE']
     df_eval['ME'] = grouped['residual'].aggregate(np.mean).reset_index(name='ME')['ME']
-    #df_eval['SMAPE'] = [df_to_smape(df_sub) for group, df_sub in grouped]
-    #df_eval['MAPE'] = [df_to_mape(df_sub) for group, df_sub in grouped]
-    #df_rmse_pow = df.groupby(['model', 'fold', 'quantile', 'observed'])['residual_pow'].aggregate(res_to_rmse).reset_index(name='RMSE')
-    #df_mae_pow = df.groupby(['model', 'fold', 'quantile', 'observed'])['residual_pow'].aggregate(res_to_mae).reset_index(name='MAE')
-
-    #if var == 'x':
-
-    #    df_eval['TP'] = [df_to_tp(df_sub, thr) for group, df_sub in grouped]
-    #    df_eval['TN'] = [df_to_tn(df_sub, thr) for group, df_sub in grouped]
-    #    df_eval['FP'] = [df_to_fp(df_sub, thr) for group, df_sub in grouped]
-    #    df_eval['FN'] = [df_to_fn(df_sub, thr) for group, df_sub in grouped]
 
     if path is None:
         path = osp.join(cfg.output_dir, 'evaluation')
@@ -114,6 +93,3 @@ def summarize_performance(test_results, cfg, var='x', groupby=[], bins=[0, 150, 
     if 'bird_bin' in groupby:
         fname += f'_{"-".join([str(b) for b in bins])}'
     df_eval.to_csv(osp.join(path, f'{fname}.csv'))
-    #df_mae.to_csv(f'{cfg.logger.project}_{cfg.task.cv_fold}_{var}_model_evaluation_MAE.csv')
-    #df_rmse_pow.to_csv(f'{cfg.logger.project}_model_evaluation_RMSE_x_pow.csv')
-    #df_mae_pow.to_csv(f'{cfg.logger.project}_model_evaluation_MAE_x_pow.csv')

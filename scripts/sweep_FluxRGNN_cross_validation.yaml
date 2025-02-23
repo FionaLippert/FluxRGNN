@@ -6,7 +6,7 @@ command:
   - ${program}
   - ${args_no_hyphens}
   - seed=1234
-  - model=FluxRGNN
+  - model=FluxRGNN+
   - trainer.max_epochs=300
   - dataloader.batch_size=32
   - task=cross_validation

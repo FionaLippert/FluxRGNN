@@ -73,11 +73,19 @@ def run(cfg: DictConfig):
 
     model = instantiate(cfg.model)
     
-    if (cfg.model.load_states_from is not None) and isinstance(trainer.logger, WandbLogger):
-        # load model checkpoint
-        # model_checkpoint has form 'user/project/model-runID:version' where version is vX, latest or best
-        artifact_dir = trainer.logger.download_artifact(cfg.model.load_states_from, artifact_type='model')
-        model_path = osp.join(artifact_dir, 'model.ckpt')
+    if (cfg.model.load_states_from is not None):
+        # try to load from disk (path should point to .ckpt file containing model states)
+        if osp.isfile(cfg.model.load_states_from):
+            model_path = cfg.model.load_states_from
+            print('Loading model state from disk...')
+        elif isinstance(trainer.logger, WandbLogger):
+            # load model checkpoint from W&B
+            # path should have form 'user/project/model-runID:version' where version is vX, latest or best
+            artifact_dir = trainer.logger.download_artifact(cfg.model.load_states_from, artifact_type='model')
+            model_path = osp.join(artifact_dir, 'model.ckpt')
+            print('Loading model state from W&B...')
+        else:
+            raise Exception('Model states could not be loaded from disk or W&B')
 
         if torch.cuda.is_available():
             model = eval(cfg.model._target_).load_from_checkpoint(model_path)

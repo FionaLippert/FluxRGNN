@@ -1,4 +1,5 @@
 # @package model.initial_model
+# KNN interpolation plus NN correction
 _target_: fluxrgnn.models.CorrectedRadarToCellKNNInterpolation
 _partial_: true
 k: 10

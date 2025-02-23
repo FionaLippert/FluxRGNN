@@ -8,11 +8,11 @@ command:
   - seed=1234
   - model=FluxRGNN+
   - model.horizon=24
-  - model.scale=0.002
-  - season=spring
+  - model.scale=0.001
+  - season=fall
   - task=explain
-  - task.seqID_start=41
-  - task.seqID_end=86
+  - task.seqID_start=31
+  - task.seqID_end=76
   - task.n_seq_samples=10
   - model.load_states_from=/path/to/model.ckpt # TODO: replace by model path
   - missing_data_threshold=0.1
