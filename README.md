@@ -181,9 +181,10 @@ sbatch run_neural_nets.job 'model=FluxRGNN+ datasource=nexrad model.scale={scale
 
 To generate predictions using a trained model which is stored in `/path/to/model.ckpt` (can be downloaded [here](https://zenodo.org/records/14913875)), run
 ```
-python run_neural_nets.py model=FluxRGNN+ datasource=nexrad model.scale={scale} season={season} task=predict model.load_states_from=/path/to/model.ckpt model.horizon={horizon}
+python run_neural_nets.py model=FluxRGNN+ datasource=nexrad model.scale={scale} season={season} task=predict missing_data_threshold=1.0 model.load_states_from=/path/to/model.ckpt model.horizon={horizon}
 ```
 where `horizon` can be freely adjusted depending on how far into the future you would like to forecast.
+Setting `missing_data_threshold=1.0` makes sure that predictions for all sequences are generated, independent of the amount of weather radar measurements available.
 
 
 ### Baseline models
