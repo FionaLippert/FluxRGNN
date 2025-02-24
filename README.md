@@ -13,8 +13,6 @@ In our follow-up [paper](https://openreview.net/forum?id=oAmxqO1nRy) we have int
 This repository provides the code for both approaches. The original implementation of the FluxRGNN approach and the associated experiments and analysis scripts can be found under version [v1.1.1](https://github.com/FionaLippert/FluxRGNN/releases/tag/v.1.1.1). Note that the latest version may not be compatible with all settings and experiments of the original paper.
 
 
-Please note that a refactored and extended version of FluxRGNN is available on the branch [nexrad_data](https://github.com/FionaLippert/FluxRGNN/tree/nexrad_data), which will be merged soon into the main code base.
-
 ## Requirements and setup
 First, make sure you have [conda](https://docs.conda.io/en/latest/) installed.
 
@@ -33,6 +31,7 @@ Note that after making changes to files in the `fluxrgnn` directory, you need to
 ```
 python setup.py install
 ```
+
 
 ### Additional dependencies
 
@@ -53,6 +52,13 @@ To install additional packages required to run the radar data preprocessing (see
 conda env update --name fluxrgnn --file preprocessing_environment.yml
 ```
 
+To generate contrastive explanations (i.e. Shapley value attributions of deviations in predicted quantities from a local reference to different input features) a modified version of the shap Python package is required, which can be found [here](https://github.com/FionaLippert/shap). Make sure this package is available in the `fluxrgnn` conda environment, either by running
+```
+python setup.py install
+```
+in the `shap` directory, or by adding the `shap` directory to your `PYTHONPATH`.
+
+
 ## Getting started
 
 ### Hydra config
@@ -61,7 +67,7 @@ dynamically and allows for overrides through the command line. Have a look at th
 get familiar with the structure of config files. The default settings correspond to the settings used in our FluxRGNN+ paper.
 
 You can, for example, easily switch between models (e.g. `FluxRGNN+` and `FluxRGNN_voronoi`), by simply adding `model=FluxRGNN+` or
-`datasource=FluxRGNN_voronoi` to your command line when running one of the provided scripts. Similarly, you could change 
+`model=FluxRGNN_voronoi` to your command line when running one of the provided scripts. Similarly, you could change 
 the forecasting horizon to, say, 24 hours by adding `model.horizon=24`.
 
 ### Dataloader
@@ -76,17 +82,14 @@ The values of `t_unit`, `edge_type`, `buffer`, `n_dummy_radars`, `h3_resolution`
 can be specified in the hydra configuration files in the `scripts/conf` directory.
 
 
-To run the preprocessing of weather radar data and atmospheric reanalysis data, 
-you can use the script `scripts/run_preprocessing.py` in combination with [this](https://github.com/FionaLippert/birdMigration) code base.
-Alternatively, preprocessed European data (`datasource=radar`) can be downloaded [here](https://zenodo.org/records/6874789). 
 
-To reproduce the results from our paper, please download the preprocessed data [here](https://doi.org/10.5281/zenodo.6364940)
+Preprocessed European data (`datasource=radar`) can be downloaded [here](https://zenodo.org/records/6874789), and preprocessed US data (`datasource=nexrad`) can be downloaded [here](https://zenodo.org/records/14913875).
+These datasets include bird density and velocity measurements, atmospheric reanalysis data, and other relevant spatial and temporal features. 
+They were generated using the script `scripts/run_preprocessing.py` in combination with [this](https://github.com/FionaLippert/birdMigration) code base. To run this yourself, follow the birdMigration README to install the `birds` python package in your `fluxrgnn` conda environment and to download raw radar data, if needed. Then, from the `FluxRGNN/scripts` directory, run
+```
+python run_preprocessing.py datasource={datasource} +raw_data_dir={path/to/raw/data}
+```
 
-To run the preprocessing of bird density and velocity data from 
-the European weather radar network yourself, you can use [this](https://github.com/FionaLippert/birdMigration) code base. Follow the README to install the `birds` python package in your `fluxrgnn` conda environment and download the raw radar data. Then, from the `FluxRGNN/scripts` directory, run
-```
-python run_preprocessing.py datasource=radar +raw_data_dir={path/to/downloaded/data}
-```
 
 If you would like to apply FluxRGNN to your own data, you need to generate the following files (for each season and year):
 - `delaunay.gpickle`: graph structure underlying the desired tessellation as a [networkx.DiGraph](https://networkx.org/documentation/stable/reference/classes/digraph.html) where nodes represent grid cells and edges between cells exist if they are adjacent. You can use [this](https://github.com/FionaLippert/birdMigration) code base to construct Voronoi or hexagonal tessellations and the associated graph structure from a set of sensor locations.
@@ -159,7 +162,7 @@ If you would like to apply FluxRGNN to your own data, you need to generate the f
     
 
 
-### Training and testing
+### FluxRGNN+ training and testing
 
 To train FluxRGNN+ on NEXRAD data, switch to the `scripts` directory and run
 ```
@@ -171,26 +174,26 @@ python run_neural_nets.py model=FluxRGNN+ datasource=nexrad model.scale=0.002 se
 ```
 for spring migratory movements.
 
-To run the same on a cluster using slurm and cuda, training for 300 instead of the default 500 epochs, run
+To run the same on a cluster using slurm and cuda, run
 ```
-sbatch run_neural_nets.job 'model=FluxRGNN+ datasource=nexrad model.scale={scale} season={season} device=cluster trainer.max_epochs=300'
+sbatch run_neural_nets.job 'model=FluxRGNN+ datasource=nexrad model.scale={scale} season={season} device=cluster'
 ```
 
-To generate predictions using a trained model which is stored in `/path/to/model.ckpt`, run
+To generate predictions using a trained model which is stored in `/path/to/model.ckpt` (can be downloaded [here](https://zenodo.org/records/14913875)), run
 ```
 python run_neural_nets.py model=FluxRGNN+ datasource=nexrad model.scale={scale} season={season} task=predict model.load_states_from=/path/to/model.ckpt model.horizon={horizon}
 ```
 where `horizon` can be freely adjusted depending on how far into the future you would like to forecast.
 
-To train and evaluate one of the baseline models (`model = HA, GAM, or GBT`), simply add `model={model}` to your command line.
 
+### Baseline models
+
+To train and evaluate one of the baseline models (`HA`, `GAM`, `GBT`, or `XGBoost`), simply replace `model=FluxRGNN+` using the corresponding model name.
 
 
 ### Contrastive explanations
 
-To analyse the short-term effects of weather on predicted migratory movements using Shapley value-based contrastive explanations, first download the adjusted version of the SHAP python package from [this](https://github.com/FionaLippert/shap) repository, and make sure that it is available in the Python path.
-
-Then, you can run
+To analyse the short-term effects of weather on predicted migratory movements using Shapley value-based contrastive explanations, make sure the modified `shap` package is installed (see above) and run
 ```
 python explain_forecast.py model=FluxRGNN+ datasource=nexrad task=explain model.load_states_from={/path/to/model.ckpt} model.horizon={horizon} model.scale=0.001 task.n_seq_samples=100 task.seqID_start=31 task.seqID_end=76 season=fall
 ```
@@ -200,5 +203,4 @@ python explain_forecast.py model=FluxRGNN+ datasource=nexrad task=explain model.
 ```
 This will estimate Shapley values for a range of model outputs (for FluxRGNN+ this includes bird densities, take-off, landing, migration traffic rate, flight direction, and flight speed).
 
-
-The [Weights&Biases](https://wandb.ai/home) sweep configuration `scripts/sweep_explanations_spring.yaml` and `scripts/sweep_explanations_fall.yaml` can be used to easily run multiple nights in parallel.
+Alternatively, the [Weights&Biases](https://wandb.ai/home) sweep configuration `scripts/sweep_explanations_spring.yaml` and `scripts/sweep_explanations_fall.yaml` can be used to easily run multiple nights in parallel.
